@@ -16,8 +16,10 @@ extension Rect {
     ///
     /// Only the edges the handle touches move; the result is standardized so an
     /// overshoot that flips an edge past its opposite still yields a valid rect.
-    /// Public because the pre-capture selection overlay resizes its selection rect
-    /// through the same pure geometry the editor uses on element bounding boxes.
+    ///
+    /// Public so both the pre-capture selection overlay and the editor's crop-rectangle
+    /// drags share the exact edge math used on element bounding boxes, rather than
+    /// duplicating (and risking drift from) it.
     public func resized(handle: Handle, dx: Double, dy: Double) -> Rect {
         var left = minX
         var top = minY
