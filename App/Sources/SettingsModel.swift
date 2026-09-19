@@ -14,6 +14,7 @@ import LightshotKit
 final class SettingsModel {
     private let store: SettingsStore
     private let applyHotkeys: (HotkeyBindings) -> [CaptureAction]
+    private let applyRetention: (Int) -> Void
     private var suppressLaunchWrite = false
 
     var hotkeys: HotkeyBindings {
@@ -30,7 +31,13 @@ final class SettingsModel {
     var filenamePattern: String { didSet { store.filenamePattern = filenamePattern } }
     var openInEditor: Bool { didSet { store.openInEditor = openInEditor } }
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
-    var historyRetention: Int { didSet { store.historyRetention = max(0, historyRetention) } }
+    var historyRetention: Int {
+        didSet {
+            let clamped = max(0, historyRetention)
+            store.historyRetention = clamped
+            applyRetention(clamped)
+        }
+    }
 
     var launchAtLogin: Bool {
         didSet {
@@ -52,9 +59,14 @@ final class SettingsModel {
     /// In-app chord clashes (two actions on the same shortcut), a pure function of the bindings.
     var conflicts: [HotkeyConflict] { hotkeys.conflicts }
 
-    init(store: SettingsStore, applyHotkeys: @escaping (HotkeyBindings) -> [CaptureAction]) {
+    init(
+        store: SettingsStore,
+        applyHotkeys: @escaping (HotkeyBindings) -> [CaptureAction],
+        applyRetention: @escaping (Int) -> Void
+    ) {
         self.store = store
         self.applyHotkeys = applyHotkeys
+        self.applyRetention = applyRetention
 
         // Seed from the store. Assigning in init does not fire `didSet`, so this reads without
         // writing back or re-registering.

@@ -35,6 +35,7 @@ public final class AppCoordinator {
     private let imageSource: ImageSource
     private let imageSink: ImageSink
     private let settings: SettingsStore
+    private let history: HistoryStore?
     private unowned let ui: CaptureUI
 
     public init(
@@ -43,6 +44,7 @@ public final class AppCoordinator {
         imageSource: ImageSource,
         imageSink: ImageSink,
         settings: SettingsStore,
+        history: HistoryStore? = nil,
         ui: CaptureUI
     ) {
         self.captureService = captureService
@@ -50,6 +52,7 @@ public final class AppCoordinator {
         self.imageSource = imageSource
         self.imageSink = imageSink
         self.settings = settings
+        self.history = history
         self.ui = ui
     }
 
@@ -60,6 +63,7 @@ public final class AppCoordinator {
     public func captureFullscreen() async {
         switch await captureService.captureFullscreen() {
         case let .success(image):
+            record(image, source: .fullscreen)
             ui.openEditor(with: image)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
@@ -80,6 +84,7 @@ public final class AppCoordinator {
         guard let region = await overlay.selectRegion() else { return }
         switch await captureService.captureRegion(region) {
         case let .success(image):
+            record(image, source: .area)
             ui.presentPostCaptureToolbar(for: image, at: region)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
@@ -94,13 +99,14 @@ public final class AppCoordinator {
     /// overlay mode differs: `selectWindow()` hover-highlights windows and resolves the clicked one
     /// to a `.window` `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then
     /// captures cleanly without its surroundings. Escape (`nil`) is a silent no-op with no capture;
-    /// success shows the post-capture toolbar at the window; failures route exactly as the other
-    /// paths do — `permissionDenied` to recovery, `userCancelled` silent, the rest to a distinct
-    /// message — so a capture never lands the user in a blank editor.
+    /// success records the capture in history and shows the post-capture toolbar at the window;
+    /// failures route exactly as the other paths do — `permissionDenied` to recovery, `userCancelled`
+    /// silent, the rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureWindow() async {
         guard let region = await overlay.selectWindow() else { return }
         switch await captureService.captureRegion(region) {
         case let .success(image):
+            record(image, source: .window)
             ui.presentPostCaptureToolbar(for: image, at: region)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
@@ -116,7 +122,8 @@ public final class AppCoordinator {
     /// entry — the editor never learns whether the pixels came from a capture or a file. The typed
     /// result routes exactly as the capture spine does: success opens the editor, `userCancelled`
     /// (the panel was dismissed) is a silent no-op, and an unreadable/unsupported file surfaces a
-    /// distinct message — never a blank editor.
+    /// distinct message — never a blank editor. Opening an existing file is not a capture, so it is
+    /// not recorded in history (stories 50–54 are about captures).
     public func openFile() {
         switch imageSource.openDocument() {
         case let .success(image):
@@ -126,6 +133,13 @@ public final class AppCoordinator {
         case let .failure(error):
             ui.presentImageLoadFailure(error)
         }
+    }
+
+    /// Record a fresh capture in the local history as it happens (story 50). Best-effort: a history
+    /// write failure must never block the user from seeing their capture, so it is swallowed rather
+    /// than surfaced. No-op when no store is wired.
+    private func record(_ image: CapturedImage, source: CaptureSource) {
+        _ = try? history?.add(image, source: source)
     }
 
     /// Editor output (stories 40/44): flatten base + all elements in z-order via

@@ -587,3 +587,116 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(item.suggestedName == "drag-2026")            // base name; the UTI supplies the extension
     #expect(item.data == encode(render(document), as: .png))
 }
+
+// MARK: - History recording (story 50)
+
+/// A fresh history store in a throwaway temp directory, cleaned up by the caller.
+@MainActor private func tempHistory() -> (store: HistoryStore, dir: URL) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("coord-history-\(UUID().uuidString)")
+    return (HistoryStore(directory: dir), dir)
+}
+
+@MainActor
+@Test func fullscreenCaptureIsRecordedInHistory() async throws {
+    let image = sampleImage()
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    let records = history.all()
+    #expect(records.count == 1)
+    #expect(records.first?.source == .fullscreen)
+    #expect(history.capturedImage(for: records[0]) == image)   // the recorded bytes round-trip
+}
+
+@MainActor
+@Test func areaCaptureIsRecordedInHistory() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+
+    #expect(history.all().map(\.source) == [.area])
+}
+
+@MainActor
+@Test func windowCaptureIsRecordedInHistory() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: StubOverlay(region: nil, windowRegion: sampleWindowRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(history.all().map(\.source) == [.window])
+}
+
+@MainActor
+@Test func openingAFileIsNotRecordedInHistory() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.userCancelled)),
+        overlay: unusedOverlay(),
+        imageSource: StubImageSource(.success(sampleImage())),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    coordinator.openFile()
+
+    #expect(ui.openedImages == [sampleImage()])   // it reaches the editor …
+    #expect(history.all().isEmpty)                // … but an opened file is not a capture
+}
+
+@MainActor
+@Test func aFailedCaptureRecordsNothing() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.permissionDenied)),
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(history.all().isEmpty)   // a permission failure never lands in history
+}

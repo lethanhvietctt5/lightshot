@@ -13,6 +13,7 @@ import LightshotKit
 final class AppController: NSObject, CaptureUI {
     private var coordinator: AppCoordinator!
     private var editorWindow: NSWindow?
+    private var historyWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
@@ -29,18 +30,31 @@ final class AppController: NSObject, CaptureUI {
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
             settings: settings,
+            history: history,
             ui: self
         )
+        // Enforce the persisted retention setting on the history store at launch (story 54): the
+        // value lives in `SettingsStore` (LIG-15), the trimming lives here in the `HistoryStore` seam.
+        applyRetention(settings.historyRetention)
     }
 
     private let settings = UserDefaultsSettingsStore()
+    private let history = HistoryStore(directory: AppController.historyDirectory)
 
-    /// The settings-window bridge. Editing hotkeys re-registers them through `applyHotkeys` and the
-    /// OS's refusals flow back into the model to be surfaced.
+    /// The settings-window bridge. Editing hotkeys re-registers them through `applyHotkeys` (the OS's
+    /// refusals flow back to be surfaced); editing history retention re-trims the store through
+    /// `applyRetention`, so the setting the window persists is enforced immediately.
     lazy var settingsModel = SettingsModel(
         store: settings,
-        applyHotkeys: { [weak self] bindings in self?.applyHotkeys(bindings) ?? [] }
+        applyHotkeys: { [weak self] bindings in self?.applyHotkeys(bindings) ?? [] },
+        applyRetention: { [weak self] retention in self?.applyRetention(retention) }
     )
+
+    /// Apply the configured history retention to the store (stories 50/54). `SettingsStore` owns the
+    /// value (persisted by LIG-15); the store owns trimming to it — so this is where the two meet.
+    func applyRetention(_ retention: Int) {
+        try? history.setRetention(retention)
+    }
 
     /// Register the persisted global hotkeys (story 56). Called once at launch and again whenever the
     /// settings window edits a binding; returns the actions the OS refused so the UI can flag them.
@@ -85,6 +99,24 @@ final class AppController: NSObject, CaptureUI {
     /// panel is modal (synchronous), so unlike the capture spine this needs no `Task`.
     func openFile() {
         coordinator.openFile()
+    }
+
+    /// Menu entry point for the capture history window (stories 50–54). Reuses a single window;
+    /// the view refreshes its snapshot from the store whenever the window becomes key.
+    func showHistory() {
+        let window = historyWindow ?? makeHistoryWindow()
+        if window.contentViewController == nil {
+            let model = HistoryModel(
+                store: history,
+                onReopen: { [weak self] in self?.openEditor(with: $0) },
+                onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) }
+            )
+            window.contentViewController = NSHostingController(rootView: HistoryView(model: model))
+        }
+        historyWindow = window
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - CaptureUI
@@ -249,6 +281,29 @@ final class AppController: NSObject, CaptureUI {
         window.title = "Lightshot"
         window.isReleasedWhenClosed = false
         return window
+    }
+
+    private func makeHistoryWindow() -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 460),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Capture History"
+        window.isReleasedWhenClosed = false
+        window.center()
+        return window
+    }
+
+    /// Where the local history keeps its owned image copies + index: Application Support, under the
+    /// bundle id, so it is per-user, out of the way, and survives relaunches. Local-only — a v1
+    /// guardrail (no cloud, no accounts).
+    private static var historyDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+        let bundleID = Bundle.main.bundleIdentifier ?? "dev.lightshot.app"
+        return base.appendingPathComponent(bundleID, isDirectory: true).appendingPathComponent("History", isDirectory: true)
     }
 
     private func openScreenRecordingSettings() {
