@@ -116,7 +116,7 @@ struct SettingsView: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.directoryURL = model.saveLocation
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         if panel.runModal() == .OK, let url = panel.url {
             model.saveLocation = url
         }

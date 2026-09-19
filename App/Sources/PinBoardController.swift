@@ -7,7 +7,7 @@ import LightshotKit
 /// Each pin is a borderless `NSWindow` that floats above other apps so the user can reference a shot
 /// while working elsewhere. The window is movable (drag its background), resizable (drag its edges,
 /// aspect ratio locked to the image), and closable; a hover-revealed action bar plus keyboard
-/// shortcuts (⌘C / ⌘S / ⌘W / Esc) copy or save the shot, or dismiss it.
+/// shortcuts (⌘C / ⌘S / ⌘W / Esc) copy the shot or dismiss it; saving is on the action bar.
 ///
 /// A thin OS wrapper with no unit tests — it owns only window placement and lifetime. The image it
 /// shows is a `RenderedImage` (already flattened by `render`), and copy/save are closures the
@@ -44,7 +44,6 @@ final class PinBoardController {
         window.aspectRatio = size          // keep the shot undistorted while resizing
         window.minSize = NSSize(width: 80, height: 80)
         window.onCopy = copy
-        window.onSave = save
 
         let close: () -> Void = { [weak self, weak window] in
             guard let window else { return }
@@ -95,12 +94,12 @@ final class PinBoardController {
 }
 
 /// A borderless window that can still become key — so it receives keyboard shortcuts — and maps
-/// ⌘C / ⌘S / ⌘W / Escape to the pin's copy, save, and close actions. Mirrors `OverlayKeyWindow`'s
+/// ⌘C / ⌘S / ⌘W / Escape to the pin's copy and close actions — ⌘S copies, as it does in the editor
+/// (LIG-23); the pin stays up. Mirrors `OverlayKeyWindow`'s
 /// approach of routing keys in the window rather than relying on SwiftUI focus for a chrome-less
 /// surface.
 final class PinWindow: NSWindow {
     var onCopy: (() -> Void)?
-    var onSave: (() -> Void)?
     var onClose: (() -> Void)?
 
     override var canBecomeKey: Bool { true }
@@ -115,8 +114,7 @@ final class PinWindow: NSWindow {
         }
         switch key {
         case "w": onClose?()
-        case "c": onCopy?()
-        case "s": onSave?()
+        case "c", "s": onCopy?()
         default: super.keyDown(with: event)
         }
     }

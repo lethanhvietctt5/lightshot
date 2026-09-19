@@ -102,9 +102,10 @@ public final class AppCoordinator {
     /// front so the prompt precedes the drag. Then ordering matters: the **overlay runs first** to
     /// resolve a `CaptureRegion` (drag a rect, Escape to cancel), *then* `CaptureService` captures
     /// it — the service needs a target. A cancelled overlay (`nil`) is a silent no-op with no
-    /// capture. On success the post-capture toolbar is shown at the selection; failures route
-    /// exactly as fullscreen does — `permissionDenied` to recovery, `userCancelled` silent, the
-    /// rest to a distinct message — so a capture never lands the user in a blank editor.
+    /// capture. On success the capture opens in the editor (or the post-capture toolbar at the
+    /// selection, per `openInEditor`); failures route exactly as fullscreen does —
+    /// `permissionDenied` to recovery, `userCancelled` silent, the rest to a distinct message — so
+    /// a capture never lands the user in a blank editor.
     public func captureArea() async {
         lastCapture = .area
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
@@ -115,13 +116,24 @@ public final class AppCoordinator {
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .area)
-            ui.presentPostCaptureToolbar(for: image, at: region)
+            presentCapture(image, at: region)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
         case .failure(.userCancelled):
             break
         case let .failure(error):
             ui.presentCaptureFailure(error)
+        }
+    }
+
+    /// Where a successful area/window capture lands (story 13, LIG-23): straight in the editor by
+    /// default, or the post-capture toolbar at the selection when the user turned `openInEditor`
+    /// off. Read live from settings, so a change takes effect on the next capture.
+    private func presentCapture(_ image: CapturedImage, at region: CaptureRegion) {
+        if settings.openInEditor {
+            ui.openEditor(with: image)
+        } else {
+            ui.presentPostCaptureToolbar(for: image, at: region)
         }
     }
 
@@ -151,7 +163,8 @@ public final class AppCoordinator {
     /// `selectWindow()` hover-highlights windows and resolves the clicked one to a `.window`
     /// `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then captures cleanly
     /// without its surroundings. Escape (`nil`) is a silent no-op with no capture; success records
-    /// the capture in history and shows the post-capture toolbar at the window; failures route
+    /// the capture in history and opens it in the editor (or the toolbar at the window, per
+    /// `openInEditor`); failures route
     /// exactly as the other paths do — `permissionDenied` to recovery, `userCancelled` silent, the
     /// rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureWindow() async {
@@ -163,7 +176,7 @@ public final class AppCoordinator {
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .window)
-            ui.presentPostCaptureToolbar(for: image, at: region)
+            presentCapture(image, at: region)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
         case .failure(.userCancelled):

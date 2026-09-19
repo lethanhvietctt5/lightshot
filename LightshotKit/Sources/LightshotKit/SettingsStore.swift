@@ -18,10 +18,9 @@ public protocol SettingsStore: AnyObject {
 
     /// The global-hotkey chords bound to each capture action (story 56).
     var hotkeys: HotkeyBindings { get set }
-    /// Whether a fresh capture opens straight in the editor (story 13/60). **Persisted here by
-    /// LIG-15; not yet consumed.** The routing that reads it — immediate editor vs. the post-capture
-    /// toolbar as the default outcome — is a spec-flagged decision (specs/0001 "Parity flags")
-    /// deferred to a capture ticket, so LIG-15 stores the preference without picking that fork.
+    /// Whether a fresh area/window capture opens straight in the editor (story 13/60) — the default
+    /// — or shows the post-capture toolbar at the selection instead. Read live at capture time by
+    /// `AppCoordinator` (LIG-23).
     var openInEditor: Bool { get set }
     /// Whether the mouse cursor is included in captures (story 12). Read live at capture time by
     /// `SCCaptureService`.

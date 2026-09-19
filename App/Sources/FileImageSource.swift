@@ -20,7 +20,7 @@ final class FileImageSource: ImageSource {
         panel.canChooseFiles = true
         panel.allowedContentTypes = Self.readableTypes
 
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         guard panel.runModal() == .OK, let url = panel.url else {
             // The user dismissed the panel — a silent no-op, not an error to surface.
             return .failure(.userCancelled)

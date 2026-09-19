@@ -46,6 +46,7 @@ final class EditorModel {
 
     private(set) var document: AnnotationDocument
     private let copy: (AnnotationDocument) -> Void
+    private let done: (AnnotationDocument) -> Void
     private let save: (AnnotationDocument) -> Void
     private let saveAs: (AnnotationDocument) -> Void
     private let pin: (AnnotationDocument) -> Void
@@ -92,6 +93,7 @@ final class EditorModel {
     init(
         document: AnnotationDocument,
         copy: @escaping (AnnotationDocument) -> Void,
+        done: @escaping (AnnotationDocument) -> Void,
         save: @escaping (AnnotationDocument) -> Void,
         saveAs: @escaping (AnnotationDocument) -> Void,
         pin: @escaping (AnnotationDocument) -> Void,
@@ -99,6 +101,7 @@ final class EditorModel {
     ) {
         self.document = document
         self.copy = copy
+        self.done = done
         self.save = save
         self.saveAs = saveAs
         self.pin = pin
@@ -214,6 +217,10 @@ final class EditorModel {
         document.delete(id)
     }
     func copyToClipboard() { endTextEditing(); copy(document) }
+
+    /// The finishing gesture (⌘S, LIG-23): copy the flattened document and close the editor. No
+    /// file is written — saving to disk stays on the Save button and Save As….
+    func copyAndClose() { endTextEditing(); done(document) }
 
     /// Save to disk with the configured defaults (story 43).
     func saveToDisk() { endTextEditing(); save(document) }

@@ -2,10 +2,11 @@ import SwiftUI
 import LightshotKit
 
 /// The pre-capture selection overlay surface: a full-screen dimmed canvas with a live selection
-/// rect, edge/corner handles, and a pixel-dimension readout (stories 2–4).
+/// rect and a pixel-dimension readout (stories 2–3). Releasing the drag confirms (LIG-23), so
+/// there are no resize handles — nothing is adjustable after the mouse comes up.
 ///
 /// A thin projection of `SelectionOverlayModel`: it draws the model's `selection` and routes the
-/// drag into it. Keyboard resolution (Escape/Return) is handled by the hosting window, not here, so
+/// drag into it. Keyboard resolution (Escape) is handled by the hosting window, not here, so
 /// the overlay needs no focus plumbing. Coordinates are screen points at 1:1 — no projection.
 struct SelectionOverlayView: View {
     @State private var model: SelectionOverlayModel
@@ -41,13 +42,6 @@ struct SelectionOverlayView: View {
         // Selection border.
         context.stroke(Path(rect), with: .color(.white), style: StrokeStyle(lineWidth: 1))
 
-        // Edge/corner handles.
-        for handle in Handle.allCases {
-            let p = handlePoint(handle, in: box).cgPoint
-            let dot = CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)
-            context.fill(Path(ellipseIn: dot), with: .color(.white))
-            context.stroke(Path(ellipseIn: dot), with: .color(.black.opacity(0.5)), lineWidth: 0.5)
-        }
 
         // Live pixel-dimension readout, in a pill above the selection (or below when near the top).
         if let px = model.pixelSize {

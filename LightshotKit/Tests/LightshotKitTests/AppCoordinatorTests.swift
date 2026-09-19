@@ -342,7 +342,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(capture.requestAuthorizationCount == 1)   // first run prompts
     #expect(overlay.callCount == 1)                   // …and the overlay still resolves a region
-    #expect(ui.toolbars.count == 1)                   // success reaches the post-capture toolbar
+    #expect(ui.openedImages.count == 1)               // success reaches the editor
 }
 
 // The real `CGRequestScreenCaptureAccess()` does not wait for the user: on a first ask it puts the
@@ -432,12 +432,13 @@ private func sampleWindowRegion() -> CaptureRegion {
     coordinator.copyToClipboard(document)
 
     #expect(sink.copied == [render(document)])   // the flattened document, not the raw capture
+    #expect(sink.written.isEmpty)                // copying never produces a file (LIG-23)
 }
 
 // MARK: - Area capture routing (stories 1–5, 14)
 
 @MainActor
-@Test func areaCaptureResolvesRegionThenCapturesItAndShowsTheToolbar() async {
+@Test func areaCaptureResolvesRegionThenCapturesItAndOpensTheEditor() async {
     let image = sampleImage()
     let region = sampleRegion()
     let ui = SpyUI()
@@ -456,11 +457,77 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(overlay.callCount == 1)                 // the overlay runs first, once
     #expect(capture.capturedRegions == [region])    // …then the resolved region is captured
-    #expect(ui.toolbars.count == 1)                 // success shows the post-capture toolbar
+    #expect(ui.openedImages == [image])             // success opens straight in the editor (LIG-23)
+    #expect(ui.toolbars.isEmpty)                    // …with no toolbar step in between
+    #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func areaCaptureShowsTheToolbarWhenOpenInEditorIsOff() async {
+    let image = sampleImage()
+    let region = sampleRegion()
+    let ui = SpyUI()
+    let settings = StubSettings()
+    settings.openInEditor = false
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: StubOverlay(region: region),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: settings,
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+
+    #expect(ui.toolbars.count == 1)                 // the setting off brings the toolbar back
     #expect(ui.toolbars.first?.image == image)
     #expect(ui.toolbars.first?.region == region)    // positioned at the selection
-    #expect(ui.openedImages.isEmpty)                // the toolbar, not a blank editor, is the surface
-    #expect(ui.failures.isEmpty)
+    #expect(ui.openedImages.isEmpty)                // the toolbar, not the editor, is the surface
+}
+
+@MainActor
+@Test func openInEditorIsReadAtCaptureTimeSoAChangeAppliesToTheNextCapture() async {
+    let ui = SpyUI()
+    let settings = StubSettings()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: settings,
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+    settings.openInEditor = false
+    await coordinator.captureArea()
+
+    #expect(ui.openedImages.count == 1)             // first capture: editor
+    #expect(ui.toolbars.count == 1)                 // second capture: toolbar, no restart needed
+}
+
+@MainActor
+@Test func fullscreenAndOpenFileOpenTheEditorEvenWhenOpenInEditorIsOff() async {
+    // Neither path has a selection to anchor a toolbar to, so the setting doesn't apply to them.
+    let image = sampleImage()
+    let ui = SpyUI()
+    let settings = StubSettings()
+    settings.openInEditor = false
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: unusedOverlay(),
+        imageSource: StubImageSource(.success(image)),
+        imageSink: SpyImageSink(),
+        settings: settings,
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+    coordinator.openFile()
+
+    #expect(ui.openedImages == [image, image])
+    #expect(ui.toolbars.isEmpty)
 }
 
 @MainActor
@@ -548,7 +615,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 // MARK: - Window capture routing (stories 6–7)
 
 @MainActor
-@Test func windowCaptureResolvesWindowThenCapturesItAndShowsTheToolbar() async {
+@Test func windowCaptureResolvesWindowThenCapturesItAndOpensTheEditor() async {
     let image = sampleImage()
     let region = sampleWindowRegion()
     let ui = SpyUI()
@@ -568,11 +635,33 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(overlay.windowCallCount == 1)           // window mode consults selectWindow()…
     #expect(overlay.callCount == 0)                 // …not the drag-a-rect path
     #expect(capture.capturedRegions == [region])    // …then the resolved window is captured
-    #expect(ui.toolbars.count == 1)                 // success shows the post-capture toolbar
+    #expect(ui.openedImages == [image])             // success opens straight in the editor (LIG-23)
+    #expect(ui.toolbars.isEmpty)                    // …with no toolbar step in between
+    #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func windowCaptureShowsTheToolbarWhenOpenInEditorIsOff() async {
+    let image = sampleImage()
+    let region = sampleWindowRegion()
+    let ui = SpyUI()
+    let settings = StubSettings()
+    settings.openInEditor = false
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: StubOverlay(region: nil, windowRegion: region),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: settings,
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(ui.toolbars.count == 1)                 // the setting off brings the toolbar back
     #expect(ui.toolbars.first?.image == image)
     #expect(ui.toolbars.first?.region == region)    // positioned at the window
-    #expect(ui.openedImages.isEmpty)                // the toolbar, not a blank editor, is the surface
-    #expect(ui.failures.isEmpty)
+    #expect(ui.openedImages.isEmpty)                // the toolbar, not the editor, is the surface
 }
 
 @MainActor
@@ -595,7 +684,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(capture.requestAuthorizationCount == 1)   // first run prompts
     #expect(overlay.windowCallCount == 1)             // …and the window overlay still resolves a target
-    #expect(ui.toolbars.count == 1)                   // success reaches the post-capture toolbar
+    #expect(ui.openedImages.count == 1)               // success reaches the editor
 }
 
 @MainActor
