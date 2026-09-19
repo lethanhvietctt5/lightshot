@@ -14,7 +14,37 @@ import Foundation
 private final class StubCaptureService: CaptureService, @unchecked Sendable {
     let result: Result<CapturedImage, CaptureError>
     private(set) var capturedRegions: [CaptureRegion] = []
-    init(_ result: Result<CapturedImage, CaptureError>) { self.result = result }
+    // Authorization surface (LIG-19). `status` defaults to `.authorized` so the pre-existing
+    // routing tests never trip onboarding; the onboarding tests set it explicitly and read the
+    // call counts back. `requestAuthorization()` flips the reported status to `requestResult`,
+    // mimicking the real prompt updating the world.
+    var status: CaptureAuthorizationStatus
+    let requestResult: CaptureAuthorizationStatus
+    private(set) var authorizationStatusCount = 0
+    private(set) var requestAuthorizationCount = 0
+
+    init(
+        _ result: Result<CapturedImage, CaptureError>,
+        status: CaptureAuthorizationStatus = .authorized,
+        requestResult: CaptureAuthorizationStatus = .authorized
+    ) {
+        self.result = result
+        self.status = status
+        self.requestResult = requestResult
+    }
+
+    func authorizationStatus() async -> CaptureAuthorizationStatus {
+        authorizationStatusCount += 1
+        return status
+    }
+
+    @discardableResult
+    func requestAuthorization() async -> CaptureAuthorizationStatus {
+        requestAuthorizationCount += 1
+        status = requestResult
+        return requestResult
+    }
+
     func captureFullscreen() async -> Result<CapturedImage, CaptureError> { result }
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> {
         capturedRegions.append(region)
@@ -187,6 +217,119 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(ui.permissionDeniedCount == 0)
 }
 
+// MARK: - Permission onboarding & recovery (stories 57–58, LIG-19)
+
+@MainActor
+@Test func firstRunPromptsForAuthorizationBeforeCapturing() async {
+    // .notDetermined == a true first run: the coordinator triggers the system prompt up front so
+    // the user is guided to grant permission, rather than meeting a cryptic black capture.
+    let image = sampleImage()
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(image), status: .notDetermined, requestResult: .authorized)
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(capture.requestAuthorizationCount == 1)   // first run prompts once
+    #expect(ui.openedImages == [image])               // …then capture proceeds to the editor
+    #expect(ui.permissionDeniedCount == 0)
+}
+
+@MainActor
+@Test func alreadyAuthorizedNeverRePrompts() async {
+    // A standing grant skips the prompt entirely — onboarding is a first-run-only affordance.
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(sampleImage()), status: .authorized)
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(capture.requestAuthorizationCount == 0)   // no re-prompt when already authorized
+    #expect(ui.openedImages.count == 1)
+}
+
+@MainActor
+@Test func standingDenialDoesNotRePromptAndTheCaptureRoutesToRecovery() async {
+    // .denied is not re-prompted (the OS prompts at most once); the authoritative capture call is
+    // what surfaces the recovery path, never a blank editor.
+    let ui = SpyUI()
+    let capture = StubCaptureService(.failure(.permissionDenied), status: .denied)
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(capture.requestAuthorizationCount == 0)   // no re-prompt on a standing denial
+    #expect(ui.permissionDeniedCount == 1)            // recovery, driven by the capture result
+    #expect(ui.openedImages.isEmpty)
+}
+
+@MainActor
+@Test func permissionRevokedAfterTheAdvisoryCheckStillRoutesToRecovery() async {
+    // The revoked-after-check race: the pre-capture status reads .authorized (so no prompt), but
+    // permission is revoked before the capture, which authoritatively returns .permissionDenied.
+    // The capture result — not the stale status — decides, so recovery still fires.
+    let ui = SpyUI()
+    let capture = StubCaptureService(.failure(.permissionDenied), status: .authorized)
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(capture.requestAuthorizationCount == 0)   // advisory check said authorized: no prompt
+    #expect(ui.permissionDeniedCount == 1)            // …but the authoritative capture routes recovery
+    #expect(ui.openedImages.isEmpty)                  // never a blank editor
+}
+
+@MainActor
+@Test func areaCaptureFirstRunPromptsThenRunsTheOverlay() async {
+    // Onboarding fronts the area flow too, so a first-run user meets the permission prompt before
+    // being asked to drag a selection.
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(sampleImage()), status: .notDetermined, requestResult: .authorized)
+    let overlay = StubOverlay(region: sampleRegion())
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+
+    #expect(capture.requestAuthorizationCount == 1)   // first run prompts
+    #expect(overlay.callCount == 1)                   // …and the overlay still resolves a region
+    #expect(ui.toolbars.count == 1)                   // success reaches the post-capture toolbar
+}
+
 // MARK: - Output
 
 @MainActor
@@ -346,6 +489,29 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(ui.toolbars.first?.region == region)    // positioned at the window
     #expect(ui.openedImages.isEmpty)                // the toolbar, not a blank editor, is the surface
     #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func windowCaptureFirstRunPromptsThenRunsTheOverlay() async {
+    // First-run onboarding (story 57) fronts the window path too, so a first-run user meets the
+    // permission prompt before hover-picking a window.
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(sampleImage()), status: .notDetermined, requestResult: .authorized)
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(capture.requestAuthorizationCount == 1)   // first run prompts
+    #expect(overlay.windowCallCount == 1)             // …and the window overlay still resolves a target
+    #expect(ui.toolbars.count == 1)                   // success reaches the post-capture toolbar
 }
 
 @MainActor
