@@ -57,9 +57,14 @@ public final class PermissionOnboardingModel {
     /// The checklist, in the order supplied at construction. Each row tracks its own live status.
     public private(set) var requirements: [Requirement]
 
+    /// Opens the System Settings pane for a permission the user must grant by hand. Injected so the
+    /// decision of *when* to send the user there lives here, tested, rather than in the view.
+    private let openSettings: (PermissionKind) -> Void
+
     /// Build the onboarding over a set of required permissions.
-    public init(requirements: [Requirement]) {
+    public init(requirements: [Requirement], openSettings: @escaping (PermissionKind) -> Void = { _ in }) {
         self.requirements = requirements
+        self.openSettings = openSettings
     }
 
     /// True once every required permission is granted — the point at which onboarding can be
@@ -77,13 +82,24 @@ public final class PermissionOnboardingModel {
         }
     }
 
-    /// Trigger the system prompt for one permission and fold the result back into its row.
+    /// The row's one action: ask the OS for the permission, fold the result back into the row, and —
+    /// for a row we believed was a standing denial — take the user to System Settings.
     ///
-    /// For a `.notDetermined` permission this shows the OS prompt; for a standing `.denied` the OS
-    /// won't re-prompt (the user must re-enable it in System Settings), and the returned status
-    /// reflects that — so the row stays un-granted and the view keeps offering the settings deep link.
+    /// The OS is asked **even when the row reads `.denied`**. That status is only a best guess (a
+    /// two-state preflight plus a remembered "we asked once" flag), and it goes stale whenever the OS
+    /// forgets the app — a TCC reset, or a re-signed build. Asking is free (the OS prompts at most
+    /// once per app identity) and it is what lists the app in System Settings, so skipping it can
+    /// strand the user in a pane with nothing to switch on.
+    ///
+    /// A `.notDetermined` row does *not* open System Settings: the system prompt it raises already
+    /// offers that, and the request returns immediately rather than waiting for the user's answer.
     public func enable(_ kind: PermissionKind) async {
         guard let index = requirements.firstIndex(where: { $0.kind == kind }) else { return }
-        requirements[index].status = await requirements[index].source.requestAuthorization()
+        let believedDenied = requirements[index].status == .denied
+        let status = await requirements[index].source.requestAuthorization()
+        requirements[index].status = status
+        if believedDenied, status != .authorized {
+            openSettings(kind)
+        }
     }
 }

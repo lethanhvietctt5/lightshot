@@ -345,6 +345,75 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(ui.toolbars.count == 1)                   // success reaches the post-capture toolbar
 }
 
+// The real `CGRequestScreenCaptureAccess()` does not wait for the user: on a first ask it puts the
+// system prompt on screen and returns `false` within milliseconds (measured: 6 ms). The grant then
+// happens in System Settings. So a first-run request that comes back un-authorized means "the system
+// prompt is up right now" — the flow must stop there, not pile an overlay or our own alert on top.
+
+@MainActor
+@Test func firstRunFullscreenStopsAtTheSystemPromptInsteadOfStackingTheRecoveryAlert() async {
+    let ui = SpyUI()
+    let capture = StubCaptureService(.failure(.permissionDenied), status: .notDetermined, requestResult: .denied)
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(capture.requestAuthorizationCount == 1)   // the system prompt was raised…
+    #expect(capture.capturedDisplays.isEmpty)         // …so no doomed capture runs behind it
+    #expect(ui.permissionDeniedCount == 0)            // …and no second dialog stacks on the prompt
+}
+
+@MainActor
+@Test func firstRunAreaStopsAtTheSystemPromptInsteadOfCoveringItWithTheOverlay() async {
+    let ui = SpyUI()
+    let capture = StubCaptureService(.failure(.permissionDenied), status: .notDetermined, requestResult: .denied)
+    let overlay = StubOverlay(region: sampleRegion())
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+
+    #expect(capture.requestAuthorizationCount == 1)
+    #expect(overlay.callCount == 0)                   // the full-screen overlay never covers the prompt
+    #expect(capture.capturedRegions.isEmpty)
+    #expect(ui.permissionDeniedCount == 0)
+}
+
+@MainActor
+@Test func firstRunWindowStopsAtTheSystemPromptInsteadOfCoveringItWithTheOverlay() async {
+    let ui = SpyUI()
+    let capture = StubCaptureService(.failure(.permissionDenied), status: .notDetermined, requestResult: .denied)
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(capture.requestAuthorizationCount == 1)
+    #expect(overlay.windowCallCount == 0)
+    #expect(capture.capturedRegions.isEmpty)
+    #expect(ui.permissionDeniedCount == 0)
+}
+
 // MARK: - Output
 
 @MainActor
