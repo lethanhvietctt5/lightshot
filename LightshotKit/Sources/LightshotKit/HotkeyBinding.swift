@@ -80,8 +80,8 @@ public struct HotkeyBindings: Equatable, Sendable {
 
     /// Defaults echoing macOS's screenshot keys but with **Control added** so they don't collide with
     /// the system's own ⇧⌘3/⇧⌘4 — those are reserved, and a global registration for them would fail
-    /// on every Mac. So: ⌃⌘3 fullscreen, ⌃⌘4 area. `window` is intentionally unbound until its
-    /// capture path lands (LIG-14), so shipping doesn't register a hotkey that does nothing.
+    /// on every Mac. So: ⌃⌘3 fullscreen, ⌃⌘4 area. `window` capture works (LIG-14) but ships **unbound
+    /// by default** — the user can assign it in settings, so we don't claim a third global chord for it.
     public static let defaults = HotkeyBindings([
         .fullscreen: HotkeyBinding(keyCode: 20, modifiers: [.command, .control], keyLabel: "3"),
         .area: HotkeyBinding(keyCode: 21, modifiers: [.command, .control], keyLabel: "4"),

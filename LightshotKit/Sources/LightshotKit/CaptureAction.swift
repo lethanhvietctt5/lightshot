@@ -4,8 +4,8 @@ import Foundation
 ///
 /// These are the user-triggerable capture entry points the settings window lets you rebind. The set
 /// is deliberately small and stable: adding a mode (e.g. "repeat last") is a new case, not a change
-/// to the binding model. `window` is listed so it can be bound now even though the capture itself
-/// lands in LIG-14 — it simply carries no default hotkey until then.
+/// to the binding model. All three capture paths are wired (area LIG-13, window LIG-14, fullscreen
+/// LIG-7); `window` simply carries no default chord (see `HotkeyBindings.defaults`).
 public enum CaptureAction: String, CaseIterable, Codable, Sendable, Identifiable {
     case area
     case window

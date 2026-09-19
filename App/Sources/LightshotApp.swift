@@ -41,16 +41,17 @@ private struct LightshotMenu: View {
     let controller: AppController
 
     var body: some View {
-        // Fullscreen (LIG-7) and area (LIG-13) capture are wired; window capture (LIG-14) stays
-        // inert until its ticket lands. No `.keyboardShortcut` here on purpose: these are just click
-        // targets. The authoritative, *rebindable* shortcuts are the global hotkeys registered via
-        // `HotkeyService` (story 56) — a static menu equivalent would duplicate `HotkeyBindings`'
-        // defaults and then silently lie once the user rebinds one.
+        // Fullscreen (LIG-7), area (LIG-13), and window (LIG-14) capture are all wired. No
+        // `.keyboardShortcut` here on purpose: these are just click targets. The authoritative,
+        // *rebindable* shortcuts are the global hotkeys registered via `HotkeyService` (story 56) —
+        // a static menu equivalent would duplicate `HotkeyBindings`' defaults and then silently lie
+        // once the user rebinds one.
         Button("Capture Area…") {
             controller.captureArea()
         }
-        Button("Capture Window…") {}
-            .disabled(true)
+        Button("Capture Window…") {
+            controller.captureWindow()
+        }
         Button("Capture Fullscreen") {
             controller.captureFullscreen()
         }
@@ -61,6 +62,14 @@ private struct LightshotMenu: View {
             Text("Settings…")
         }
         .keyboardShortcut(",", modifiers: .command)
+
+        Divider()
+
+        // Open an existing image to annotate (LIG-16): file picker → same editor as a capture.
+        Button("Open Image…") {
+            controller.openFile()
+        }
+        .keyboardShortcut("o", modifiers: [.command])
 
         Divider()
 

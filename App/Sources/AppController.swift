@@ -15,6 +15,7 @@ final class AppController: NSObject, CaptureUI {
     private var editorWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
     private let hotkeyService = CarbonHotkeyService()
+    private let pinBoard = PinBoardController()
 
     override init() {
         super.init()
@@ -25,6 +26,7 @@ final class AppController: NSObject, CaptureUI {
                 UserDefaultsSettingsStore.storedIncludeCursor()
             }),
             overlay: OverlaySelectionController(),
+            imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
             settings: settings,
             ui: self
@@ -55,13 +57,12 @@ final class AppController: NSObject, CaptureUI {
         applyHotkeys(settings.hotkeys)
     }
 
-    /// Route a fired hotkey to its capture entry point. `window` capture is a stub until LIG-14, so
-    /// its binding registers but currently does nothing.
+    /// Route a fired hotkey to its capture entry point.
     private func perform(_ action: CaptureAction) {
         switch action {
         case .area: captureArea()
+        case .window: captureWindow()
         case .fullscreen: captureFullscreen()
-        case .window: break
         }
     }
 
@@ -75,6 +76,17 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.captureArea() }
     }
 
+    /// Menu / hotkey entry point for window capture: hover-highlight overlay → capture → toolbar.
+    func captureWindow() {
+        Task { await coordinator.captureWindow() }
+    }
+
+    /// Menu entry point for opening an existing image file (story 39): file picker → editor. The
+    /// panel is modal (synchronous), so unlike the capture spine this needs no `Task`.
+    func openFile() {
+        coordinator.openFile()
+    }
+
     // MARK: - CaptureUI
 
     func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {
@@ -84,7 +96,8 @@ final class AppController: NSObject, CaptureUI {
         postCaptureToolbar.present(
             at: region,
             annotate: { [weak self] in self?.openEditor(with: image) },
-            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: image)) }
+            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: image)) },
+            pin: { [weak self] in self?.pin(AnnotationDocument(baseImage: image)) }
         )
     }
 
@@ -95,6 +108,7 @@ final class AppController: NSObject, CaptureUI {
             onCopy: { [weak self] in self?.coordinator.copyToClipboard($0) },
             onSave: { [weak self] in self?.save($0) },
             onSaveAs: { [weak self] in self?.saveAs($0) },
+            onPin: { [weak self] in self?.pin($0) },
             onDrag: { [weak self] in self?.dragProvider(for: $0) ?? NSItemProvider() }
         )
         let window = editorWindow ?? makeEditorWindow()
@@ -127,6 +141,19 @@ final class AppController: NSObject, CaptureUI {
     func presentCaptureFailure(_ error: CaptureError) {
         let alert = NSAlert()
         alert.messageText = "Couldn’t take the screenshot"
+        alert.informativeText = Self.message(for: error)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    func presentImageLoadFailure(_ error: ImageLoadError) {
+        // The coordinator routes `userCancelled` to a silent no-op, so only the unreadable /
+        // unsupported cases reach here — each gets a distinct message, never a blank editor.
+        let alert = NSAlert()
+        alert.messageText = "Couldn’t open the image"
         alert.informativeText = Self.message(for: error)
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
@@ -173,6 +200,18 @@ final class AppController: NSObject, CaptureUI {
         } catch {
             presentSaveFailure(error)
         }
+    }
+
+    /// Pin the flattened document as an always-on-top floating window (stories 46–49). The document
+    /// is rendered once for display; the pin's copy/save go back through the coordinator's `ImageSink`
+    /// passthrough (`render` is deterministic, so they reproduce exactly what's pinned). Save uses the
+    /// no-dialog default-location path and reveals the file in Finder, matching the editor's Save.
+    private func pin(_ document: AnnotationDocument) {
+        pinBoard.pin(
+            render(document),
+            copy: { [weak self] in self?.coordinator.copyToClipboard(document) },
+            save: { [weak self] in self?.save(document) }
+        )
     }
 
     /// The drag-out provider for the editor (story 45): wraps the coordinator's `ImageDragItem` in
@@ -230,6 +269,18 @@ final class AppController: NSObject, CaptureUI {
             return description
         default:
             return "The capture could not be completed."
+        }
+    }
+
+    private static func message(for error: ImageLoadError) -> String {
+        // `userCancelled` is routed to a silent no-op by the coordinator and never reaches here.
+        switch error {
+        case .unreadable:
+            return "The file couldn’t be read."
+        case .unsupportedFormat:
+            return "That file isn’t an image Lightshot can open."
+        case .userCancelled:
+            return "Opening the image was cancelled."
         }
     }
 }

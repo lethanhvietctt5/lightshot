@@ -7,8 +7,8 @@ import LightshotKit
 /// from the pre-capture selection overlay.
 ///
 /// A thin OS wrapper (no unit tests). It owns only placement and lifetime; the actions themselves
-/// are closures the `AppController` supplies (annotate → editor, copy → clipboard, discard →
-/// dismiss). Save and pin light up once their tickets land.
+/// are closures the `AppController` supplies (annotate → editor, copy → clipboard, pin → floating
+/// window, discard → dismiss). Save lights up once its ticket lands.
 @MainActor
 final class PostCaptureToolbarController {
     private var panel: NSPanel?
@@ -16,14 +16,22 @@ final class PostCaptureToolbarController {
     func present(
         at region: CaptureRegion,
         annotate: @escaping () -> Void,
-        copy: @escaping () -> Void
+        copy: @escaping () -> Void,
+        pin: @escaping () -> Void
     ) {
         dismiss()
-        guard case let .rect(rect) = region else { return }
+        // Both selection modes place the toolbar the same way — at the captured region's bounds.
+        // A rect carries its own bounds; a window carries its on-screen frame for exactly this.
+        let rect: Rect
+        switch region {
+        case let .rect(r): rect = r
+        case let .window(_, frame): rect = frame
+        }
 
         let view = PostCaptureToolbarView(
             annotate: { [weak self] in self?.dismiss(); annotate() },
             copy: { [weak self] in self?.dismiss(); copy() },
+            pin: { [weak self] in self?.dismiss(); pin() },
             discard: { [weak self] in self?.dismiss() }
         )
         let hosting = NSHostingView(rootView: view)
@@ -78,16 +86,18 @@ final class PostCaptureToolbarController {
     }
 }
 
-/// The toolbar's buttons. Save and pin are intentionally absent until their tickets land.
+/// The toolbar's buttons. Save is intentionally absent until its ticket lands.
 private struct PostCaptureToolbarView: View {
     let annotate: () -> Void
     let copy: () -> Void
+    let pin: () -> Void
     let discard: () -> Void
 
     var body: some View {
         HStack(spacing: 4) {
             button("Annotate", systemImage: "pencil.tip.crop.circle", action: annotate)
             button("Copy", systemImage: "doc.on.doc", action: copy)
+            button("Pin", systemImage: "pin", action: pin)
             button("Discard", systemImage: "trash", action: discard)
         }
         .padding(6)

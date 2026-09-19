@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Kept as a protocol so the coordinator's sequencing is testable without AppKit: a fake records
 /// which method fired, which is exactly what the story 8 / 57–58 tests assert. `openEditor(with:)`
-/// is deliberately source-agnostic (a capture *or* a future opened file both arrive here).
+/// is deliberately source-agnostic (a capture *or* an opened file (story 39) both arrive here).
 @MainActor
 public protocol CaptureUI: AnyObject {
     /// Open the annotation editor showing the captured image.
@@ -17,6 +17,9 @@ public protocol CaptureUI: AnyObject {
     func presentPermissionDenied()
     /// Surface a distinct, non-blank error message for a failure other than permission/cancel.
     func presentCaptureFailure(_ error: CaptureError)
+    /// Surface a distinct, non-blank error message for an open-file failure other than cancel
+    /// (story 39): an unreadable or unsupported file, routed analogously to `presentCaptureFailure`.
+    func presentImageLoadFailure(_ error: ImageLoadError)
 }
 
 /// Thin composition root: sequences a capture through to the editor, and the editor's output back
@@ -29,6 +32,7 @@ public protocol CaptureUI: AnyObject {
 public final class AppCoordinator {
     private let captureService: CaptureService
     private let overlay: OverlayController
+    private let imageSource: ImageSource
     private let imageSink: ImageSink
     private let settings: SettingsStore
     private unowned let ui: CaptureUI
@@ -36,12 +40,14 @@ public final class AppCoordinator {
     public init(
         captureService: CaptureService,
         overlay: OverlayController,
+        imageSource: ImageSource,
         imageSink: ImageSink,
         settings: SettingsStore,
         ui: CaptureUI
     ) {
         self.captureService = captureService
         self.overlay = overlay
+        self.imageSource = imageSource
         self.imageSink = imageSink
         self.settings = settings
         self.ui = ui
@@ -81,6 +87,44 @@ public final class AppCoordinator {
             break
         case let .failure(error):
             ui.presentCaptureFailure(error)
+        }
+    }
+
+    /// Window capture flow (stories 6–7). Structurally identical to `captureArea()` — only the
+    /// overlay mode differs: `selectWindow()` hover-highlights windows and resolves the clicked one
+    /// to a `.window` `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then
+    /// captures cleanly without its surroundings. Escape (`nil`) is a silent no-op with no capture;
+    /// success shows the post-capture toolbar at the window; failures route exactly as the other
+    /// paths do — `permissionDenied` to recovery, `userCancelled` silent, the rest to a distinct
+    /// message — so a capture never lands the user in a blank editor.
+    public func captureWindow() async {
+        guard let region = await overlay.selectWindow() else { return }
+        switch await captureService.captureRegion(region) {
+        case let .success(image):
+            ui.presentPostCaptureToolbar(for: image, at: region)
+        case .failure(.permissionDenied):
+            ui.presentPermissionDenied()
+        case .failure(.userCancelled):
+            break
+        case let .failure(error):
+            ui.presentCaptureFailure(error)
+        }
+    }
+
+    /// Open-existing-file flow (story 39). A file picker (via `ImageSource`) yields the *same*
+    /// `CapturedImage` a capture produces, so the result converges on the one `openEditor(with:)`
+    /// entry — the editor never learns whether the pixels came from a capture or a file. The typed
+    /// result routes exactly as the capture spine does: success opens the editor, `userCancelled`
+    /// (the panel was dismissed) is a silent no-op, and an unreadable/unsupported file surfaces a
+    /// distinct message — never a blank editor.
+    public func openFile() {
+        switch imageSource.openDocument() {
+        case let .success(image):
+            ui.openEditor(with: image)
+        case .failure(.userCancelled):
+            break
+        case let .failure(error):
+            ui.presentImageLoadFailure(error)
         }
     }
 

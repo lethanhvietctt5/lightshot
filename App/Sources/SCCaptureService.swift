@@ -5,13 +5,15 @@ import LightshotKit
 /// ScreenCaptureKit-backed `CaptureService` (the OS side of the capture seam).
 ///
 /// A thin wrapper with no unit tests — it needs a real display + TCC state; the coordinator routing
-/// it feeds is tested against a fake. Fullscreen (LIG-7) captures the whole primary display; the
-/// area path (LIG-13) captures that display and crops to the overlay's `CaptureRegion`. macOS 14+
-/// only: uses `SCScreenshotManager`, never the deprecated `CGWindowListCreateImage`.
+/// it feeds is tested against a fake. Three paths, one seam: fullscreen (LIG-7) captures the whole
+/// primary display; the area path (LIG-13) captures that display and crops to the overlay's `.rect`;
+/// the window path (LIG-14) captures a single `.window` by its id via a window content filter — just
+/// that window, its shadow trimmed. macOS 14+ only: uses `SCScreenshotManager`, never the deprecated
+/// `CGWindowListCreateImage`.
 ///
-/// Area capture targets the **primary display** in v1 (the same `content.displays.first` fullscreen
-/// uses), matching the selection overlay, which runs on the main screen. Per-display area selection
-/// on a multi-monitor setup is a follow-up.
+/// Capture targets the **primary display** in v1 (the same `content.displays.first` fullscreen uses,
+/// and the main screen's backing scale for the window path), matching the overlay, which runs on the
+/// main screen. Per-display selection on a multi-monitor setup is a follow-up.
 final class SCCaptureService: CaptureService {
     /// Whether to draw the cursor into the capture (story 12). A closure, not a stored flag, so it
     /// reads the live `SettingsStore` value at capture time rather than a value frozen at launch.
@@ -26,10 +28,19 @@ final class SCCaptureService: CaptureService {
     }
 
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> {
-        guard case let .rect(rect) = region else {
-            return .failure(.systemFailure("Unsupported capture region."))
+        switch region {
+        case let .rect(rect):
+            return await captureRect(rect)
+        case let .window(id, _):
+            // The overlay resolved a window id; capture that single window cleanly. The carried
+            // frame is only for toolbar placement, so it's unused here — the live window is the
+            // source of truth for what to capture.
+            return await captureWindow(id: id)
         }
-        return await capture { full, scale in
+    }
+
+    private func captureRect(_ rect: Rect) async -> Result<CapturedImage, CaptureError> {
+        await capture { full, scale in
             // The selection arrives in screen points (top-left origin); the captured image is the
             // display at native pixels, also top-left origin — so the crop is the selection scaled
             // to pixels, clamped to the image so an overshoot at the edge can't fail the crop.
@@ -42,6 +53,48 @@ final class SCCaptureService: CaptureService {
             ).intersection(CGRect(x: 0, y: 0, width: full.width, height: full.height))
             guard !pixelRect.isNull, !pixelRect.isEmpty else { return nil }
             return full.cropping(to: pixelRect)
+        }
+    }
+
+    /// Captures a single window by its `CGWindowID` (LIG-14, stories 6–7) — just that window, none
+    /// of its surroundings. Unlike the rect path this uses a *window* content filter rather than
+    /// cropping a display grab, so the result is exactly the window's bounds with its shadow trimmed
+    /// off. The id is re-resolved to the live `SCWindow` here so a window that closed between the
+    /// overlay hover and the click surfaces a typed failure, never a blank capture.
+    private func captureWindow(id: CGWindowID) async -> Result<CapturedImage, CaptureError> {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            )
+            guard let window = content.windows.first(where: { $0.windowID == id }) else {
+                return .failure(.systemFailure("The selected window is no longer available."))
+            }
+
+            let filter = SCContentFilter(desktopIndependentWindow: window)
+            let config = SCStreamConfiguration()
+            // Native (Retina) resolution: the window frame is in points; scale up to pixels. v1
+            // targets the primary display (same scope as the rect path and the overlay), so the
+            // main screen's backing scale is used; per-display window capture is a follow-up.
+            let scale = (NSScreen.main ?? NSScreen.screens.first)?.backingScaleFactor ?? 2
+            config.width = Int((window.frame.width * scale).rounded())
+            config.height = Int((window.frame.height * scale).rounded())
+            config.showsCursor = false
+            // Trim the drop shadow so the capture is the window's own content, not its surroundings.
+            config.ignoreShadowsSingleWindow = true
+
+            let cgImage = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: config
+            )
+            guard let data = Self.pngData(from: cgImage) else {
+                return .failure(.systemFailure("Could not encode the captured image as PNG."))
+            }
+            return .success(
+                CapturedImage(pixelWidth: cgImage.width, pixelHeight: cgImage.height, data: data)
+            )
+        } catch {
+            return .failure(Self.mapError(error))
         }
     }
 
