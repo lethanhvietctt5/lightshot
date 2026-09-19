@@ -75,7 +75,7 @@ final class AppController: NSObject, CaptureUI {
             rationale: "Required to capture your screen. Without it, screenshots come back black or empty.",
             source: captureService
         )
-    ])
+    ], openSettings: { [weak self] in self?.openSettings(for: $0) })
 
     /// Apply the configured history retention to the store (stories 50/54). `SettingsStore` owns the
     /// value (persisted by LIG-15); the store owns trimming to it — so this is where the two meet.
@@ -188,7 +188,6 @@ final class AppController: NSObject, CaptureUI {
         if window.contentViewController == nil {
             let view = PermissionOnboardingView(
                 model: onboardingModel,
-                openSettings: { [weak self] in self?.openSettings(for: $0) },
                 onClose: { [weak self] in self?.onboardingWindow?.close() }
             )
             window.contentViewController = NSHostingController(rootView: view)

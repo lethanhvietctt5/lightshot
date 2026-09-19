@@ -103,6 +103,62 @@ private func onboarding(_ source: FakePermission) -> PermissionOnboardingModel {
     #expect(model.isSatisfied == false)
 }
 
+@MainActor
+@Test func enablingADeniedRowStillAsksTheOSThenSendsTheUserToSettings() async {
+    // ".denied" is only our best guess (the OS preflight is two-state; the rest is a remembered
+    // "we asked once" flag). The guess goes stale whenever the OS forgets the app — a TCC reset, or a
+    // re-signed build — and then the OS has *never* been asked for this identity, so the app isn't
+    // even listed in System Settings for the user to switch on. Asking again is free (the OS prompts
+    // at most once) and is what registers the app in that list, so a denied row must still ask
+    // before it sends the user to System Settings.
+    let source = FakePermission(status: .denied, requestResult: .denied)
+    var opened: [PermissionKind] = []
+    let model = PermissionOnboardingModel(
+        requirements: [.init(kind: .screenRecording, title: "Screen Recording", rationale: "Capture your screen.", source: source)],
+        openSettings: { opened.append($0) }
+    )
+    await model.refresh()
+
+    await model.enable(.screenRecording)
+
+    #expect(source.requestCount == 1)            // the OS was asked, registering the app…
+    #expect(opened == [.screenRecording])        // …then the user is taken to the toggle
+}
+
+@MainActor
+@Test func enablingAFirstRunRowLeavesTheSystemPromptToGuideTheUser() async {
+    // On a true first run the system prompt itself offers "Open System Settings"; opening the pane
+    // as well would race it. The real request returns un-authorized immediately (it never waits).
+    let source = FakePermission(status: .notDetermined, requestResult: .denied)
+    var opened: [PermissionKind] = []
+    let model = PermissionOnboardingModel(
+        requirements: [.init(kind: .screenRecording, title: "Screen Recording", rationale: "Capture your screen.", source: source)],
+        openSettings: { opened.append($0) }
+    )
+    await model.refresh()
+
+    await model.enable(.screenRecording)
+
+    #expect(source.requestCount == 1)
+    #expect(opened.isEmpty)
+}
+
+@MainActor
+@Test func enablingADeniedRowThatTurnsOutGrantedSkipsSettings() async {
+    let source = FakePermission(status: .denied, requestResult: .authorized)
+    var opened: [PermissionKind] = []
+    let model = PermissionOnboardingModel(
+        requirements: [.init(kind: .screenRecording, title: "Screen Recording", rationale: "Capture your screen.", source: source)],
+        openSettings: { opened.append($0) }
+    )
+    await model.refresh()
+
+    await model.enable(.screenRecording)
+
+    #expect(opened.isEmpty)
+    #expect(model.isSatisfied)
+}
+
 // MARK: - Grant made outside the app (returning from System Settings)
 
 @MainActor

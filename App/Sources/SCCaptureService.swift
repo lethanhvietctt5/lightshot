@@ -40,7 +40,9 @@ final class SCCaptureService: CaptureService {
         return UserDefaults.standard.bool(forKey: hasRequestedDefaultsKey) ? .denied : .notDetermined
     }
 
-    /// Trigger the one-time system prompt and report the resulting status. Recording that we've
+    /// Trigger the one-time system prompt and report the status as of the call returning —
+    /// `CGRequestScreenCaptureAccess()` doesn't wait for the user, so a first ask is always
+    /// un-authorized here, with the system prompt still on screen. Recording that we've
     /// asked lets a later `authorizationStatus()` report `.denied` (recovery) rather than
     /// `.notDetermined` (re-prompt) — the OS itself only ever prompts once.
     @discardableResult

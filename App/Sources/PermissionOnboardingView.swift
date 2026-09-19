@@ -12,8 +12,6 @@ import LightshotKit
 /// the (tested, framework-free) model; this file is only AppKit/SwiftUI.
 struct PermissionOnboardingView: View {
     let model: PermissionOnboardingModel
-    /// Opens the System Settings pane for a permission the user must grant by hand (a standing denial).
-    let openSettings: (PermissionKind) -> Void
     /// Dismisses the onboarding window.
     let onClose: () -> Void
 
@@ -76,8 +74,9 @@ struct PermissionOnboardingView: View {
 
     /// The trailing control, chosen by the permission's live status:
     /// - granted → a static "Enabled" confirmation, no action needed;
-    /// - denied → the OS won't re-prompt, so deep-link to System Settings;
+    /// - denied → the OS won't re-prompt, so the model deep-links to System Settings;
     /// - not-yet-asked → trigger the one-time system prompt.
+    /// Both buttons go through `model.enable` — it decides whether a Settings visit is needed.
     @ViewBuilder
     private func action(for requirement: PermissionOnboardingModel.Requirement) -> some View {
         switch requirement.status {
@@ -87,7 +86,7 @@ struct PermissionOnboardingView: View {
                 .font(.callout)
                 .foregroundStyle(.green)
         case .denied:
-            Button("Open System Settings") { openSettings(requirement.kind) }
+            Button("Open System Settings") { Task { await model.enable(requirement.kind) } }
         case .notDetermined:
             Button("Enable") { Task { await model.enable(requirement.kind) } }
                 .buttonStyle(.borderedProminent)

@@ -83,7 +83,7 @@ public final class AppCoordinator {
     /// runs just before the shot fires.
     public func captureFullscreen(displayID: UInt32? = nil) async {
         lastCapture = .fullscreen(displayID: displayID)
-        await guideFirstRunAuthorizationIfNeeded()
+        guard await guideFirstRunAuthorizationIfNeeded() else { return }
         await applyCaptureDelay()
         switch await captureService.captureFullscreen(displayID: displayID) {
         case let .success(image):
@@ -107,7 +107,7 @@ public final class AppCoordinator {
     /// rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureArea() async {
         lastCapture = .area
-        await guideFirstRunAuthorizationIfNeeded()
+        guard await guideFirstRunAuthorizationIfNeeded() else { return }
         guard let region = await overlay.selectRegion() else { return }
         // Self-timer (story 10) runs *after* the region is chosen but *before* the shot fires, so the
         // user can set up transient UI over the selection they just made.
@@ -130,15 +130,20 @@ public final class AppCoordinator {
     /// trigger the system permission prompt up front — the user is guided to grant it instead of
     /// meeting a cryptic black/empty capture.
     ///
-    /// This is purely **advisory**: it never gates or short-circuits the capture. Both a standing
-    /// grant (`.authorized`) and a standing denial (`.denied`) skip the prompt — a denial is
-    /// handled by the capture call, not by re-prompting. The capture that follows is authoritative:
-    /// if permission is still missing (declined here, or revoked after this check — the race), it
-    /// returns `.permissionDenied` and routes to the recovery path (story 58).
-    private func guideFirstRunAuthorizationIfNeeded() async {
-        if await captureService.authorizationStatus() == .notDetermined {
-            await captureService.requestAuthorization()
-        }
+    /// Returns whether the capture should go ahead. The OS request does **not** wait for the user:
+    /// on a first ask it raises the system prompt and returns un-authorized immediately (the grant
+    /// then happens in System Settings). So an un-authorized first-run request means the system
+    /// prompt is on screen *right now* — the flow stops there rather than covering it with the
+    /// selection overlay or stacking our own recovery alert on top of it.
+    ///
+    /// Otherwise the check stays purely **advisory**: a standing grant (`.authorized`) and a
+    /// standing denial (`.denied`) both proceed without prompting — a denial is handled by the
+    /// capture call, not by re-prompting. That capture is authoritative: if permission is missing
+    /// (or revoked after this check — the race), it returns `.permissionDenied` and routes to the
+    /// recovery path (story 58).
+    private func guideFirstRunAuthorizationIfNeeded() async -> Bool {
+        guard await captureService.authorizationStatus() == .notDetermined else { return true }
+        return await captureService.requestAuthorization() == .authorized
     }
 
     /// Window capture flow (stories 6–7). Runs first-run permission onboarding (story 57) up front,
@@ -151,7 +156,7 @@ public final class AppCoordinator {
     /// rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureWindow() async {
         lastCapture = .window
-        await guideFirstRunAuthorizationIfNeeded()
+        guard await guideFirstRunAuthorizationIfNeeded() else { return }
         guard let region = await overlay.selectWindow() else { return }
         // Self-timer (story 10): delay after the window is picked, before it is captured.
         await applyCaptureDelay()

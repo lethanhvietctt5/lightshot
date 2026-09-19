@@ -17,7 +17,11 @@ public protocol PermissionAuthorizing: Sendable {
     /// grant; `.denied` means the user must re-enable it in System Settings (a re-prompt won't show).
     func authorizationStatus() async -> CaptureAuthorizationStatus
 
-    /// Trigger the one-time system permission prompt and report the resulting status.
+    /// Trigger the one-time system permission prompt and report the status *as of the call returning*.
+    ///
+    /// **Does not wait for the user.** For Screen Recording the OS raises its prompt and returns
+    /// un-authorized within milliseconds; the grant itself happens later, in System Settings. Treat an
+    /// un-authorized result on a first ask as "the system prompt is showing", never as a decision.
     ///
     /// Safe to call when already decided: the OS prompts at most once, so a standing grant or denial
     /// returns without re-prompting.
