@@ -45,6 +45,14 @@ private struct LightshotMenu: View {
 
         Divider()
 
+        // Open an existing image to annotate (LIG-16): file picker → same editor as a capture.
+        Button("Open Image…") {
+            controller.openFile()
+        }
+        .keyboardShortcut("o", modifiers: [.command])
+
+        Divider()
+
         Text("Lightshot — core v\(LightshotKit.version)")
 
         Divider()

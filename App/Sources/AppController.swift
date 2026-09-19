@@ -20,6 +20,7 @@ final class AppController: NSObject, CaptureUI {
         coordinator = AppCoordinator(
             captureService: SCCaptureService(),
             overlay: OverlaySelectionController(),
+            imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
             settings: settings,
             ui: self
@@ -36,6 +37,12 @@ final class AppController: NSObject, CaptureUI {
     /// Menu / hotkey entry point for area capture: overlay → capture → post-capture toolbar.
     func captureArea() {
         Task { await coordinator.captureArea() }
+    }
+
+    /// Menu entry point for opening an existing image file (story 39): file picker → editor. The
+    /// panel is modal (synchronous), so unlike the capture spine this needs no `Task`.
+    func openFile() {
+        coordinator.openFile()
     }
 
     // MARK: - CaptureUI
@@ -90,6 +97,19 @@ final class AppController: NSObject, CaptureUI {
     func presentCaptureFailure(_ error: CaptureError) {
         let alert = NSAlert()
         alert.messageText = "Couldn’t take the screenshot"
+        alert.informativeText = Self.message(for: error)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    func presentImageLoadFailure(_ error: ImageLoadError) {
+        // The coordinator routes `userCancelled` to a silent no-op, so only the unreadable /
+        // unsupported cases reach here — each gets a distinct message, never a blank editor.
+        let alert = NSAlert()
+        alert.messageText = "Couldn’t open the image"
         alert.informativeText = Self.message(for: error)
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
@@ -193,6 +213,18 @@ final class AppController: NSObject, CaptureUI {
             return description
         default:
             return "The capture could not be completed."
+        }
+    }
+
+    private static func message(for error: ImageLoadError) -> String {
+        // `userCancelled` is routed to a silent no-op by the coordinator and never reaches here.
+        switch error {
+        case .unreadable:
+            return "The file couldn’t be read."
+        case .unsupportedFormat:
+            return "That file isn’t an image Lightshot can open."
+        case .userCancelled:
+            return "Opening the image was cancelled."
         }
     }
 }
