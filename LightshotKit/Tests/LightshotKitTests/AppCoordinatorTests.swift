@@ -52,12 +52,32 @@ private final class StubCaptureService: CaptureService, @unchecked Sendable {
     }
 }
 
+// Canned regions for each overlay mode, plus per-mode call counts so a test can assert that the
+// window path consults `selectWindow()` (not `selectRegion()`) and vice versa.
 @MainActor
 private final class StubOverlay: OverlayController {
     let region: CaptureRegion?
+    let windowRegion: CaptureRegion?
     private(set) var callCount = 0
-    init(region: CaptureRegion?) { self.region = region }
+    private(set) var windowCallCount = 0
+    init(region: CaptureRegion?, windowRegion: CaptureRegion? = nil) {
+        self.region = region
+        self.windowRegion = windowRegion
+    }
     func selectRegion() async -> CaptureRegion? { callCount += 1; return region }
+    func selectWindow() async -> CaptureRegion? { windowCallCount += 1; return windowRegion }
+}
+
+// Feeds a canned open-file result and records how often the panel was opened. `loadImage(from:)`
+// isn't exercised by the coordinator (it goes through `openDocument()`), so it echoes the same
+// canned result. Only ever driven from the `@MainActor` tests.
+@MainActor
+private final class StubImageSource: ImageSource {
+    let result: Result<CapturedImage, ImageLoadError>
+    private(set) var openCount = 0
+    init(_ result: Result<CapturedImage, ImageLoadError>) { self.result = result }
+    func loadImage(from url: URL) -> Result<CapturedImage, ImageLoadError> { result }
+    func openDocument() -> Result<CapturedImage, ImageLoadError> { openCount += 1; return result }
 }
 
 private final class SpyImageSink: ImageSink {
@@ -74,6 +94,11 @@ private final class StubSettings: SettingsStore {
     var defaultFormat: ImageFormat = .png
     var saveLocation = URL(fileURLWithPath: "/tmp/shots", isDirectory: true)
     var filenamePattern = "shot-%Y"
+    var hotkeys = HotkeyBindings.defaults
+    var openInEditor = true
+    var includeCursor = false
+    var historyRetention = 50
+    var launchAtLogin = false
 }
 
 @MainActor
@@ -82,6 +107,7 @@ private final class SpyUI: CaptureUI {
     private(set) var toolbars: [(image: CapturedImage, region: CaptureRegion)] = []
     private(set) var permissionDeniedCount = 0
     private(set) var failures: [CaptureError] = []
+    private(set) var imageLoadFailures: [ImageLoadError] = []
 
     func openEditor(with image: CapturedImage) { openedImages.append(image) }
     func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {
@@ -89,6 +115,7 @@ private final class SpyUI: CaptureUI {
     }
     func presentPermissionDenied() { permissionDeniedCount += 1 }
     func presentCaptureFailure(_ error: CaptureError) { failures.append(error) }
+    func presentImageLoadFailure(_ error: ImageLoadError) { imageLoadFailures.append(error) }
 }
 
 private func sampleImage() -> CapturedImage {
@@ -99,8 +126,17 @@ private func sampleRegion() -> CaptureRegion {
     .rect(Rect(x: 120, y: 80, width: 640, height: 480))
 }
 
+private func sampleWindowRegion() -> CaptureRegion {
+    .window(id: 4242, frame: Rect(x: 200, y: 140, width: 800, height: 600))
+}
+
 /// An overlay that is never expected to be consulted (the fullscreen path skips it).
 @MainActor private func unusedOverlay() -> StubOverlay { StubOverlay(region: nil) }
+
+/// An image source that is never expected to be consulted (only the open-file path uses it).
+@MainActor private func unusedImageSource() -> StubImageSource {
+    StubImageSource(.failure(.userCancelled))
+}
 
 // MARK: - Capture routing
 
@@ -111,6 +147,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.success(image)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -129,6 +166,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.failure(.permissionDenied)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -147,6 +185,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.failure(.userCancelled)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -165,6 +204,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.failure(.noDisplayAvailable)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -189,6 +229,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -209,6 +250,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -229,6 +271,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -251,6 +294,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -273,6 +317,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: overlay,
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -294,6 +339,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.success(document.baseImage)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: sink,
         settings: StubSettings(),
         ui: SpyUI()
@@ -316,6 +362,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: overlay,
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -339,6 +386,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: capture,
         overlay: StubOverlay(region: nil),          // nil == user pressed Escape
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -359,6 +407,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.failure(.permissionDenied)),
         overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -378,6 +427,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.failure(.userCancelled)),
         overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -397,6 +447,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.failure(.noDisplayAvailable)),
         overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: StubSettings(),
         ui: ui
@@ -410,6 +461,222 @@ private func sampleRegion() -> CaptureRegion {
     #expect(ui.permissionDeniedCount == 0)
 }
 
+// MARK: - Window capture routing (stories 6–7)
+
+@MainActor
+@Test func windowCaptureResolvesWindowThenCapturesItAndShowsTheToolbar() async {
+    let image = sampleImage()
+    let region = sampleWindowRegion()
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(image))
+    let overlay = StubOverlay(region: nil, windowRegion: region)
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(overlay.windowCallCount == 1)           // window mode consults selectWindow()…
+    #expect(overlay.callCount == 0)                 // …not the drag-a-rect path
+    #expect(capture.capturedRegions == [region])    // …then the resolved window is captured
+    #expect(ui.toolbars.count == 1)                 // success shows the post-capture toolbar
+    #expect(ui.toolbars.first?.image == image)
+    #expect(ui.toolbars.first?.region == region)    // positioned at the window
+    #expect(ui.openedImages.isEmpty)                // the toolbar, not a blank editor, is the surface
+    #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func windowCaptureFirstRunPromptsThenRunsTheOverlay() async {
+    // First-run onboarding (story 57) fronts the window path too, so a first-run user meets the
+    // permission prompt before hover-picking a window.
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(sampleImage()), status: .notDetermined, requestResult: .authorized)
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(capture.requestAuthorizationCount == 1)   // first run prompts
+    #expect(overlay.windowCallCount == 1)             // …and the window overlay still resolves a target
+    #expect(ui.toolbars.count == 1)                   // success reaches the post-capture toolbar
+}
+
+@MainActor
+@Test func escapeInWindowModeCancelsWithNoCapture() async {
+    let ui = SpyUI()
+    let capture = StubCaptureService(.success(sampleImage()))
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: StubOverlay(region: nil, windowRegion: nil),   // nil == user pressed Escape
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(capture.capturedRegions.isEmpty)        // Escape captures nothing
+    #expect(ui.toolbars.isEmpty)
+    #expect(ui.openedImages.isEmpty)
+    #expect(ui.permissionDeniedCount == 0)
+    #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func windowCapturePermissionDeniedRoutesToRecoveryNotAToolbar() async {
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.permissionDenied)),
+        overlay: StubOverlay(region: nil, windowRegion: sampleWindowRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(ui.permissionDeniedCount == 1)
+    #expect(ui.toolbars.isEmpty)
+    #expect(ui.openedImages.isEmpty)
+    #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func windowCaptureUserCancelledIsASilentNoOp() async {
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.userCancelled)),
+        overlay: StubOverlay(region: nil, windowRegion: sampleWindowRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(ui.toolbars.isEmpty)
+    #expect(ui.openedImages.isEmpty)
+    #expect(ui.permissionDeniedCount == 0)
+    #expect(ui.failures.isEmpty)
+}
+
+@MainActor
+@Test func windowCaptureOtherFailureSurfacesADistinctMessage() async {
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.noDisplayAvailable)),
+        overlay: StubOverlay(region: nil, windowRegion: sampleWindowRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(ui.failures == [.noDisplayAvailable])
+    #expect(ui.toolbars.isEmpty)
+    #expect(ui.openedImages.isEmpty)
+    #expect(ui.permissionDeniedCount == 0)
+}
+
+// MARK: - Open existing file routing (story 39)
+
+@MainActor
+@Test func openFileLoadsTheImageIntoTheEditorViaOpenEditor() async {
+    // The loaded value is the *same* CapturedImage type a capture produces, and it reaches the
+    // one shared editor entry — the editor never learns the pixels came from a file, not a capture.
+    let image = sampleImage()
+    let ui = SpyUI()
+    let source = StubImageSource(.success(image))
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.noDisplayAvailable)),  // capture path unused here
+        overlay: unusedOverlay(),
+        imageSource: source,
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    coordinator.openFile()
+
+    #expect(source.openCount == 1)             // the picker is consulted once
+    #expect(ui.openedImages == [image])        // …and the same CapturedImage reaches openEditor
+    #expect(ui.imageLoadFailures.isEmpty)
+    #expect(ui.permissionDeniedCount == 0)
+}
+
+@MainActor
+@Test func openFileCancelledPanelIsASilentNoOp() async {
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: unusedOverlay(),
+        imageSource: StubImageSource(.failure(.userCancelled)),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    coordinator.openFile()
+
+    #expect(ui.openedImages.isEmpty)           // a dismissed panel opens nothing…
+    #expect(ui.imageLoadFailures.isEmpty)      // …and surfaces no error
+    #expect(ui.permissionDeniedCount == 0)
+}
+
+@MainActor
+@Test func openFileUnreadableSurfacesADistinctFailureNotABlankEditor() async {
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: unusedOverlay(),
+        imageSource: StubImageSource(.failure(.unreadable)),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    coordinator.openFile()
+
+    #expect(ui.imageLoadFailures == [.unreadable])
+    #expect(ui.openedImages.isEmpty)           // never a blank editor
+}
+
+@MainActor
+@Test func openFileUnsupportedFormatSurfacesADistinctFailure() async {
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: unusedOverlay(),
+        imageSource: StubImageSource(.failure(.unsupportedFormat)),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    coordinator.openFile()
+
+    #expect(ui.imageLoadFailures == [.unsupportedFormat])
+    #expect(ui.openedImages.isEmpty)
+}
+
 // MARK: - Output (save & drag, stories 41–45)
 
 @MainActor
@@ -419,6 +686,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.success(document.baseImage)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: sink,
         settings: StubSettings(),
         ui: SpyUI()
@@ -444,6 +712,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.success(document.baseImage)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: sink,
         settings: settings,
         ui: SpyUI()
@@ -469,6 +738,7 @@ private func sampleRegion() -> CaptureRegion {
     let coordinator = AppCoordinator(
         captureService: StubCaptureService(.success(document.baseImage)),
         overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
         imageSink: SpyImageSink(),
         settings: settings,
         ui: SpyUI()
@@ -482,4 +752,117 @@ private func sampleRegion() -> CaptureRegion {
     #expect(item.format == .png)
     #expect(item.suggestedName == "drag-2026")            // base name; the UTI supplies the extension
     #expect(item.data == encode(render(document), as: .png))
+}
+
+// MARK: - History recording (story 50)
+
+/// A fresh history store in a throwaway temp directory, cleaned up by the caller.
+@MainActor private func tempHistory() -> (store: HistoryStore, dir: URL) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("coord-history-\(UUID().uuidString)")
+    return (HistoryStore(directory: dir), dir)
+}
+
+@MainActor
+@Test func fullscreenCaptureIsRecordedInHistory() async throws {
+    let image = sampleImage()
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    let records = history.all()
+    #expect(records.count == 1)
+    #expect(records.first?.source == .fullscreen)
+    #expect(history.capturedImage(for: records[0]) == image)   // the recorded bytes round-trip
+}
+
+@MainActor
+@Test func areaCaptureIsRecordedInHistory() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+
+    #expect(history.all().map(\.source) == [.area])
+}
+
+@MainActor
+@Test func windowCaptureIsRecordedInHistory() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: StubOverlay(region: nil, windowRegion: sampleWindowRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(history.all().map(\.source) == [.window])
+}
+
+@MainActor
+@Test func openingAFileIsNotRecordedInHistory() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.userCancelled)),
+        overlay: unusedOverlay(),
+        imageSource: StubImageSource(.success(sampleImage())),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    coordinator.openFile()
+
+    #expect(ui.openedImages == [sampleImage()])   // it reaches the editor …
+    #expect(history.all().isEmpty)                // … but an opened file is not a capture
+}
+
+@MainActor
+@Test func aFailedCaptureRecordsNothing() async throws {
+    let ui = SpyUI()
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.failure(.permissionDenied)),
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(history.all().isEmpty)   // a permission failure never lands in history
 }

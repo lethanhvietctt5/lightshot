@@ -16,10 +16,11 @@ struct EditorView: View {
         onCopy: @escaping (AnnotationDocument) -> Void,
         onSave: @escaping (AnnotationDocument) -> Void,
         onSaveAs: @escaping (AnnotationDocument) -> Void,
+        onPin: @escaping (AnnotationDocument) -> Void,
         onDrag: @escaping (AnnotationDocument) -> NSItemProvider
     ) {
         _model = State(initialValue: EditorModel(
-            document: document, copy: onCopy, save: onSave, saveAs: onSaveAs, makeDrag: onDrag
+            document: document, copy: onCopy, save: onSave, saveAs: onSaveAs, pin: onPin, makeDrag: onDrag
         ))
     }
 
@@ -186,6 +187,10 @@ struct EditorView: View {
             Button { model.saveToDiskAs() } label: { Image(systemName: "square.and.arrow.down.on.square") }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .help("Save As… (⇧⌘S)")
+
+            Button { model.pinToDesktop() } label: { Image(systemName: "pin") }
+                .keyboardShortcut("p", modifiers: .command)
+                .help("Pin as a floating window (⌘P)")
 
             Button("Copy") { model.copyToClipboard() }
                 .keyboardShortcut("c", modifiers: .command)
