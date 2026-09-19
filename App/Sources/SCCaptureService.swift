@@ -11,9 +11,10 @@ import LightshotKit
 /// that window, its shadow trimmed. macOS 14+ only: uses `SCScreenshotManager`, never the deprecated
 /// `CGWindowListCreateImage`.
 ///
-/// Capture targets the **primary display** in v1 (the same `content.displays.first` fullscreen uses,
-/// and the main screen's backing scale for the window path), matching the overlay, which runs on the
-/// main screen. Per-display selection on a multi-monitor setup is a follow-up.
+/// Fullscreen honors the chosen display on a multi-monitor setup (LIG-20, story 8): a passed
+/// `displayID` selects that `SCDisplay`, and `nil` falls back to the primary display. The area and
+/// window paths still target the **primary display** (the main screen's backing scale for the window
+/// path), matching the overlay, which runs on the main screen.
 final class SCCaptureService: CaptureService {
     /// Persisted "have we ever asked?" flag. macOS's preflight (`CGPreflightScreenCaptureAccess`)
     /// is only two-state — it can't tell a never-asked first run from a standing denial — so we
@@ -49,8 +50,8 @@ final class SCCaptureService: CaptureService {
         return granted ? .authorized : .denied
     }
 
-    func captureFullscreen() async -> Result<CapturedImage, CaptureError> {
-        await capture { full, _ in full }
+    func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> {
+        await capture(displayID: displayID) { full, _ in full }
     }
 
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> {
@@ -66,7 +67,8 @@ final class SCCaptureService: CaptureService {
     }
 
     private func captureRect(_ rect: Rect) async -> Result<CapturedImage, CaptureError> {
-        await capture { full, scale in
+        // The overlay runs on the main screen, so the rect is captured from the primary display.
+        await capture(displayID: nil) { full, scale in
             // The selection arrives in screen points (top-left origin); the captured image is the
             // display at native pixels, also top-left origin — so the crop is the selection scaled
             // to pixels, clamped to the image so an overshoot at the edge can't fail the crop.
@@ -105,7 +107,7 @@ final class SCCaptureService: CaptureService {
             let scale = (NSScreen.main ?? NSScreen.screens.first)?.backingScaleFactor ?? 2
             config.width = Int((window.frame.width * scale).rounded())
             config.height = Int((window.frame.height * scale).rounded())
-            config.showsCursor = false
+            config.showsCursor = includeCursor()   // honor the cursor toggle here too (story 12)
             // Trim the drop shadow so the capture is the window's own content, not its surroundings.
             config.ignoreShadowsSingleWindow = true
 
@@ -124,10 +126,15 @@ final class SCCaptureService: CaptureService {
         }
     }
 
-    /// Captures the primary display's full image, hands it (with the display's backing scale) to
-    /// `transform` to produce the final `CGImage`, then encodes it — sharing the shareable-content
-    /// query, permission mapping, and PNG encoding across the fullscreen and region paths.
+    /// Captures a display's full image, hands it (with the display's backing scale) to `transform`
+    /// to produce the final `CGImage`, then encodes it — sharing the shareable-content query,
+    /// permission mapping, and PNG encoding across the fullscreen and region paths.
+    ///
+    /// `displayID` selects the target on a multi-monitor setup (story 8): the matching `SCDisplay`,
+    /// or the primary display (`displays.first`) when it is `nil` or no display matches — never a
+    /// silent failure to the wrong screen.
     private func capture(
+        displayID: UInt32?,
         _ transform: (_ full: CGImage, _ scale: CGFloat) -> CGImage?
     ) async -> Result<CapturedImage, CaptureError> {
         do {
@@ -137,7 +144,8 @@ final class SCCaptureService: CaptureService {
                 false,
                 onScreenWindowsOnly: false
             )
-            guard let display = content.displays.first else {
+            let chosen = displayID.flatMap { id in content.displays.first { $0.displayID == id } }
+            guard let display = chosen ?? content.displays.first else {
                 return .failure(.noDisplayAvailable)
             }
 

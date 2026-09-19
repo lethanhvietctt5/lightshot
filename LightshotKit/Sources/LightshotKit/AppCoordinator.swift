@@ -36,7 +36,19 @@ public final class AppCoordinator {
     private let imageSink: ImageSink
     private let settings: SettingsStore
     private let history: HistoryStore?
+    private let sleep: (TimeInterval) async -> Void
     private unowned let ui: CaptureUI
+
+    /// The most recent capture the user initiated, so `repeatLastCapture()` (story 9) can re-fire the
+    /// same kind — including the chosen display for fullscreen. In-memory and set at the *start* of a
+    /// capture (the mode the user picked), so a repeat re-offers that mode even if the last attempt
+    /// was cancelled. `nil` until the first capture, which makes repeat a no-op with nothing to repeat.
+    private enum LastCapture {
+        case fullscreen(displayID: UInt32?)
+        case area
+        case window
+    }
+    private var lastCapture: LastCapture?
 
     public init(
         captureService: CaptureService,
@@ -45,6 +57,9 @@ public final class AppCoordinator {
         imageSink: ImageSink,
         settings: SettingsStore,
         history: HistoryStore? = nil,
+        sleep: @escaping (TimeInterval) async -> Void = { seconds in
+            try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+        },
         ui: CaptureUI
     ) {
         self.captureService = captureService
@@ -53,6 +68,7 @@ public final class AppCoordinator {
         self.imageSink = imageSink
         self.settings = settings
         self.history = history
+        self.sleep = sleep
         self.ui = ui
     }
 
@@ -61,9 +77,15 @@ public final class AppCoordinator {
     /// the editor, `permissionDenied` goes to the
     /// System-Settings recovery path (never a blank editor), `userCancelled` is a silent no-op,
     /// and anything else surfaces a distinct failure message.
-    public func captureFullscreen() async {
+    ///
+    /// `displayID` picks the display on a multi-monitor setup (story 8); `nil` is the primary
+    /// display, used by the hotkey and the single-display menu item. The self-timer (story 10)
+    /// runs just before the shot fires.
+    public func captureFullscreen(displayID: UInt32? = nil) async {
+        lastCapture = .fullscreen(displayID: displayID)
         await guideFirstRunAuthorizationIfNeeded()
-        switch await captureService.captureFullscreen() {
+        await applyCaptureDelay()
+        switch await captureService.captureFullscreen(displayID: displayID) {
         case let .success(image):
             record(image, source: .fullscreen)
             ui.openEditor(with: image)
@@ -84,8 +106,12 @@ public final class AppCoordinator {
     /// exactly as fullscreen does — `permissionDenied` to recovery, `userCancelled` silent, the
     /// rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureArea() async {
+        lastCapture = .area
         await guideFirstRunAuthorizationIfNeeded()
         guard let region = await overlay.selectRegion() else { return }
+        // Self-timer (story 10) runs *after* the region is chosen but *before* the shot fires, so the
+        // user can set up transient UI over the selection they just made.
+        await applyCaptureDelay()
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .area)
@@ -124,8 +150,11 @@ public final class AppCoordinator {
     /// exactly as the other paths do — `permissionDenied` to recovery, `userCancelled` silent, the
     /// rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureWindow() async {
+        lastCapture = .window
         await guideFirstRunAuthorizationIfNeeded()
         guard let region = await overlay.selectWindow() else { return }
+        // Self-timer (story 10): delay after the window is picked, before it is captured.
+        await applyCaptureDelay()
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .window)
@@ -137,6 +166,33 @@ public final class AppCoordinator {
         case let .failure(error):
             ui.presentCaptureFailure(error)
         }
+    }
+
+    /// Repeat-last-capture-mode (story 9): re-fire whichever of area/window/fullscreen the user ran
+    /// most recently — including the display fullscreen last targeted — so repeated shots of the same
+    /// kind are one shortcut away. A no-op when nothing has been captured yet (nothing to repeat).
+    /// This re-runs the whole flow, so the overlay and the self-timer apply exactly as they did the
+    /// first time.
+    public func repeatLastCapture() async {
+        switch lastCapture {
+        case let .fullscreen(displayID):
+            await captureFullscreen(displayID: displayID)
+        case .area:
+            await captureArea()
+        case .window:
+            await captureWindow()
+        case nil:
+            break
+        }
+    }
+
+    /// The self-timer wait shared by every capture path (story 10): pause for the configured delay
+    /// before the shot fires. Read live from settings, so a change takes effect on the next capture;
+    /// `0` (the default) skips the wait entirely.
+    private func applyCaptureDelay() async {
+        let seconds = settings.captureDelay
+        guard seconds > 0 else { return }
+        await sleep(seconds)
     }
 
     /// Open-existing-file flow (story 39). A file picker (via `ImageSource`) yields the *same*

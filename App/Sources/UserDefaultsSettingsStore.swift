@@ -23,6 +23,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let hotkeys = "capture.hotkeys"   // JSON: [action.rawValue: HotkeyBinding]
         static let openInEditor = "capture.openInEditor"
         static let includeCursor = "capture.includeCursor"
+        static let captureDelay = "capture.delay"   // TimeInterval seconds; 0 == off
         static let historyRetention = "history.retention"
     }
 
@@ -99,6 +100,11 @@ final class UserDefaultsSettingsStore: SettingsStore {
     var includeCursor: Bool {
         get { defaults.bool(forKey: Key.includeCursor) }   // defaults to false — a clean shot
         set { defaults.set(newValue, forKey: Key.includeCursor) }
+    }
+
+    var captureDelay: TimeInterval {
+        get { defaults.double(forKey: Key.captureDelay) }  // defaults to 0 — fire immediately
+        set { defaults.set(max(0, newValue), forKey: Key.captureDelay) }
     }
 
     var historyRetention: Int {

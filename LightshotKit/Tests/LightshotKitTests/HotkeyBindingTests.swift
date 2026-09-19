@@ -27,7 +27,8 @@ import Foundation
     // Control-prefixed to dodge the system's own ⇧⌘3/⇧⌘4, which are reserved and unregisterable.
     #expect(defaults[.fullscreen]?.displayString == "⌃⌘3")
     #expect(defaults[.area]?.displayString == "⌃⌘4")
-    #expect(defaults[.window] == nil)          // window ships unbound until LIG-14
+    #expect(defaults[.window] == nil)          // window ships unbound
+    #expect(defaults[.repeatLast] == nil)      // repeat-last ships unbound (story 9) — user binds it
     #expect(defaults.conflicts.isEmpty)        // shipped defaults never clash
 }
 

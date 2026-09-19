@@ -14,6 +14,9 @@ import Foundation
 private final class StubCaptureService: CaptureService, @unchecked Sendable {
     let result: Result<CapturedImage, CaptureError>
     private(set) var capturedRegions: [CaptureRegion] = []
+    /// The `displayID` each fullscreen capture was asked for — `nil` is the primary display (story 8).
+    private(set) var capturedDisplays: [UInt32?] = []
+
     // Authorization surface (LIG-19). `status` defaults to `.authorized` so the pre-existing
     // routing tests never trip onboarding; the onboarding tests set it explicitly and read the
     // call counts back. `requestAuthorization()` flips the reported status to `requestResult`,
@@ -45,7 +48,10 @@ private final class StubCaptureService: CaptureService, @unchecked Sendable {
         return requestResult
     }
 
-    func captureFullscreen() async -> Result<CapturedImage, CaptureError> { result }
+    func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> {
+        capturedDisplays.append(displayID)
+        return result
+    }
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> {
         capturedRegions.append(region)
         return result
@@ -97,8 +103,17 @@ private final class StubSettings: SettingsStore {
     var hotkeys = HotkeyBindings.defaults
     var openInEditor = true
     var includeCursor = false
+    var captureDelay: TimeInterval = 0
     var historyRetention = 50
     var launchAtLogin = false
+}
+
+/// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the
+/// tests never wait real seconds. `@MainActor` like the tests that drive it.
+@MainActor
+private final class DelaySpy {
+    private(set) var waits: [TimeInterval] = []
+    func sleep(_ seconds: TimeInterval) async { waits.append(seconds) }
 }
 
 @MainActor
@@ -865,4 +880,203 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureFullscreen()
 
     #expect(history.all().isEmpty)   // a permission failure never lands in history
+}
+
+// MARK: - Self-timer / delayed capture (story 10)
+
+@MainActor
+@Test func fullscreenWaitsTheConfiguredSelfTimerBeforeCapturing() async {
+    let settings = StubSettings()
+    settings.captureDelay = 3
+    let capture = StubCaptureService(.success(sampleImage()))
+    let delay = DelaySpy()
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture, overlay: unusedOverlay(), imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(), settings: settings, sleep: { await delay.sleep($0) }, ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(delay.waits == [3])                 // the timer fired once, for the configured interval
+    #expect(capture.capturedDisplays.count == 1) // …and the capture still happened after it
+}
+
+@MainActor
+@Test func areaWaitsTheSelfTimerAfterResolvingTheRegion() async {
+    let settings = StubSettings()
+    settings.captureDelay = 5
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: sampleRegion())
+    let delay = DelaySpy()
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture, overlay: overlay, imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(), settings: settings, sleep: { await delay.sleep($0) }, ui: ui
+    )
+
+    await coordinator.captureArea()
+
+    #expect(overlay.callCount == 1)             // the region is resolved first…
+    #expect(delay.waits == [5])                 // …then the timer waits…
+    #expect(capture.capturedRegions == [sampleRegion()])  // …then the shot fires
+}
+
+@MainActor
+@Test func windowWaitsTheSelfTimerAfterPickingTheWindow() async {
+    let settings = StubSettings()
+    settings.captureDelay = 2
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let delay = DelaySpy()
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture, overlay: overlay, imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(), settings: settings, sleep: { await delay.sleep($0) }, ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(delay.waits == [2])
+    #expect(capture.capturedRegions == [sampleWindowRegion()])
+}
+
+@MainActor
+@Test func aZeroSelfTimerSkipsTheWaitEntirely() async {
+    let settings = StubSettings()
+    settings.captureDelay = 0
+    let capture = StubCaptureService(.success(sampleImage()))
+    let delay = DelaySpy()
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture, overlay: unusedOverlay(), imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(), settings: settings, sleep: { await delay.sleep($0) }, ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(delay.waits.isEmpty)                // no delay when the timer is off
+    #expect(capture.capturedDisplays.count == 1)
+}
+
+// MARK: - Display selection (story 8)
+
+@MainActor
+@Test func fullscreenTargetsTheChosenDisplay() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen(displayID: 42)
+
+    #expect(capture.capturedDisplays == [42])   // the chosen display id reaches the service
+}
+
+@MainActor
+@Test func fullscreenDefaultsToThePrimaryDisplay() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(capture.capturedDisplays == [nil])  // no explicit choice == the primary display
+}
+
+// MARK: - Repeat last capture mode (story 9)
+
+@MainActor
+@Test func repeatWithNoPriorCaptureIsASilentNoOp() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.repeatLastCapture()
+
+    #expect(capture.capturedDisplays.isEmpty)   // nothing has been captured, so nothing to repeat
+    #expect(capture.capturedRegions.isEmpty)
+    #expect(ui.openedImages.isEmpty)
+}
+
+@MainActor
+@Test func repeatReplaysFullscreenIncludingTheChosenDisplay() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen(displayID: 7)
+    await coordinator.repeatLastCapture()
+
+    #expect(capture.capturedDisplays == [7, 7])  // the repeat re-targets the same display
+}
+
+@MainActor
+@Test func repeatReplaysAreaThroughTheOverlayAgain() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureArea()
+    await coordinator.repeatLastCapture()
+
+    #expect(overlay.callCount == 2)             // repeat re-runs the whole area flow, overlay included
+    #expect(capture.capturedRegions == [sampleRegion(), sampleRegion()])
+}
+
+@MainActor
+@Test func repeatUsesTheMostRecentModeNotAnEarlierOne() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: capture,
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()       // most-recent is fullscreen…
+    await coordinator.captureWindow()           // …then window becomes most-recent
+    await coordinator.repeatLastCapture()
+
+    #expect(overlay.windowCallCount == 2)       // repeat replays window, the latest mode
+    #expect(capture.capturedDisplays == [nil])  // …and does not re-fire the earlier fullscreen
 }

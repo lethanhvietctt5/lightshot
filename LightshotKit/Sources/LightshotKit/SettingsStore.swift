@@ -26,6 +26,10 @@ public protocol SettingsStore: AnyObject {
     /// Whether the mouse cursor is included in captures (story 12). Read live at capture time by
     /// `SCCaptureService`.
     var includeCursor: Bool { get set }
+    /// Self-timer: how many seconds to wait before a capture fires (story 10), so the user can set
+    /// up transient UI (menus, tooltips, hover states) first. `0` (the default) fires immediately.
+    /// The `AppCoordinator` reads this and delays before every capture path.
+    var captureDelay: TimeInterval { get set }
     /// How many captures the local history retains (story 54); `0` keeps none. **Persisted here by
     /// LIG-15; not yet enforced.** Trimming to this limit and the companion "clear history" action
     /// (story 54) belong to the `HistoryStore` seam (stories 50–54), which does not exist yet.

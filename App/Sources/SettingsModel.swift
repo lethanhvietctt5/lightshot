@@ -31,6 +31,7 @@ final class SettingsModel {
     var filenamePattern: String { didSet { store.filenamePattern = filenamePattern } }
     var openInEditor: Bool { didSet { store.openInEditor = openInEditor } }
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
+    var captureDelay: TimeInterval { didSet { store.captureDelay = captureDelay } }
     var historyRetention: Int {
         didSet {
             let clamped = max(0, historyRetention)
@@ -82,6 +83,7 @@ final class SettingsModel {
         self.filenamePattern = store.filenamePattern
         self.openInEditor = store.openInEditor
         self.includeCursor = store.includeCursor
+        self.captureDelay = store.captureDelay
         self.historyRetention = store.historyRetention
         self.launchAtLogin = store.launchAtLogin
     }

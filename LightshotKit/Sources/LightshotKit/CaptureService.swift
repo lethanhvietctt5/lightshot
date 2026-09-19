@@ -23,11 +23,17 @@ public protocol CaptureService: Sendable {
     @discardableResult
     func requestAuthorization() async -> CaptureAuthorizationStatus
 
-    /// Capture the full screen at native (Retina) resolution.
+    /// Capture a full display at native (Retina) resolution.
     ///
     /// Returns a `Result` rather than an optional so failures are always typed and never a
     /// silently empty image. Fullscreen skips the pre-capture overlay: the display is the target.
-    func captureFullscreen() async -> Result<CapturedImage, CaptureError>
+    ///
+    /// `displayID` chooses which display to grab on a multi-monitor setup (story 8): it is the
+    /// window server's `CGDirectDisplayID`, modeled as `UInt32` so the domain core stays free of
+    /// CoreGraphics — exactly as `CaptureRegion.window` carries a `CGWindowID`. `nil` means "the
+    /// primary display", which is what the hotkey/default path uses; the menu passes an explicit id
+    /// per display when more than one is attached.
+    func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError>
 
     /// Capture a `CaptureRegion` resolved by the overlay, at native (Retina) resolution.
     ///
