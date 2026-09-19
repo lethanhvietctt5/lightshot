@@ -1,0 +1,45 @@
+# XcodeGen spec for the Lightshot menu-bar app.
+#
+# The generated Lightshot.xcodeproj is NOT committed (it is a build artifact derived from
+# this file). Run `xcodegen generate` after cloning or after editing this spec, then use
+# the xcodebuild commands in AGENTS.md. The domain core lives in the LightshotKit SwiftPM
+# package and is consumed here as a local package dependency — the app depends on the
+# package, never the reverse.
+name: Lightshot
+
+options:
+  bundleIdPrefix: dev.lightshot
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+packages:
+  LightshotKit:
+    path: LightshotKit
+
+targets:
+  Lightshot:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: App/Sources
+    settings:
+      base:
+        PRODUCT_NAME: Lightshot
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lightshot.app
+        INFOPLIST_FILE: App/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "0.0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+    dependencies:
+      - package: LightshotKit
+        product: LightshotKit

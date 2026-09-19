@@ -8,35 +8,44 @@ Canonical working agreement for any AI agent (Claude Code, Copilot, Codex, …) 
 
 ## Current state — read first
 
-This repo is **spec-first and not yet scaffolded**. There is no Swift package, no Xcode project, and no build system on disk yet — only [`specs/0001-core-capture-and-annotate.md`](specs/0001-core-capture-and-annotate.md).
+The two-target skeleton is scaffolded (LIG-6). On disk:
 
-- **Do not fabricate build/lint/test commands or claim they pass.** The commands below are the *intended* toolchain; they only work once the package/project exists. When you scaffold it, update this section to match reality.
+- [`LightshotKit/`](LightshotKit) — the SwiftPM domain-core package. Pure Swift, **no AppKit / ScreenCaptureKit imports**. Today it holds the seam marker (`LightshotKit`), the `CapturedImage` value type, and a placeholder Swift Testing suite. The domain modules (`AnnotationDocument`, `render`, `HistoryStore`, the service protocols) land here as their tickets are picked up.
+- [`App/`](App) — the SwiftUI menu-bar app shell (`MenuBarExtra`, `LSUIElement`) that depends on the package. Capture actions are inert stubs until their tickets land.
+- [`project.yml`](project.yml) — the XcodeGen spec. **`Lightshot.xcodeproj` is generated, not committed** (it's gitignored); run `xcodegen generate` after cloning or after editing `project.yml`.
+
+Guidance:
+
+- The commands below now really work — but **run them; don't claim a pass you didn't observe.**
 - The spec is the contract. Before writing feature code, read the spec and the matching Linear issue; if they disagree, reconcile before coding.
 
-## Intended project layout
+## Project layout
 
-The spec's testing strategy dictates the structure — follow it when scaffolding:
+The spec's testing strategy dictates the structure:
 
-- **A SwiftPM package for the domain core** — `AnnotationDocument`, the pure `render` function, `HistoryStore`, and the service *protocols* (`CaptureService`, `ImageSink`, `ImageSource`, `HotkeyService`). Pure Swift, **no AppKit / ScreenCaptureKit imports**. This is what makes `swift test` fast and screen-free.
-- **An Xcode app target for the OS shell** — the SwiftUI menu-bar app plus the concrete ScreenCaptureKit / AppKit implementations of those protocols (`OverlayController`, `PinBoardController`, real capture/hotkey/sink).
+- **A SwiftPM package for the domain core** (`LightshotKit/`) — `AnnotationDocument`, the pure `render` function, `HistoryStore`, and the service *protocols* (`CaptureService`, `ImageSink`, `ImageSource`, `HotkeyService`). Pure Swift, **no AppKit / ScreenCaptureKit imports**. This is what makes `swift test` fast and screen-free.
+- **An Xcode app target for the OS shell** (`App/`, built via the generated `Lightshot.xcodeproj`) — the SwiftUI menu-bar app plus the concrete ScreenCaptureKit / AppKit implementations of those protocols (`OverlayController`, `PinBoardController`, real capture/hotkey/sink).
 
 The seam between the two is the point: the app depends on the package, never the reverse.
 
-## Intended commands (once scaffolded)
+## Commands
 
 ```bash
 # Domain core (SwiftPM package) — the fast inner loop
+cd LightshotKit
 swift build
 swift test
-swift test --filter AnnotationDocumentTests            # one suite
+swift test --filter AnnotationDocumentTests            # one suite (once it exists)
 swift test --filter AnnotationDocumentTests/appliesCrop # one test (Swift Testing)
 
-# Full app (Xcode project) — requires a real macOS destination
-xcodebuild -scheme Lightshot -destination 'platform=macOS' build
-xcodebuild -scheme Lightshot -destination 'platform=macOS' test
+# Full app (Xcode project) — requires a real macOS destination.
+# Regenerate the (gitignored) project from project.yml first:
+xcodegen generate
+xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -destination 'platform=macOS' build
+xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -destination 'platform=macOS' test
 ```
 
-Prefer **Swift Testing** over XCTest for new tests. The domain test target having zero AppKit/ScreenCaptureKit imports is the litmus test that a seam is placed correctly — treat a new framework import in that target as a design smell to justify or fix.
+Tooling: **XcodeGen** (`brew install xcodegen`) generates the app project. Prefer **Swift Testing** over XCTest for new tests. The domain test target having zero AppKit/ScreenCaptureKit imports is the litmus test that a seam is placed correctly — treat a new framework import in that target as a design smell to justify or fix.
 
 ## Architecture — the big picture
 
