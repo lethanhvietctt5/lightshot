@@ -3,6 +3,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 import LightshotKit
 
+/// A display the fullscreen menu can target (story 8): the window server's id plus a label to show.
+/// `Identifiable` so the SwiftUI menu can `ForEach` over it.
+struct DisplayInfo: Identifiable {
+    let id: UInt32
+    let name: String
+}
+
 /// The OS-side composition root and `CaptureUI`.
 ///
 /// Owns the `AppCoordinator` (passing itself as the UI delegate) and turns the coordinator's
@@ -77,12 +84,19 @@ final class AppController: NSObject, CaptureUI {
         case .area: captureArea()
         case .window: captureWindow()
         case .fullscreen: captureFullscreen()
+        case .repeatLast: repeatLast()
         }
     }
 
-    /// Menu / hotkey entry point for the fullscreen capture spine.
-    func captureFullscreen() {
-        Task { await coordinator.captureFullscreen() }
+    /// Menu / hotkey entry point for the fullscreen capture spine. `displayID` targets a specific
+    /// display on a multi-monitor setup (story 8); `nil` (the hotkey path) captures the primary one.
+    func captureFullscreen(displayID: UInt32? = nil) {
+        Task { await coordinator.captureFullscreen(displayID: displayID) }
+    }
+
+    /// Menu / hotkey entry point for re-firing the last capture mode (story 9).
+    func repeatLast() {
+        Task { await coordinator.repeatLastCapture() }
     }
 
     /// Menu / hotkey entry point for area capture: overlay → capture → post-capture toolbar.
@@ -93,6 +107,20 @@ final class AppController: NSObject, CaptureUI {
     /// Menu / hotkey entry point for window capture: hover-highlight overlay → capture → toolbar.
     func captureWindow() {
         Task { await coordinator.captureWindow() }
+    }
+
+    /// The attached displays, so the menu can offer a per-display fullscreen choice on a multi-monitor
+    /// setup (story 8). Maps each `NSScreen` to its `CGDirectDisplayID` — the same id `SCCaptureService`
+    /// matches against `SCDisplay.displayID` — plus a human label. A screen with no resolvable id is
+    /// dropped (it can't be targeted); the menu falls back to the plain, primary-display action when
+    /// fewer than two remain.
+    func availableDisplays() -> [DisplayInfo] {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return NSScreen.screens.enumerated().compactMap { index, screen in
+            guard let id = screen.deviceDescription[key] as? CGDirectDisplayID else { return nil }
+            let name = screen.localizedName.isEmpty ? "Display \(index + 1)" : screen.localizedName
+            return DisplayInfo(id: UInt32(id), name: name)
+        }
     }
 
     /// Menu entry point for opening an existing image file (story 39): file picker → editor. The

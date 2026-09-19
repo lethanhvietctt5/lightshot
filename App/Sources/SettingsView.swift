@@ -126,10 +126,18 @@ struct SettingsView: View {
 
     private var captureSection: some View {
         Section("Capture") {
-            // `includeCursor` is live (read by SCCaptureService); `openInEditor` is persisted but not
-            // yet wired — the editor-vs-toolbar default is a spec-flagged decision (see SettingsStore).
+            // `includeCursor` and `captureDelay` are live (read by SCCaptureService / AppCoordinator);
+            // `openInEditor` is persisted but not yet wired — the editor-vs-toolbar default is a
+            // spec-flagged decision (see SettingsStore).
             Toggle("Open captures in the editor", isOn: $model.openInEditor)
             Toggle("Include the mouse cursor", isOn: $model.includeCursor)
+            Picker("Self-timer", selection: $model.captureDelay) {
+                Text("Off").tag(TimeInterval(0))
+                Text("3 seconds").tag(TimeInterval(3))
+                Text("5 seconds").tag(TimeInterval(5))
+                Text("10 seconds").tag(TimeInterval(10))
+            }
+            .help("Wait before the shot fires, so you can open menus or hover states first.")
         }
     }
 

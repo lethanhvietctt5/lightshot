@@ -52,8 +52,12 @@ private struct LightshotMenu: View {
         Button("Capture Window…") {
             controller.captureWindow()
         }
-        Button("Capture Fullscreen") {
-            controller.captureFullscreen()
+        fullscreenCaptureItem
+
+        // Re-fire the most recently used capture mode (story 9). A no-op until the first capture, so
+        // it's always present rather than appearing and disappearing.
+        Button("Repeat Last Capture") {
+            controller.repeatLast()
         }
 
         Divider()
@@ -88,5 +92,25 @@ private struct LightshotMenu: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q")
+    }
+
+    /// Fullscreen capture, with a per-display submenu on a multi-monitor setup (story 8): a single
+    /// display keeps the plain one-click action, so the common case stays simple.
+    @ViewBuilder
+    private var fullscreenCaptureItem: some View {
+        let displays = controller.availableDisplays()
+        if displays.count > 1 {
+            Menu("Capture Fullscreen") {
+                ForEach(displays) { display in
+                    Button(display.name) {
+                        controller.captureFullscreen(displayID: display.id)
+                    }
+                }
+            }
+        } else {
+            Button("Capture Fullscreen") {
+                controller.captureFullscreen()
+            }
+        }
     }
 }
