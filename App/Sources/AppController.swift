@@ -22,6 +22,7 @@ final class AppController: NSObject, CaptureUI {
     private var editorWindow: NSWindow?
     private var historyWindow: NSWindow?
     private var onboardingWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
@@ -163,8 +164,25 @@ final class AppController: NSObject, CaptureUI {
         }
         historyWindow = window
 
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.present(window)
+    }
+
+    /// Menu entry point for the settings window (story 60). A controller-owned window presented
+    /// like history and onboarding, rather than SwiftUI's `Settings` scene: that scene opens with no
+    /// activation at all, so in this `LSUIElement` app it landed behind the frontmost app (LIG-23).
+    func showSettings() {
+        let window = settingsWindow ?? makeSettingsWindow()
+        if window.contentViewController == nil {
+            let hosting = NSHostingController(rootView: SettingsView(model: settingsModel))
+            window.contentViewController = hosting
+            // Size to the form before centering — the hosting controller otherwise grows the window
+            // after `center()` has already placed it, leaving it off-center.
+            window.setContentSize(hosting.view.fittingSize)
+            window.center()
+        }
+        settingsWindow = window
+
+        WindowPresenter.present(window)
     }
 
     // MARK: - Permission onboarding (LIG-21)
@@ -194,9 +212,8 @@ final class AppController: NSObject, CaptureUI {
         }
         onboardingWindow = window
 
-        NSApp.activate(ignoringOtherApps: true)
         window.center()
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.present(window)
     }
 
     /// Deep-link to the System Settings pane for a permission the user must grant by hand.
@@ -226,6 +243,10 @@ final class AppController: NSObject, CaptureUI {
         let view = EditorView(
             document: document,
             onCopy: { [weak self] in self?.coordinator.copyToClipboard($0) },
+            onDone: { [weak self] in
+                self?.coordinator.copyToClipboard($0)
+                self?.editorWindow?.close()
+            },
             onSave: { [weak self] in self?.save($0) },
             onSaveAs: { [weak self] in self?.saveAs($0) },
             onPin: { [weak self] in self?.pin($0) },
@@ -237,8 +258,7 @@ final class AppController: NSObject, CaptureUI {
         window.center()
         editorWindow = window
 
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        WindowPresenter.present(window)
     }
 
     func presentPermissionDenied() {
@@ -252,7 +272,7 @@ final class AppController: NSObject, CaptureUI {
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")
 
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         if alert.runModal() == .alertFirstButtonReturn {
             openScreenRecordingSettings()
         }
@@ -265,7 +285,7 @@ final class AppController: NSObject, CaptureUI {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
 
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         alert.runModal()
     }
 
@@ -278,7 +298,7 @@ final class AppController: NSObject, CaptureUI {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
 
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         alert.runModal()
     }
 
@@ -312,7 +332,7 @@ final class AppController: NSObject, CaptureUI {
         }
         panel.allowedContentTypes = [settings.defaultFormat == .png ? .png : .jpeg]
 
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try coordinator.save(document, to: url, format: picker.format)
@@ -353,7 +373,7 @@ final class AppController: NSObject, CaptureUI {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
-        NSApp.activate(ignoringOtherApps: true)
+        WindowPresenter.activateApp()
         alert.runModal()
     }
 
@@ -384,6 +404,20 @@ final class AppController: NSObject, CaptureUI {
         window.title = "Welcome to Lightshot"
         window.isReleasedWhenClosed = false
         window.center()
+        return window
+    }
+
+    /// The settings window: titled and closable only — `SettingsView` lays itself out at a fixed
+    /// width and its own height, and the hosting controller sizes the window to fit.
+    private func makeSettingsWindow() -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 600),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Lightshot Settings"
+        window.isReleasedWhenClosed = false
         return window
     }
 

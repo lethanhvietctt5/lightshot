@@ -14,13 +14,15 @@ struct EditorView: View {
     init(
         document: AnnotationDocument,
         onCopy: @escaping (AnnotationDocument) -> Void,
+        onDone: @escaping (AnnotationDocument) -> Void,
         onSave: @escaping (AnnotationDocument) -> Void,
         onSaveAs: @escaping (AnnotationDocument) -> Void,
         onPin: @escaping (AnnotationDocument) -> Void,
         onDrag: @escaping (AnnotationDocument) -> NSItemProvider
     ) {
         _model = State(initialValue: EditorModel(
-            document: document, copy: onCopy, save: onSave, saveAs: onSaveAs, pin: onPin, makeDrag: onDrag
+            document: document, copy: onCopy, done: onDone, save: onSave, saveAs: onSaveAs, pin: onPin,
+            makeDrag: onDrag
         ))
     }
 
@@ -181,8 +183,7 @@ struct EditorView: View {
                 .onDrag { model.dragProvider() }
 
             Button { model.saveToDisk() } label: { Image(systemName: "square.and.arrow.down") }
-                .keyboardShortcut("s", modifiers: .command)
-                .help("Save to disk (⌘S)")
+                .help("Save to disk")
 
             Button { model.saveToDiskAs() } label: { Image(systemName: "square.and.arrow.down.on.square") }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
@@ -194,7 +195,14 @@ struct EditorView: View {
 
             Button("Copy") { model.copyToClipboard() }
                 .keyboardShortcut("c", modifiers: .command)
+                .help("Copy to clipboard (⌘C)")
+
+            // ⌘S is the finishing gesture (LIG-23): the image lands on the clipboard and the editor
+            // gets out of the way. It never writes a file — that's Save / Save As….
+            Button("Done") { model.copyAndClose() }
+                .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)
+                .help("Copy to clipboard and close (⌘S)")
         }
     }
 

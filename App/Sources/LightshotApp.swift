@@ -17,11 +17,6 @@ struct LightshotApp: App {
             LightshotMenu(controller: appDelegate.controller)
         }
         .menuBarExtraStyle(.menu)
-
-        // The settings window (story 60), reachable from the menu's Settings… item and ⌘,.
-        Settings {
-            SettingsView(model: appDelegate.controller.settingsModel)
-        }
     }
 }
 
@@ -65,8 +60,10 @@ private struct LightshotMenu: View {
 
         Divider()
 
-        SettingsLink {
-            Text("Settings…")
+        // The settings window (story 60). A plain menu action rather than a `SettingsLink`, so the
+        // window is presented — activated and fronted — like every other Lightshot window (LIG-23).
+        Button("Settings…") {
+            controller.showSettings()
         }
         .keyboardShortcut(",", modifiers: .command)
 
