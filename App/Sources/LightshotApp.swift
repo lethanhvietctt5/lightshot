@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Claim the persisted global hotkeys up front so shortcuts fire before the settings window
         // is ever opened (story 56).
         controller.registerStoredHotkeys()
+        // Guide the user through granting the permissions capture needs, the first time they launch
+        // (LIG-21). A no-op once every required permission is granted.
+        controller.showPermissionOnboardingIfNeeded()
     }
 }
 
@@ -66,6 +69,12 @@ private struct LightshotMenu: View {
             Text("Settings…")
         }
         .keyboardShortcut(",", modifiers: .command)
+
+        // Re-open the first-run permission checklist any time (LIG-21) — e.g. after Screen Recording
+        // is revoked in System Settings, or to check what Lightshot still needs.
+        Button("Set Up Permissions…") {
+            controller.showPermissionOnboarding()
+        }
 
         Divider()
 
