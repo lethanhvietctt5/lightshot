@@ -47,11 +47,13 @@ public final class AppCoordinator {
         self.ui = ui
     }
 
-    /// Fullscreen capture flow (story 8). Skips the overlay — the display is the target — then
-    /// routes the typed result: success opens the editor, `permissionDenied` goes to the
+    /// Fullscreen capture flow (story 8). Runs first-run permission onboarding (story 57), then
+    /// skips the overlay — the display is the target — and routes the typed result: success opens
+    /// the editor, `permissionDenied` goes to the
     /// System-Settings recovery path (never a blank editor), `userCancelled` is a silent no-op,
     /// and anything else surfaces a distinct failure message.
     public func captureFullscreen() async {
+        await guideFirstRunAuthorizationIfNeeded()
         switch await captureService.captureFullscreen() {
         case let .success(image):
             ui.openEditor(with: image)
@@ -64,13 +66,15 @@ public final class AppCoordinator {
         }
     }
 
-    /// Area capture flow (stories 1–5, 14). Ordering matters: the **overlay runs first** to
+    /// Area capture flow (stories 1–5, 14). Runs first-run permission onboarding (story 57) up
+    /// front so the prompt precedes the drag. Then ordering matters: the **overlay runs first** to
     /// resolve a `CaptureRegion` (drag a rect, Escape to cancel), *then* `CaptureService` captures
     /// it — the service needs a target. A cancelled overlay (`nil`) is a silent no-op with no
     /// capture. On success the post-capture toolbar is shown at the selection; failures route
     /// exactly as fullscreen does — `permissionDenied` to recovery, `userCancelled` silent, the
     /// rest to a distinct message — so a capture never lands the user in a blank editor.
     public func captureArea() async {
+        await guideFirstRunAuthorizationIfNeeded()
         guard let region = await overlay.selectRegion() else { return }
         switch await captureService.captureRegion(region) {
         case let .success(image):
@@ -81,6 +85,22 @@ public final class AppCoordinator {
             break
         case let .failure(error):
             ui.presentCaptureFailure(error)
+        }
+    }
+
+    /// First-run onboarding (story 57). The *very first* time the user captures, they have never
+    /// been asked for Screen Recording permission (`authorizationStatus() == .notDetermined`), so
+    /// trigger the system permission prompt up front — the user is guided to grant it instead of
+    /// meeting a cryptic black/empty capture.
+    ///
+    /// This is purely **advisory**: it never gates or short-circuits the capture. Both a standing
+    /// grant (`.authorized`) and a standing denial (`.denied`) skip the prompt — a denial is
+    /// handled by the capture call, not by re-prompting. The capture that follows is authoritative:
+    /// if permission is still missing (declined here, or revoked after this check — the race), it
+    /// returns `.permissionDenied` and routes to the recovery path (story 58).
+    private func guideFirstRunAuthorizationIfNeeded() async {
+        if await captureService.authorizationStatus() == .notDetermined {
+            await captureService.requestAuthorization()
         }
     }
 
