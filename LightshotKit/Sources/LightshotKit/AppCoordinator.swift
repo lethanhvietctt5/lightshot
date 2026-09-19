@@ -55,4 +55,10 @@ public final class AppCoordinator {
     public func copyToClipboard(_ image: CapturedImage) {
         imageSink.copyToClipboard(render(image))
     }
+
+    /// Editor output for an annotated document (stories 40/44): flatten base + all
+    /// elements in z-order via `render(_ document:)` and place that on the clipboard.
+    public func copyToClipboard(_ document: AnnotationDocument) {
+        imageSink.copyToClipboard(render(document))
+    }
 }
