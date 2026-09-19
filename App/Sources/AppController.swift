@@ -14,6 +14,7 @@ final class AppController: NSObject, CaptureUI {
     private var coordinator: AppCoordinator!
     private var editorWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
+    private let pinBoard = PinBoardController()
 
     override init() {
         super.init()
@@ -52,7 +53,8 @@ final class AppController: NSObject, CaptureUI {
         postCaptureToolbar.present(
             at: region,
             annotate: { [weak self] in self?.openEditor(with: image) },
-            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: image)) }
+            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: image)) },
+            pin: { [weak self] in self?.pin(AnnotationDocument(baseImage: image)) }
         )
     }
 
@@ -63,6 +65,7 @@ final class AppController: NSObject, CaptureUI {
             onCopy: { [weak self] in self?.coordinator.copyToClipboard($0) },
             onSave: { [weak self] in self?.save($0) },
             onSaveAs: { [weak self] in self?.saveAs($0) },
+            onPin: { [weak self] in self?.pin($0) },
             onDrag: { [weak self] in self?.dragProvider(for: $0) ?? NSItemProvider() }
         )
         let window = editorWindow ?? makeEditorWindow()
@@ -141,6 +144,18 @@ final class AppController: NSObject, CaptureUI {
         } catch {
             presentSaveFailure(error)
         }
+    }
+
+    /// Pin the flattened document as an always-on-top floating window (stories 46–49). The document
+    /// is rendered once for display; the pin's copy/save go back through the coordinator's `ImageSink`
+    /// passthrough (`render` is deterministic, so they reproduce exactly what's pinned). Save uses the
+    /// no-dialog default-location path and reveals the file in Finder, matching the editor's Save.
+    private func pin(_ document: AnnotationDocument) {
+        pinBoard.pin(
+            render(document),
+            copy: { [weak self] in self?.coordinator.copyToClipboard(document) },
+            save: { [weak self] in self?.save(document) }
+        )
     }
 
     /// The drag-out provider for the editor (story 45): wraps the coordinator's `ImageDragItem` in
