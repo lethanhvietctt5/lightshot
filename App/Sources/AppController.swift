@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import LightshotKit
 
 /// The OS-side composition root and `CaptureUI`.
@@ -17,10 +18,13 @@ final class AppController: NSObject, CaptureUI {
         super.init()
         coordinator = AppCoordinator(
             captureService: SCCaptureService(),
-            imageSink: PasteboardImageSink(),
+            imageSink: SystemImageSink(),
+            settings: settings,
             ui: self
         )
     }
+
+    private let settings = UserDefaultsSettingsStore()
 
     /// Menu / hotkey entry point for the fullscreen capture spine.
     func captureFullscreen() {
@@ -31,9 +35,13 @@ final class AppController: NSObject, CaptureUI {
 
     func openEditor(with image: CapturedImage) {
         let document = AnnotationDocument(baseImage: image)
-        let view = EditorView(document: document) { [weak self] edited in
-            self?.coordinator.copyToClipboard(edited)
-        }
+        let view = EditorView(
+            document: document,
+            onCopy: { [weak self] in self?.coordinator.copyToClipboard($0) },
+            onSave: { [weak self] in self?.save($0) },
+            onSaveAs: { [weak self] in self?.saveAs($0) },
+            onDrag: { [weak self] in self?.dragProvider(for: $0) ?? NSItemProvider() }
+        )
         let window = editorWindow ?? makeEditorWindow()
         window.contentViewController = NSHostingController(rootView: view)
         window.setContentSize(NSSize(width: 720, height: 480))
@@ -72,6 +80,69 @@ final class AppController: NSObject, CaptureUI {
         alert.runModal()
     }
 
+    // MARK: - Output (stories 41–45)
+
+    /// Save the flattened document with the configured defaults — no dialog (story 43). On success
+    /// the file is revealed in Finder so the user sees where it landed; a write failure surfaces a
+    /// distinct alert rather than failing silently.
+    private func save(_ document: AnnotationDocument) {
+        do {
+            let url = try coordinator.save(document)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            presentSaveFailure(error)
+        }
+    }
+
+    /// Save-As (stories 41–42): an `NSSavePanel` that lets the user pick location, name, and format
+    /// (PNG / JPEG). JPEG carries the configured default quality — the per-save override flows
+    /// through the same `ImageFormat` value to the sink.
+    private func saveAs(_ document: AnnotationDocument) {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.directoryURL = settings.saveLocation
+        panel.nameFieldStringValue = FilenameFormatter(pattern: settings.filenamePattern).filename(at: Date())
+
+        let picker = FormatPicker(default: settings.defaultFormat)
+        panel.accessoryView = picker.view
+        picker.onChange = { [weak panel] format in
+            panel?.allowedContentTypes = [format == .png ? .png : .jpeg]
+        }
+        panel.allowedContentTypes = [settings.defaultFormat == .png ? .png : .jpeg]
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try coordinator.save(document, to: url, format: picker.format)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            presentSaveFailure(error)
+        }
+    }
+
+    /// The drag-out provider for the editor (story 45): wraps the coordinator's `ImageDragItem` in
+    /// an `NSItemProvider` so dropping onto another app yields the rendered image as a file.
+    private func dragProvider(for document: AnnotationDocument) -> NSItemProvider {
+        let item = coordinator.dragItem(for: document)
+        let provider = NSItemProvider()
+        provider.suggestedName = item.suggestedName
+        provider.registerDataRepresentation(forTypeIdentifier: item.format.utiIdentifier, visibility: .all) { completion in
+            completion(item.data, nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func presentSaveFailure(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn’t save the image"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
     // MARK: - Helpers
 
     private func makeEditorWindow() -> NSWindow {
@@ -106,4 +177,43 @@ final class AppController: NSObject, CaptureUI {
             return "The capture could not be completed."
         }
     }
+}
+
+/// The PNG / JPEG chooser shown as the Save-As panel's accessory view.
+///
+/// A one-row popup that maps the selection back to an `ImageFormat`. JPEG keeps the quality carried
+/// by the `default` format (from settings), so the per-save format still flows through as one value.
+@MainActor
+private final class FormatPicker {
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 30))
+    var onChange: ((ImageFormat) -> Void)?
+
+    /// JPEG quality to carry through if the user picks JPEG (the settings default, or a fallback).
+    private let jpegQuality: Double
+    private let popup = NSPopUpButton(frame: NSRect(x: 80, y: 2, width: 150, height: 25), pullsDown: false)
+
+    init(default format: ImageFormat) {
+        if case let .jpeg(quality) = format {
+            jpegQuality = quality
+        } else {
+            jpegQuality = 0.9
+        }
+
+        let label = NSTextField(labelWithString: "Format:")
+        label.frame = NSRect(x: 8, y: 5, width: 68, height: 20)
+        label.alignment = .right
+        popup.addItems(withTitles: ["PNG", "JPEG"])
+        popup.selectItem(at: format == .png ? 0 : 1)
+        popup.target = self
+        popup.action = #selector(changed)
+        view.addSubview(label)
+        view.addSubview(popup)
+    }
+
+    /// The format the user has selected.
+    var format: ImageFormat {
+        popup.indexOfSelectedItem == 0 ? .png : .jpeg(clamping: jpegQuality)
+    }
+
+    @objc private func changed() { onChange?(format) }
 }

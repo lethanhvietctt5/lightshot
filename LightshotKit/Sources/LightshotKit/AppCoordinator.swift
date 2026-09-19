@@ -25,11 +25,13 @@ public protocol CaptureUI: AnyObject {
 public final class AppCoordinator {
     private let captureService: CaptureService
     private let imageSink: ImageSink
+    private let settings: SettingsStore
     private unowned let ui: CaptureUI
 
-    public init(captureService: CaptureService, imageSink: ImageSink, ui: CaptureUI) {
+    public init(captureService: CaptureService, imageSink: ImageSink, settings: SettingsStore, ui: CaptureUI) {
         self.captureService = captureService
         self.imageSink = imageSink
+        self.settings = settings
         self.ui = ui
     }
 
@@ -55,5 +57,32 @@ public final class AppCoordinator {
     /// is the *rendered* image, not the raw capture.
     public func copyToClipboard(_ document: AnnotationDocument) {
         imageSink.copyToClipboard(render(document))
+    }
+
+    /// Save the flattened document to an explicit destination and format — a per-save override,
+    /// e.g. from a Save-As panel (stories 41–42, 44). The chosen `ImageFormat` reaches the sink
+    /// unchanged, so what lands on disk is the *rendered* document in exactly the requested format.
+    public func save(_ document: AnnotationDocument, to url: URL, format: ImageFormat) throws {
+        try imageSink.write(render(document), to: url, format: format)
+    }
+
+    /// Save using the configured defaults — no dialog (story 43). Resolves the destination from the
+    /// settings' save location + filename pattern and writes in the default format, returning the
+    /// URL written to. This is the "used when no override is given" path.
+    @discardableResult
+    public func save(_ document: AnnotationDocument, at date: Date = Date()) throws -> URL {
+        let url = settings.defaultDestination(at: date)
+        try save(document, to: url, format: settings.defaultFormat)
+        return url
+    }
+
+    /// Build the drag-out payload for the editor (story 45): the flattened render encoded in the
+    /// default format, named by the same filename pattern the default save uses. The app wraps this
+    /// in an `NSItemProvider`, so dragging drops the rendered image straight into another app.
+    public func dragItem(for document: AnnotationDocument, at date: Date = Date()) -> ImageDragItem {
+        let format = settings.defaultFormat
+        let data = encode(render(document), as: format)
+        let name = FilenameFormatter(pattern: settings.filenamePattern).filename(at: date)
+        return ImageDragItem(data: data, format: format, suggestedName: name)
     }
 }

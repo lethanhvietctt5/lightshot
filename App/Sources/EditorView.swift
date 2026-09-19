@@ -11,8 +11,16 @@ struct EditorView: View {
     @State private var model: EditorModel
     @FocusState private var textFieldFocused: Bool
 
-    init(document: AnnotationDocument, onCopy: @escaping (AnnotationDocument) -> Void) {
-        _model = State(initialValue: EditorModel(document: document, copy: onCopy))
+    init(
+        document: AnnotationDocument,
+        onCopy: @escaping (AnnotationDocument) -> Void,
+        onSave: @escaping (AnnotationDocument) -> Void,
+        onSaveAs: @escaping (AnnotationDocument) -> Void,
+        onDrag: @escaping (AnnotationDocument) -> NSItemProvider
+    ) {
+        _model = State(initialValue: EditorModel(
+            document: document, copy: onCopy, save: onSave, saveAs: onSaveAs, makeDrag: onDrag
+        ))
     }
 
     var body: some View {
@@ -160,6 +168,20 @@ struct EditorView: View {
                 .disabled(!model.canRedo)
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .help("Redo")
+
+            Image(systemName: "arrow.up.forward.square")
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
+                .help("Drag the rendered image into another app")
+                .onDrag { model.dragProvider() }
+
+            Button { model.saveToDisk() } label: { Image(systemName: "square.and.arrow.down") }
+                .keyboardShortcut("s", modifiers: .command)
+                .help("Save to disk (⌘S)")
+
+            Button { model.saveToDiskAs() } label: { Image(systemName: "square.and.arrow.down.on.square") }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .help("Save As… (⇧⌘S)")
 
             Button("Copy") { model.copyToClipboard() }
                 .keyboardShortcut("c", modifiers: .command)
