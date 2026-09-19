@@ -17,6 +17,11 @@ struct LightshotApp: App {
             LightshotMenu(controller: appDelegate.controller)
         }
         .menuBarExtraStyle(.menu)
+
+        // The settings window (story 60), reachable from the menu's Settings… item and ⌘,.
+        Settings {
+            SettingsView(model: appDelegate.controller.settingsModel)
+        }
     }
 }
 
@@ -24,25 +29,39 @@ struct LightshotApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller = AppController()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Claim the persisted global hotkeys up front so shortcuts fire before the settings window
+        // is ever opened (story 56).
+        controller.registerStoredHotkeys()
+    }
 }
 
 private struct LightshotMenu: View {
     let controller: AppController
 
     var body: some View {
-        // Fullscreen (LIG-7), area (LIG-13), and window (LIG-14) capture are all wired.
+        // Fullscreen (LIG-7), area (LIG-13), and window (LIG-14) capture are all wired. No
+        // `.keyboardShortcut` here on purpose: these are just click targets. The authoritative,
+        // *rebindable* shortcuts are the global hotkeys registered via `HotkeyService` (story 56) —
+        // a static menu equivalent would duplicate `HotkeyBindings`' defaults and then silently lie
+        // once the user rebinds one.
         Button("Capture Area…") {
             controller.captureArea()
         }
-        .keyboardShortcut("4", modifiers: [.command, .shift])
         Button("Capture Window…") {
             controller.captureWindow()
         }
-        .keyboardShortcut("5", modifiers: [.command, .shift])
         Button("Capture Fullscreen") {
             controller.captureFullscreen()
         }
-        .keyboardShortcut("3", modifiers: [.command, .shift])
+
+        Divider()
+
+        SettingsLink {
+            Text("Settings…")
+        }
+        .keyboardShortcut(",", modifiers: .command)
 
         Divider()
 

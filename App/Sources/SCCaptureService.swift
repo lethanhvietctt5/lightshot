@@ -15,6 +15,14 @@ import LightshotKit
 /// and the main screen's backing scale for the window path), matching the overlay, which runs on the
 /// main screen. Per-display selection on a multi-monitor setup is a follow-up.
 final class SCCaptureService: CaptureService {
+    /// Whether to draw the cursor into the capture (story 12). A closure, not a stored flag, so it
+    /// reads the live `SettingsStore` value at capture time rather than a value frozen at launch.
+    private let includeCursor: @Sendable () -> Bool
+
+    init(includeCursor: @escaping @Sendable () -> Bool = { false }) {
+        self.includeCursor = includeCursor
+    }
+
     func captureFullscreen() async -> Result<CapturedImage, CaptureError> {
         await capture { full, _ in full }
     }
@@ -115,7 +123,7 @@ final class SCCaptureService: CaptureService {
             let scale = Self.backingScale(for: display)
             config.width = Int((CGFloat(display.width) * scale).rounded())
             config.height = Int((CGFloat(display.height) * scale).rounded())
-            config.showsCursor = false
+            config.showsCursor = includeCursor()
 
             let fullImage = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,

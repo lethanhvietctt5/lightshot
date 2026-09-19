@@ -14,12 +14,17 @@ final class AppController: NSObject, CaptureUI {
     private var coordinator: AppCoordinator!
     private var editorWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
+    private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
 
     override init() {
         super.init()
         coordinator = AppCoordinator(
-            captureService: SCCaptureService(),
+            // Read the cursor-inclusion preference live at capture time (story 12), off the main
+            // actor, from the same defaults the settings window writes.
+            captureService: SCCaptureService(includeCursor: {
+                UserDefaultsSettingsStore.storedIncludeCursor()
+            }),
             overlay: OverlaySelectionController(),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
@@ -29,6 +34,37 @@ final class AppController: NSObject, CaptureUI {
     }
 
     private let settings = UserDefaultsSettingsStore()
+
+    /// The settings-window bridge. Editing hotkeys re-registers them through `applyHotkeys` and the
+    /// OS's refusals flow back into the model to be surfaced.
+    lazy var settingsModel = SettingsModel(
+        store: settings,
+        applyHotkeys: { [weak self] bindings in self?.applyHotkeys(bindings) ?? [] }
+    )
+
+    /// Register the persisted global hotkeys (story 56). Called once at launch and again whenever the
+    /// settings window edits a binding; returns the actions the OS refused so the UI can flag them.
+    @discardableResult
+    func applyHotkeys(_ bindings: HotkeyBindings) -> [CaptureAction] {
+        hotkeyService.register(bindings) { [weak self] action in
+            self?.perform(action)
+        }
+    }
+
+    /// Register the stored hotkeys at startup so the shortcuts work before the settings window is
+    /// ever opened.
+    func registerStoredHotkeys() {
+        applyHotkeys(settings.hotkeys)
+    }
+
+    /// Route a fired hotkey to its capture entry point.
+    private func perform(_ action: CaptureAction) {
+        switch action {
+        case .area: captureArea()
+        case .window: captureWindow()
+        case .fullscreen: captureFullscreen()
+        }
+    }
 
     /// Menu / hotkey entry point for the fullscreen capture spine.
     func captureFullscreen() {

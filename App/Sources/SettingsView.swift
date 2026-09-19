@@ -1,0 +1,158 @@
+import SwiftUI
+import AppKit
+import LightshotKit
+
+/// The settings window (story 60): rebindable global hotkeys with conflict surfacing, save defaults,
+/// capture defaults, history retention, and launch-at-login. A thin projection of `SettingsModel` —
+/// every control binds straight to it, and it persists on change.
+struct SettingsView: View {
+    @Bindable var model: SettingsModel
+
+    var body: some View {
+        Form {
+            shortcutsSection
+            savingSection
+            captureSection
+            historySection
+            generalSection
+        }
+        .formStyle(.grouped)
+        .frame(width: 480)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Shortcuts (stories 56)
+
+    private var shortcutsSection: some View {
+        Section {
+            ForEach(CaptureAction.allCases) { action in
+                LabeledContent(action.title) {
+                    HStack(spacing: 8) {
+                        if isConflicted(action) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .help("This shortcut is also assigned to another action.")
+                        } else if model.unregisterableActions.contains(action) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.red)
+                                .help("The system or another app already uses this shortcut.")
+                        }
+                        HotkeyRecorderView(binding: model.hotkeys[action]) { newBinding in
+                            model.setBinding(newBinding, for: action)
+                        }
+                        .frame(width: 140, height: 24)
+                    }
+                }
+            }
+        } header: {
+            Text("Global Shortcuts")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                if !model.conflicts.isEmpty {
+                    Label(conflictSummary, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.callout)
+                }
+                HStack {
+                    Text("Click a field and press a key combination. Press Delete to clear.")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Restore Defaults") { model.resetHotkeysToDefaults() }
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func isConflicted(_ action: CaptureAction) -> Bool {
+        model.conflicts.contains { $0.actions.contains(action) }
+    }
+
+    private var conflictSummary: String {
+        let names = model.conflicts
+            .flatMap { conflict in
+                conflict.actions.map { "\($0.title) (\(conflict.binding.displayString))" }
+            }
+        return "Shortcut conflict: " + names.joined(separator: ", ")
+    }
+
+    // MARK: - Saving (stories 42–43)
+
+    private var savingSection: some View {
+        Section("Saving") {
+            Picker("Default format", selection: $model.formatIsJPEG) {
+                Text("PNG").tag(false)
+                Text("JPEG").tag(true)
+            }
+            if model.formatIsJPEG {
+                LabeledContent("JPEG quality") {
+                    HStack {
+                        Slider(value: $model.jpegQuality, in: 0.1...1.0)
+                        Text("\(Int((model.jpegQuality * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                }
+            }
+            LabeledContent("Save location") {
+                HStack {
+                    Text(model.saveLocation.path)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Choose…") { chooseSaveLocation() }
+                        .controlSize(.small)
+                }
+            }
+            TextField("Filename pattern", text: $model.filenamePattern)
+                .help("Tokens: %Y %m %d %H %M %S — e.g. \"Screenshot %Y-%m-%d at %H.%M.%S\".")
+        }
+    }
+
+    private func chooseSaveLocation() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = model.saveLocation
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK, let url = panel.url {
+            model.saveLocation = url
+        }
+    }
+
+    // MARK: - Capture (stories 12, 13)
+
+    private var captureSection: some View {
+        Section("Capture") {
+            // `includeCursor` is live (read by SCCaptureService); `openInEditor` is persisted but not
+            // yet wired — the editor-vs-toolbar default is a spec-flagged decision (see SettingsStore).
+            Toggle("Open captures in the editor", isOn: $model.openInEditor)
+            Toggle("Include the mouse cursor", isOn: $model.includeCursor)
+        }
+    }
+
+    // MARK: - History (story 54)
+
+    private var historySection: some View {
+        // Retention persists here; enforcement and a "Clear history" button arrive with the
+        // HistoryStore seam (stories 50–54), which isn't in the app yet. `0` already expresses the
+        // "keep nothing" policy, so no dead Clear button is shipped in the meantime.
+        Section("History") {
+            Stepper(value: $model.historyRetention, in: 0...500) {
+                Text(model.historyRetention == 0
+                     ? "Don't keep any captures"
+                     : "Keep the last ^[\(model.historyRetention) capture](inflect: true)")
+            }
+        }
+    }
+
+    // MARK: - General (story 59)
+
+    private var generalSection: some View {
+        Section("General") {
+            Toggle("Launch Lightshot at login", isOn: $model.launchAtLogin)
+        }
+    }
+}

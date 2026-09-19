@@ -64,6 +64,11 @@ private final class StubSettings: SettingsStore {
     var defaultFormat: ImageFormat = .png
     var saveLocation = URL(fileURLWithPath: "/tmp/shots", isDirectory: true)
     var filenamePattern = "shot-%Y"
+    var hotkeys = HotkeyBindings.defaults
+    var openInEditor = true
+    var includeCursor = false
+    var historyRetention = 50
+    var launchAtLogin = false
 }
 
 @MainActor
