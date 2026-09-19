@@ -1,0 +1,21 @@
+// Code-signing settings for the Lightshot app target.
+//
+// The committed default is UNSIGNED so CI and fresh clones build with no certificate.
+// The catch: an unsigned/ad-hoc build gets a new code identity on every rebuild, so macOS
+// (TCC) forgets Screen Recording and the other granted permissions each time.
+//
+// To keep permissions across rebuilds, create a gitignored `Local.xcconfig` next to this
+// file that signs with your own stable identity, e.g.:
+//
+//     CODE_SIGNING_ALLOWED = YES
+//     CODE_SIGNING_REQUIRED = YES
+//     CODE_SIGN_STYLE = Automatic
+//     DEVELOPMENT_TEAM = ABCDE12345   // the OU of your "Apple Development" certificate
+//
+// then run `xcodegen generate`. These keys must NOT also be set in project.yml — target
+// build settings there would override this file.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGNING_REQUIRED = NO
+CODE_SIGNING_ALLOWED = NO
+
+#include? "Local.xcconfig"

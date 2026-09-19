@@ -1,0 +1,9 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# Gitignored files copied from the main checkout into each new workspace.
+# Local.xcconfig holds the per-machine signing identity (see App/Config/Signing.xcconfig);
+# without it a workspace builds unsigned and macOS forgets granted permissions every build.
+file_include_globs = """
+.env*
+App/Config/Local.xcconfig
+"""

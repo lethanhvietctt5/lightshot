@@ -14,3 +14,9 @@ Lightshot.xcodeproj/
 .build/
 .swiftpm/
 Package.resolved
+
+# Machine-local signing identity (see App/Config/Signing.xcconfig)
+Local.xcconfig
+
+# Conductor machine-local settings
+.conductor/settings.local.toml
