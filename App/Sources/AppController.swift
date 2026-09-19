@@ -21,18 +21,24 @@ final class AppController: NSObject, CaptureUI {
     private var coordinator: AppCoordinator!
     private var editorWindow: NSWindow?
     private var historyWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
 
+    /// The ScreenCaptureKit service, held once so the same instance backs both the capture spine and
+    /// the permission-onboarding checklist (LIG-21) — they share one view of the Screen Recording
+    /// grant, including the "have we asked yet?" flag that tells `.notDetermined` from `.denied`.
+    private let captureService = SCCaptureService(includeCursor: {
+        // Read the cursor-inclusion preference live at capture time (story 12), off the main actor,
+        // from the same defaults the settings window writes.
+        UserDefaultsSettingsStore.storedIncludeCursor()
+    })
+
     override init() {
         super.init()
         coordinator = AppCoordinator(
-            // Read the cursor-inclusion preference live at capture time (story 12), off the main
-            // actor, from the same defaults the settings window writes.
-            captureService: SCCaptureService(includeCursor: {
-                UserDefaultsSettingsStore.storedIncludeCursor()
-            }),
+            captureService: captureService,
             overlay: OverlaySelectionController(),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
@@ -56,6 +62,20 @@ final class AppController: NSObject, CaptureUI {
         applyHotkeys: { [weak self] bindings in self?.applyHotkeys(bindings) ?? [] },
         applyRetention: { [weak self] retention in self?.applyRetention(retention) }
     )
+
+    /// First-run permission onboarding (LIG-21). The checklist of every permission the app requires,
+    /// driven through the pure `PermissionOnboardingModel`. v1 lists only **Screen Recording** — the
+    /// Carbon global hotkeys need no Accessibility grant — but it is a list so a future requirement is
+    /// one entry, not a rewrite. The source is the shared `captureService`, so the checklist and the
+    /// capture spine agree on the grant.
+    lazy var onboardingModel = PermissionOnboardingModel(requirements: [
+        PermissionOnboardingModel.Requirement(
+            kind: .screenRecording,
+            title: "Screen Recording",
+            rationale: "Required to capture your screen. Without it, screenshots come back black or empty.",
+            source: captureService
+        )
+    ])
 
     /// Apply the configured history retention to the store (stories 50/54). `SettingsStore` owns the
     /// value (persisted by LIG-15); the store owns trimming to it — so this is where the two meet.
@@ -145,6 +165,47 @@ final class AppController: NSObject, CaptureUI {
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - Permission onboarding (LIG-21)
+
+    /// Show first-run onboarding at launch *only* if a required permission is still missing. A
+    /// set-up user (standing grant) is never nagged — the checklist is skipped once satisfied, and
+    /// LIG-19 still covers a permission revoked later, mid-capture.
+    func showPermissionOnboardingIfNeeded() {
+        Task {
+            await onboardingModel.refresh()
+            if !onboardingModel.isSatisfied {
+                showPermissionOnboarding()
+            }
+        }
+    }
+
+    /// Open the onboarding checklist. Used both at launch (when a permission is missing) and on
+    /// demand from the menu's "Set Up Permissions…" item, so the user can revisit it any time.
+    func showPermissionOnboarding() {
+        let window = onboardingWindow ?? makeOnboardingWindow()
+        if window.contentViewController == nil {
+            let view = PermissionOnboardingView(
+                model: onboardingModel,
+                openSettings: { [weak self] in self?.openSettings(for: $0) },
+                onClose: { [weak self] in self?.onboardingWindow?.close() }
+            )
+            window.contentViewController = NSHostingController(rootView: view)
+        }
+        onboardingWindow = window
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Deep-link to the System Settings pane for a permission the user must grant by hand.
+    private func openSettings(for kind: PermissionKind) {
+        switch kind {
+        case .screenRecording:
+            openScreenRecordingSettings()
+        }
     }
 
     // MARK: - CaptureUI
@@ -308,6 +369,22 @@ final class AppController: NSObject, CaptureUI {
         )
         window.title = "Lightshot"
         window.isReleasedWhenClosed = false
+        return window
+    }
+
+    /// The onboarding window (LIG-21): a fixed-size, non-resizable panel — the checklist lays itself
+    /// out at a set width. Reused across opens (kept alive after close) so its `PermissionOnboardingView`
+    /// and its model survive a dismiss-and-reopen.
+    private func makeOnboardingWindow() -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 320),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Welcome to Lightshot"
+        window.isReleasedWhenClosed = false
+        window.center()
         return window
     }
 
