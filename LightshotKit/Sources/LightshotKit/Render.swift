@@ -224,6 +224,30 @@ private struct Flattener {
     }
 }
 
+/// Encode a rendered image into `format`'s bytes — the single pixels-to-file step shared by disk
+/// save (`ImageSink.write`) and drag-out (`AppCoordinator.dragItem`). PNG returns the already-PNG
+/// render bytes unchanged; JPEG re-encodes the decoded image at the requested (clamped) quality via
+/// ImageIO. Pure and screen-free (no AppKit), so both output paths run through one tested encoder,
+/// and it is total: any failure falls back to the original render bytes rather than throwing.
+public func encode(_ image: RenderedImage, as format: ImageFormat) -> Data {
+    switch format {
+    case .png:
+        return image.data
+    case let .jpeg(quality):
+        guard let cgImage = decodeImage(image.data) else { return image.data }
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(out, ImageFormat.jpeg(quality: quality).utiIdentifier as CFString, 1, nil) else {
+            return image.data
+        }
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: min(max(quality, 0), 1)
+        ]
+        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return image.data }
+        return out as Data
+    }
+}
+
 // MARK: - CoreGraphics helpers
 
 private func cgColor(_ c: RGBAColor) -> CGColor {

@@ -42,6 +42,9 @@ final class EditorModel {
 
     private(set) var document: AnnotationDocument
     private let copy: (AnnotationDocument) -> Void
+    private let save: (AnnotationDocument) -> Void
+    private let saveAs: (AnnotationDocument) -> Void
+    private let makeDrag: (AnnotationDocument) -> NSItemProvider
 
     var tool: Tool = .select { didSet { if tool != .select { endTextEditing() } } }
 
@@ -59,9 +62,18 @@ final class EditorModel {
     private var drag: DragSession?
     private var gestureActive = false
 
-    init(document: AnnotationDocument, copy: @escaping (AnnotationDocument) -> Void) {
+    init(
+        document: AnnotationDocument,
+        copy: @escaping (AnnotationDocument) -> Void,
+        save: @escaping (AnnotationDocument) -> Void,
+        saveAs: @escaping (AnnotationDocument) -> Void,
+        makeDrag: @escaping (AnnotationDocument) -> NSItemProvider
+    ) {
         self.document = document
         self.copy = copy
+        self.save = save
+        self.saveAs = saveAs
+        self.makeDrag = makeDrag
     }
 
     // MARK: - Derived state for the view
@@ -134,6 +146,16 @@ final class EditorModel {
         document.delete(id)
     }
     func copyToClipboard() { endTextEditing(); copy(document) }
+
+    /// Save to disk with the configured defaults (story 43).
+    func saveToDisk() { endTextEditing(); save(document) }
+
+    /// Save to disk choosing location and format (stories 41–42).
+    func saveToDiskAs() { endTextEditing(); saveAs(document) }
+
+    /// The drag-out payload for the current document (story 45), committing any in-flight text
+    /// first so the dragged image reflects what's on screen.
+    func dragProvider() -> NSItemProvider { endTextEditing(); return makeDrag(document) }
 
     // MARK: - Z-order (story 33)
 
