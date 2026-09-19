@@ -1,0 +1,212 @@
+import Foundation
+
+/// The domain heart: a pure value type holding a screenshot plus its annotations,
+/// mutated **only** through an explicit command API.
+///
+/// The document owns everything expressible as pure functions over its state —
+/// undo/redo history, step-marker auto-increment, crop math, and hit-testing — so
+/// this behavior is fully verifiable through the public API with no display,
+/// permissions, or AppKit/ScreenCaptureKit involvement.
+///
+/// Element geometry is stored in **image pixel coordinates** and is never rewritten
+/// by a crop: `applyCrop` only records the visible frame, which is what keeps marks
+/// correct across crop and multi-scale export.
+public struct AnnotationDocument: Equatable, Sendable {
+
+    /// The slice of document state that undo/redo captures.
+    ///
+    /// Selection is deliberately excluded — selecting an element is ephemeral UI
+    /// state, not an editing action, so it must not land on the undo stack.
+    private struct State: Equatable, Sendable {
+        var elements: [AnnotationElement] = []
+        var cropRect: Rect?
+    }
+
+    /// The immutable base image (handle + native pixel size).
+    public let baseImage: CapturedImage
+
+    private var state = State()
+    private var undoStack: [State] = []
+    private var redoStack: [State] = []
+
+    /// The currently selected element, if any. Not part of undo history.
+    public private(set) var selectedID: ElementID?
+
+    public init(baseImage: CapturedImage) {
+        self.baseImage = baseImage
+    }
+
+    // MARK: - Read-only projections
+
+    /// Elements in z-order — later means drawn on top.
+    public var elements: [AnnotationElement] { state.elements }
+
+    /// The recorded crop rect, or `nil` when the full image is visible.
+    public var cropRect: Rect? { state.cropRect }
+
+    /// The full base-image rect in pixel coordinates.
+    public var imageBounds: Rect {
+        Rect(x: 0, y: 0, width: Double(baseImage.pixelWidth), height: Double(baseImage.pixelHeight))
+    }
+
+    /// The currently visible frame: the crop rect if set, else the whole image.
+    public var visibleFrame: Rect { state.cropRect ?? imageBounds }
+
+    public var canUndo: Bool { !undoStack.isEmpty }
+    public var canRedo: Bool { !redoStack.isEmpty }
+
+    public func element(id: ElementID) -> AnnotationElement? {
+        state.elements.first { $0.id == id }
+    }
+
+    // MARK: - Hit-testing
+
+    /// The topmost element whose geometry contains `point` (image coordinates),
+    /// or `nil` when the point misses every element. Pure — no view involvement.
+    public func elementID(at point: Point) -> ElementID? {
+        for element in state.elements.reversed() {
+            let tolerance = max(element.style.strokeWidth / 2, Self.minHitTolerance)
+            if element.kind.hitTest(point, tolerance: tolerance) {
+                return element.id
+            }
+        }
+        return nil
+    }
+
+    /// The step number a new marker would receive: one past the highest existing
+    /// marker, or `1` when none exist ("based on existing markers", per spec 0001).
+    ///
+    /// Survivors are never renumbered by a delete. Because the value is derived from
+    /// the *current* markers, deleting the highest marker frees its number for reuse
+    /// by the next add, while deleting a middle marker leaves a gap. This matches the
+    /// spec's stated rule; CleanShot parity here is flagged as "confirm if it matters."
+    public var nextStepNumber: Int {
+        let highest = state.elements.compactMap { element -> Int? in
+            if case let .stepMarker(number, _, _) = element.kind { return number }
+            return nil
+        }.max()
+        return (highest ?? 0) + 1
+    }
+
+    // MARK: - Commands
+
+    /// Appends `element` on top of the z-order and returns its id. A `stepMarker`
+    /// has its number reassigned to `nextStepNumber`, so callers never number by hand.
+    @discardableResult
+    public mutating func add(_ element: AnnotationElement) -> ElementID {
+        var element = element
+        if case let .stepMarker(_, center, radius) = element.kind {
+            element.kind = .stepMarker(number: nextStepNumber, center: center, radius: radius)
+        }
+        let id = element.id
+        perform { $0.elements.append(element) }
+        return id
+    }
+
+    /// Records the selection. Passing `nil` clears it; an unknown id is ignored,
+    /// leaving the current selection intact. Not undoable.
+    public mutating func select(_ id: ElementID?) {
+        guard let id else { selectedID = nil; return }
+        if state.elements.contains(where: { $0.id == id }) { selectedID = id }
+    }
+
+    /// Moves or resizes the element (see `Transform`). No-op if `id` is unknown.
+    public mutating func transform(_ id: ElementID, by transform: Transform) {
+        withElement(id) { element in
+            switch transform {
+            case let .move(dx, dy):
+                element.kind = element.kind.moved(dx: dx, dy: dy)
+            case let .resize(handle, dx, dy):
+                element.kind = element.kind.resized(handle: handle, dx: dx, dy: dy)
+            }
+        }
+    }
+
+    /// Replaces the element's style. No-op if `id` is unknown.
+    public mutating func setStyle(_ id: ElementID, _ style: Style) {
+        withElement(id) { $0.style = style }
+    }
+
+    /// Rewrites a text element's string, keeping its box. No-op if `id` is not text.
+    public mutating func updateText(_ id: ElementID, to string: String) {
+        withElement(id) { element in
+            guard case let .text(_, box) = element.kind else { return }
+            element.kind = .text(string, box: box)
+        }
+    }
+
+    /// Removes the element. Clears selection if it pointed at it. No-op if unknown.
+    public mutating func delete(_ id: ElementID) {
+        perform { $0.elements.removeAll { $0.id == id } }
+        if selectedID == id { selectedID = nil }
+    }
+
+    /// Moves the element to `index` in the z-order (clamped). No-op if unknown or
+    /// already there. Step numbers are unaffected — only draw order changes.
+    public mutating func reorder(_ id: ElementID, to index: Int) {
+        perform { state in
+            guard let current = state.elements.firstIndex(where: { $0.id == id }) else { return }
+            let element = state.elements.remove(at: current)
+            let clamped = min(max(index, 0), state.elements.count)
+            state.elements.insert(element, at: clamped)
+        }
+    }
+
+    /// Records the visible frame, clamped to the image bounds. Elements are left in
+    /// image coordinates, so undoing this restores the full frame with marks intact.
+    /// A rect that doesn't overlap the image is ignored.
+    public mutating func applyCrop(_ rect: Rect) {
+        let bounds = imageBounds
+        perform { state in
+            guard let clamped = bounds.intersection(rect) else { return }
+            state.cropRect = clamped
+        }
+    }
+
+    /// Reverts the most recent content command; no-op when there's nothing to undo.
+    public mutating func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(state)
+        state = previous
+        sanitizeSelection()
+    }
+
+    /// Re-applies the most recently undone command; no-op when the redo stack is empty.
+    public mutating func redo() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(state)
+        state = next
+        sanitizeSelection()
+    }
+
+    // MARK: - History plumbing
+
+    /// Applies `body` to the element addressed by `id` (if any) as a content
+    /// mutation. Centralizes the id lookup shared by `transform`/`setStyle`/`updateText`.
+    private mutating func withElement(_ id: ElementID, _ body: (inout AnnotationElement) -> Void) {
+        perform { state in
+            guard let index = state.elements.firstIndex(where: { $0.id == id }) else { return }
+            body(&state.elements[index])
+        }
+    }
+
+    /// Runs a content mutation, pushing an undo entry only if the state actually
+    /// changed. A new content command clears the redo stack (redo invalidation).
+    private mutating func perform(_ change: (inout State) -> Void) {
+        let before = state
+        change(&state)
+        guard state != before else { return }
+        undoStack.append(before)
+        redoStack.removeAll()
+    }
+
+    /// Drops a dangling selection after undo/redo removed the selected element.
+    private mutating func sanitizeSelection() {
+        if let id = selectedID, !state.elements.contains(where: { $0.id == id }) {
+            selectedID = nil
+        }
+    }
+
+    /// Minimum grab margin for thin marks, in image pixels.
+    private static let minHitTolerance: Double = 6
+}
