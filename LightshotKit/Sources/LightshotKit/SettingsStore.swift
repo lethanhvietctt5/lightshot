@@ -1,12 +1,12 @@
 import Foundation
 
-/// The save-related slice of user settings (stories 42–43): the default output format and
-/// where / what to name files when the user saves without a dialog.
+/// User settings backing the settings window (stories 12, 42–43, 54, 56, 59, 60).
 ///
 /// Fronted as a protocol like the other OS-facing seams, so the coordinator's default-save
 /// resolution is testable with an in-memory stub — the real implementation (app target) is backed
-/// by `UserDefaults`. Only the save slice lives here; hotkeys, retention, and the rest join with
-/// their own tickets.
+/// by `UserDefaults` (and `SMAppService` for launch-at-login). The save slice (stories 42–43) landed
+/// with LIG-11; LIG-15 adds the capture/app defaults: hotkeys, open-in-editor, cursor inclusion,
+/// history retention, and launch-at-login.
 @MainActor
 public protocol SettingsStore: AnyObject {
     /// Format used for a save that carries no per-save override.
@@ -15,6 +15,23 @@ public protocol SettingsStore: AnyObject {
     var saveLocation: URL { get set }
     /// Filename pattern (without extension), expanded per save — see `FilenameFormatter`.
     var filenamePattern: String { get set }
+
+    /// The global-hotkey chords bound to each capture action (story 56).
+    var hotkeys: HotkeyBindings { get set }
+    /// Whether a fresh capture opens straight in the editor (story 13/60). **Persisted here by
+    /// LIG-15; not yet consumed.** The routing that reads it — immediate editor vs. the post-capture
+    /// toolbar as the default outcome — is a spec-flagged decision (specs/0001 "Parity flags")
+    /// deferred to a capture ticket, so LIG-15 stores the preference without picking that fork.
+    var openInEditor: Bool { get set }
+    /// Whether the mouse cursor is included in captures (story 12). Read live at capture time by
+    /// `SCCaptureService`.
+    var includeCursor: Bool { get set }
+    /// How many captures the local history retains (story 54); `0` keeps none. **Persisted here by
+    /// LIG-15; not yet enforced.** Trimming to this limit and the companion "clear history" action
+    /// (story 54) belong to the `HistoryStore` seam (stories 50–54), which does not exist yet.
+    var historyRetention: Int { get set }
+    /// Whether the app is registered to launch at login (story 59).
+    var launchAtLogin: Bool { get set }
 }
 
 public extension SettingsStore {

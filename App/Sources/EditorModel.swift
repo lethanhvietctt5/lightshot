@@ -48,6 +48,7 @@ final class EditorModel {
     private let copy: (AnnotationDocument) -> Void
     private let save: (AnnotationDocument) -> Void
     private let saveAs: (AnnotationDocument) -> Void
+    private let pin: (AnnotationDocument) -> Void
     private let makeDrag: (AnnotationDocument) -> NSItemProvider
 
     var tool: Tool = .select {
@@ -93,12 +94,14 @@ final class EditorModel {
         copy: @escaping (AnnotationDocument) -> Void,
         save: @escaping (AnnotationDocument) -> Void,
         saveAs: @escaping (AnnotationDocument) -> Void,
+        pin: @escaping (AnnotationDocument) -> Void,
         makeDrag: @escaping (AnnotationDocument) -> NSItemProvider
     ) {
         self.document = document
         self.copy = copy
         self.save = save
         self.saveAs = saveAs
+        self.pin = pin
         self.makeDrag = makeDrag
     }
 
@@ -217,6 +220,10 @@ final class EditorModel {
 
     /// Save to disk choosing location and format (stories 41–42).
     func saveToDiskAs() { endTextEditing(); saveAs(document) }
+
+    /// Pin the flattened document as an always-on-top floating window (stories 46–49), committing
+    /// any in-flight text first so the pin reflects what's on screen.
+    func pinToDesktop() { endTextEditing(); pin(document) }
 
     /// The drag-out payload for the current document (story 45), committing any in-flight text
     /// first so the dragged image reflects what's on screen.

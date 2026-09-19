@@ -5,10 +5,11 @@ import LightshotKit
 /// UI-facing state for the capture-history window (stories 50–54), kept out of the SwiftUI view so
 /// the view is a thin projection.
 ///
-/// Wraps the domain `HistoryStore` (which owns persistence, thumbnails, and retention) and exposes a
-/// published snapshot the list renders. Reopen and copy need the editor / render pipeline, so they
-/// delegate to closures the `AppController` wires; reveal-in-Finder and the store mutations
-/// (delete / clear / set-retention) live here because they are plain AppKit / store calls.
+/// Wraps the domain `HistoryStore` (which owns persistence and thumbnails) and exposes a published
+/// snapshot the list renders. Reopen and copy need the editor / render pipeline, so they delegate to
+/// closures the `AppController` wires; reveal-in-Finder and the store mutations (delete / clear) live
+/// here because they are plain AppKit / store calls. Retention is *not* here — that value is owned by
+/// `SettingsStore` and edited in the settings window (story 54/60); the store just enforces it.
 @MainActor
 @Observable
 final class HistoryModel {
@@ -18,14 +19,6 @@ final class HistoryModel {
 
     /// The current history, newest first — refreshed after every mutation.
     private(set) var records: [CaptureRecord]
-    /// The retention cap, bound to the stepper. Setting it trims and persists through the store.
-    var retention: Int {
-        didSet {
-            guard retention != oldValue else { return }
-            try? store.setRetention(retention)
-            records = store.all()
-        }
-    }
 
     init(
         store: HistoryStore,
@@ -36,14 +29,12 @@ final class HistoryModel {
         self.onReopen = onReopen
         self.onCopy = onCopy
         self.records = store.all()
-        self.retention = store.retention
     }
 
     /// Pull a fresh snapshot from the store — call when the window reappears, since captures can be
     /// recorded while it is closed.
     func refresh() {
         records = store.all()
-        retention = store.retention
     }
 
     /// Re-open a history item in the editor to annotate or re-export it (story 51).

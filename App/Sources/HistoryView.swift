@@ -55,10 +55,10 @@ struct HistoryView: View {
 
     private var footer: some View {
         HStack {
-            Stepper(value: $model.retention, in: 1...500) {
-                Text("Keep last \(model.retention) captures")
-            }
-            .help("Older captures beyond this limit are removed to control disk use and privacy.")
+            Text("Set how many captures to keep in Settings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("The retention limit lives in Settings ▸ History; older captures beyond it are removed to control disk use and privacy.")
             Spacer()
             Button("Clear All…", role: .destructive) {
                 confirmClearAll()

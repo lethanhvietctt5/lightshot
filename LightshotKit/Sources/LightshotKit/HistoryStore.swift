@@ -79,12 +79,15 @@ public final class HistoryStore {
     /// the oldest is then a `removeFirst`.
     private var entries: [StoredEntry]
 
-    /// The configured cap; adding past it trims the oldest. Never negative. Persisted in the index.
+    /// The configured cap; adding past it trims the oldest. Never negative. The value is supplied by
+    /// the caller (`SettingsStore` owns and persists it) — the store only enforces it.
     public private(set) var retention: Int
 
-    /// Opens (or creates) a history store rooted at `directory`. If an `index.json` already exists
-    /// there its records **and** its persisted retention are loaded — the app relaunch case — and
-    /// the `retention` argument is ignored; otherwise `retention` seeds a fresh store.
+    /// Opens (or creates) a history store rooted at `directory`, loading any recorded captures from
+    /// an existing `index.json` — the app-relaunch case. The `retention` value is **not** persisted
+    /// here: `SettingsStore` owns it (LIG-15), and the app seeds the store from that setting and
+    /// re-applies it via `setRetention`. Loaded records are kept as-is; they are trimmed to the cap
+    /// on the next `add` or `setRetention`, so construction stays free of disk writes.
     public init(
         directory: URL,
         retention: Int = HistoryStore.defaultRetention,
@@ -93,14 +96,13 @@ public final class HistoryStore {
         self.directory = directory
         self.fileManager = fileManager
         self.indexURL = directory.appendingPathComponent("index.json")
+        self.retention = max(0, retention)
 
         if let data = try? Data(contentsOf: indexURL),
            let index = try? JSONDecoder().decode(StoredIndex.self, from: data) {
             self.entries = index.records
-            self.retention = max(0, index.retention)
         } else {
             self.entries = []
-            self.retention = max(0, retention)
         }
     }
 
@@ -207,7 +209,7 @@ public final class HistoryStore {
 
     private func persist() throws {
         try ensureDirectory()
-        let index = StoredIndex(retention: retention, records: entries)
+        let index = StoredIndex(records: entries)
         let data = try JSONEncoder().encode(index)
         try data.write(to: indexURL, options: .atomic)
     }
@@ -227,11 +229,11 @@ public final class HistoryStore {
 
 // MARK: - Persistence
 
-/// The on-disk index: retention plus every entry. Stores **filenames**, not absolute paths, so the
+/// The on-disk index: every recorded capture. Stores **filenames**, not absolute paths, so the
 /// history directory can be relocated without breaking the index; the store resolves absolute URLs
-/// when it hands out `CaptureRecord`s.
+/// when it hands out `CaptureRecord`s. Retention is deliberately not stored here — `SettingsStore`
+/// owns and persists that value (LIG-15).
 private struct StoredIndex: Codable {
-    var retention: Int
     var records: [StoredEntry]
 }
 

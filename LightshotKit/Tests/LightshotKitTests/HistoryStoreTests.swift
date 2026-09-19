@@ -142,20 +142,25 @@ private func instant(_ offset: TimeInterval) -> Date {
 
 // MARK: - Persistence across relaunch (story 54)
 
-@Test func historyAndRetentionSurviveAReload() throws {
+@Test func recordsSurviveAReloadAndTheCallerSuppliesRetention() throws {
     let dir = TempDir()
     do {
         let store = HistoryStore(directory: dir.url, retention: 10)
         _ = try store.add(solidImage(), source: .fullscreen, at: instant(0))
         _ = try store.add(solidImage(), source: .area, at: instant(10))
-        try store.setRetention(5)
+        _ = try store.add(solidImage(), source: .window, at: instant(20))
     }
 
-    // A brand-new store over the same directory — the app-relaunch case.
-    let reloaded = HistoryStore(directory: dir.url, retention: 99)
+    // A brand-new store over the same directory — the app-relaunch case. Retention is supplied by
+    // the caller (SettingsStore owns/persists it), not read back from the index; loaded records are
+    // kept as-is until the cap is enforced.
+    let reloaded = HistoryStore(directory: dir.url, retention: 2)
 
-    #expect(reloaded.retention == 5)                              // persisted retention wins over the seed
-    #expect(reloaded.all().map(\.source) == [.area, .fullscreen])  // records survived, newest first
-    // The reloaded record still resolves to a readable image on disk.
-    #expect(reloaded.capturedImage(for: reloaded.all()[0]) != nil)
+    #expect(reloaded.retention == 2)                                     // the seed the caller passed
+    #expect(reloaded.all().map(\.source) == [.window, .area, .fullscreen])  // records survived intact
+    #expect(reloaded.capturedImage(for: reloaded.all()[0]) != nil)       // still readable on disk
+
+    // Enforcing the cap trims the oldest, exactly as the app does at launch via setRetention.
+    try reloaded.setRetention(2)
+    #expect(reloaded.all().map(\.source) == [.window, .area])
 }
