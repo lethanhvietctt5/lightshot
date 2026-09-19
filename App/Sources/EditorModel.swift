@@ -14,9 +14,9 @@ import LightshotKit
 @Observable
 final class EditorModel {
 
-    /// The annotation tools the palette offers (LIG-9 scope: vector marks + step markers).
+    /// The annotation tools the palette offers (vector marks + step markers, plus crop).
     enum Tool: String, CaseIterable, Identifiable {
-        case select, arrow, line, rectangle, ellipse, freehand, text, step
+        case select, arrow, line, rectangle, ellipse, freehand, text, step, crop
         var id: String { rawValue }
 
         /// SF Symbol for the palette button.
@@ -36,6 +36,7 @@ final class EditorModel {
             case .freehand: return ("scribble", "Freehand")
             case .text: return ("textformat", "Text")
             case .step: return ("1.circle.fill", "Step marker")
+            case .crop: return ("crop", "Crop")
             }
         }
     }
@@ -43,7 +44,19 @@ final class EditorModel {
     private(set) var document: AnnotationDocument
     private let copy: (AnnotationDocument) -> Void
 
-    var tool: Tool = .select { didSet { if tool != .select { endTextEditing() } } }
+    var tool: Tool = .select {
+        didSet {
+            if tool != .select { endTextEditing() }
+            if tool == .crop {
+                // Enter crop mode seeded with the current crop (or the whole image), and
+                // drop any element selection — crop has its own rectangle, not an element.
+                document.select(nil)
+                cropDraft = documentCropFrame
+            } else if oldValue == .crop {
+                cropDraft = nil
+            }
+        }
+    }
 
     /// The style applied to new marks, kept in sync with the selection while one exists.
     private(set) var style: Style = .default
@@ -57,7 +70,12 @@ final class EditorModel {
     // In-progress interaction (nil when idle). Exactly one is ever non-nil.
     private var draft: Draft?
     private var drag: DragSession?
+    private var cropSession: CropSession?
     private var gestureActive = false
+
+    /// The crop rectangle being edited while the crop tool is active (image space).
+    /// Committed to the document live on each drag; `nil` outside crop mode.
+    private(set) var cropDraft: Rect?
 
     init(document: AnnotationDocument, copy: @escaping (AnnotationDocument) -> Void) {
         self.document = document
@@ -95,6 +113,45 @@ final class EditorModel {
         return document.element(id: id)?.kind.boundingBox
     }
 
+    // MARK: - Crop (stories 36–38)
+
+    /// Whether the crop tool is active (its rectangle and handles are shown).
+    var isCropping: Bool { tool == .crop }
+
+    /// The crop frame to visualize (image space), or `nil` when the full image shows.
+    /// In crop mode this is the live draft; otherwise it's the applied crop, but only
+    /// when it actually trims the image — a crop equal to the full frame dims nothing.
+    var cropFrame: Rect? {
+        if isCropping { return cropDraft }
+        return hasEffectiveCrop ? document.cropRect : nil
+    }
+
+    /// Whether a crop is in effect and can be reversed to the full frame.
+    var canResetCrop: Bool { hasEffectiveCrop }
+
+    /// Reverses the crop, restoring the full frame with every element intact. Recorded as
+    /// an undoable command (setting the crop to the whole image), so ⌘Z reverses it too.
+    func resetCrop() {
+        document.applyCrop(document.imageBounds)
+        syncCropDraft()
+    }
+
+    /// The document's current crop frame (the crop rect, or the whole image), standardized.
+    /// Reuses the document's `visibleFrame` seam rather than re-deriving it.
+    private var documentCropFrame: Rect { document.visibleFrame.standardized }
+
+    /// Whether the applied crop actually trims the image (vs. equalling the full frame).
+    private var hasEffectiveCrop: Bool {
+        guard let crop = document.cropRect else { return false }
+        return crop.standardized != document.imageBounds.standardized
+    }
+
+    /// Re-points the live crop draft at whatever the document now shows, so the overlay can't
+    /// go stale when a command changes the crop out from under it (undo, redo, reset).
+    private func syncCropDraft() {
+        if isCropping { cropDraft = documentCropFrame }
+    }
+
     // MARK: - Tool palette
 
     func selectTool(_ tool: Tool) { self.tool = tool }
@@ -126,8 +183,8 @@ final class EditorModel {
 
     // MARK: - History & output
 
-    func undo() { endTextEditing(); document.undo() }
-    func redo() { endTextEditing(); document.redo() }
+    func undo() { endTextEditing(); document.undo(); syncCropDraft() }
+    func redo() { endTextEditing(); document.redo(); syncCropDraft() }
     func deleteSelection() {
         guard let id = document.selectedID else { return }
         endTextEditing()
@@ -178,6 +235,7 @@ final class EditorModel {
     /// for editing (story 21). Returns whether a text edit session began.
     @discardableResult
     func doubleClick(at point: Point) -> Bool {
+        guard tool != .crop else { return false }
         guard let id = document.elementID(at: point) else { return false }
         document.select(id)
         syncStyleToSelection()
@@ -220,13 +278,17 @@ final class EditorModel {
         switch tool {
         case .select:
             beginSelectGesture(at: point)
+        case .crop:
+            beginCropGesture(at: point)
         case .arrow, .line, .rectangle, .ellipse, .freehand, .text, .step:
             draft = Draft(tool: tool, start: point, current: point, points: [point])
         }
     }
 
     private func move(to point: Point) {
-        if drag != nil {
+        if let cropSession {
+            cropDraft = cropSession.rect(at: point, bounds: document.imageBounds)
+        } else if drag != nil {
             drag?.current = point
         } else if draft != nil {
             draft?.current = point
@@ -235,8 +297,18 @@ final class EditorModel {
     }
 
     private func end(at point: Point) {
-        defer { draft = nil; drag = nil }
+        defer { draft = nil; drag = nil; cropSession = nil }
 
+        if let cropSession {
+            let rect = cropSession.rect(at: point, bounds: document.imageBounds)
+            // Ignore an accidental click/tiny drag so it can't collapse the crop to nothing;
+            // a real drag commits the crop as one undo step.
+            if rect.width >= Self.minCropSize, rect.height >= Self.minCropSize {
+                cropDraft = rect
+                document.applyCrop(rect)
+            }
+            return
+        }
         if let drag {
             document.transform(drag.id, by: drag.transform)
             return
@@ -271,6 +343,20 @@ final class EditorModel {
             drag = DragSession(id: hit, mode: .move, start: point, current: point)
         } else {
             document.select(nil)
+        }
+    }
+
+    /// Starts a crop drag: grab a handle to resize, press inside to move, or press
+    /// outside to draw a fresh rectangle. The current draft (or the whole image) is the
+    /// rect being adjusted.
+    private func beginCropGesture(at point: Point) {
+        let rect = cropDraft ?? document.imageBounds
+        if let handle = handle(at: point, of: rect) {
+            cropSession = CropSession(mode: .resize(handle), start: point, origin: rect)
+        } else if rect.contains(point) {
+            cropSession = CropSession(mode: .move, start: point, origin: rect)
+        } else {
+            cropSession = CropSession(mode: .draw, start: point, origin: rect)
         }
     }
 
@@ -312,6 +398,8 @@ final class EditorModel {
     }
 
     private static let handleRadius: Double = 6
+    /// Smallest crop a drag can commit, in image pixels — below this the drag is ignored.
+    private static let minCropSize: Double = 8
 }
 
 /// A shape being drawn from a press-drag, before it becomes a committed element.
@@ -329,7 +417,7 @@ private struct Draft {
         case .rectangle: return hasMinimumArea ? .rectangle(rectBetween(start, current)) : nil
         case .ellipse: return hasMinimumArea ? .ellipse(rectBetween(start, current)) : nil
         case .freehand: return points.count > 1 ? .freehand(points: points) : nil
-        case .select, .text, .step: return nil
+        case .select, .text, .step, .crop: return nil
         }
     }
 
@@ -353,6 +441,36 @@ private struct DragSession {
         switch mode {
         case .move: return .move(dx: dx, dy: dy)
         case let .resize(handle): return .resize(handle: handle, dx: dx, dy: dy)
+        }
+    }
+}
+
+/// An in-progress crop-rectangle drag: drawing a fresh rect, moving it, or resizing a
+/// handle. The result is always clamped to the image so the crop never leaves the frame.
+private struct CropSession {
+    enum Mode { case draw, move, resize(Handle) }
+    let mode: Mode
+    let start: Point
+    /// The crop rect at the moment the drag began (unused when drawing fresh).
+    let origin: Rect
+
+    /// The crop rect for the current pointer location, clamped to `bounds`.
+    func rect(at point: Point, bounds: Rect) -> Rect {
+        switch mode {
+        case .draw:
+            return bounds.intersection(rectBetween(start, point))
+                ?? Rect(x: point.x, y: point.y, width: 0, height: 0)
+        case .move:
+            // Slide the whole rect, keeping its size and pinning it inside the image.
+            let dx = point.x - start.x
+            let dy = point.y - start.y
+            let x = min(max(origin.minX + dx, bounds.minX), bounds.maxX - origin.width)
+            let y = min(max(origin.minY + dy, bounds.minY), bounds.maxY - origin.height)
+            return Rect(x: x, y: y, width: origin.width, height: origin.height)
+        case let .resize(handle):
+            // Reuse the exact edge math elements use, then clip to the image.
+            let resized = origin.resized(handle: handle, dx: point.x - start.x, dy: point.y - start.y)
+            return bounds.intersection(resized) ?? origin
         }
     }
 }

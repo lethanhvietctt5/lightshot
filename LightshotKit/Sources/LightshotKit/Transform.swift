@@ -16,7 +16,10 @@ extension Rect {
     ///
     /// Only the edges the handle touches move; the result is standardized so an
     /// overshoot that flips an edge past its opposite still yields a valid rect.
-    func resized(handle: Handle, dx: Double, dy: Double) -> Rect {
+    ///
+    /// Public so the editor's crop rectangle drags share the exact edge math used to
+    /// resize an element, rather than duplicating (and risking drift from) it.
+    public func resized(handle: Handle, dx: Double, dy: Double) -> Rect {
         var left = minX
         var top = minY
         var right = maxX

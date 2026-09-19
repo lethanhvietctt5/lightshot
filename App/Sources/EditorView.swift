@@ -32,6 +32,10 @@ struct EditorView: View {
             toolPalette
             Divider().frame(height: 20)
             styleControls
+            if model.canResetCrop {
+                Button("Reset Crop") { model.resetCrop() }
+                    .help("Restore the full image (⌘Z also reverses)")
+            }
             Spacer()
             historyControls
         }
@@ -150,6 +154,12 @@ struct EditorView: View {
                     if let box = model.selectionBox {
                         drawSelection(box, into: context, projection: projection)
                     }
+                    if let crop = model.cropFrame {
+                        drawCropOverlay(
+                            crop, imageBounds: model.imageBounds, showHandles: model.isCropping,
+                            into: context, projection: projection
+                        )
+                    }
                 }
                 .contentShape(Rectangle())
                 .gesture(dragGesture(projection: projection))
@@ -266,13 +276,43 @@ private func drawSelection(_ box: Rect, into context: GraphicsContext, projectio
         Path(vr), with: .color(.accentColor),
         style: StrokeStyle(lineWidth: 1, dash: [4, 3])
     )
-    let size: CGFloat = 7
+    drawHandles(on: box, size: 7, stroke: .accentColor, into: context, projection: projection)
+}
+
+/// Draws the eight resize handles of `box` (image space) as small white squares. Shared by
+/// the selection outline and the crop overlay so their handles stay visually identical.
+private func drawHandles(
+    on box: Rect, size: CGFloat, stroke: Color,
+    into context: GraphicsContext, projection: CanvasProjection
+) {
     for handle in Handle.allCases {
         let p = projection.toView(handlePoint(handle, in: box)).cgPoint
         let square = CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size)
         context.fill(Path(roundedRect: square, cornerRadius: 1.5), with: .color(.white))
-        context.stroke(Path(roundedRect: square, cornerRadius: 1.5), with: .color(.accentColor), lineWidth: 1)
+        context.stroke(Path(roundedRect: square, cornerRadius: 1.5), with: .color(stroke), lineWidth: 1)
     }
+}
+
+/// Draws the crop framing: everything outside the crop rect is dimmed so the excluded
+/// area reads at a glance, the crop edge is outlined, and — while the crop tool is active —
+/// eight resize handles are drawn to grab. All geometry is projected from image space, so
+/// the frame stays anchored to the same pixels the export will keep.
+private func drawCropOverlay(
+    _ frame: Rect, imageBounds: Rect, showHandles: Bool,
+    into context: GraphicsContext, projection: CanvasProjection
+) {
+    let full = projection.toView(imageBounds).cgRect
+    let crop = projection.toView(frame).cgRect
+
+    // Dim the ring between the image and the crop rect (even-odd fills outside the inner rect).
+    var mask = Path(full)
+    mask.addRect(crop)
+    context.fill(mask, with: .color(.black.opacity(0.45)), style: FillStyle(eoFill: true))
+
+    context.stroke(Path(crop), with: .color(.white), style: StrokeStyle(lineWidth: 1))
+
+    guard showHandles else { return }
+    drawHandles(on: frame, size: 8, stroke: .black.opacity(0.6), into: context, projection: projection)
 }
 
 private func segment(_ a: Point, _ b: Point) -> Path { segment(from: a.cgPoint, to: b.cgPoint) }

@@ -101,6 +101,36 @@ private func document(width: Int = 100, height: Int = 100, rgb: (Double, Double,
         #expect(out.pixelWidth == 80)
         #expect(out.pixelHeight == 60)
     }
+
+    @Test func cropOffsetsAnnotationsIntoTheCroppedFrame() {
+        var doc = document(width: 200, height: 150) // white base
+        var mark = AnnotationElement(kind: .rectangle(Rect(x: 100, y: 80, width: 40, height: 30)))
+        mark.style = Style(color: .red, strokeWidth: 3, fill: .red)
+        _ = doc.add(mark)
+        doc.applyCrop(Rect(x: 80, y: 60, width: 100, height: 80))
+        let pixels = Pixels(render(doc))
+        #expect(pixels.width == 100 && pixels.height == 80)
+        // The mark centered at image (120, 95) lands at output (40, 35): anchored, not drifted.
+        #expect(isRed(pixels.rgb(x: 40, y: 35)))
+        // A spot inside the crop but outside the mark stays base white.
+        #expect(isWhite(pixels.rgb(x: 5, y: 5)))
+    }
+
+    @Test func reversingACropRestoresTheFullFrameWithElementsIntact() {
+        var doc = document(width: 200, height: 150) // white base
+        // A mark at the image centre, so its read point is invariant under the probe's flip.
+        var mark = AnnotationElement(kind: .rectangle(Rect(x: 80, y: 60, width: 40, height: 30)))
+        mark.style = Style(color: .red, strokeWidth: 3, fill: .red)
+        _ = doc.add(mark)
+
+        doc.applyCrop(Rect(x: 0, y: 0, width: 60, height: 60)) // crops the mark out of the frame
+        #expect(render(doc).pixelWidth == 60) // cropped output no longer spans the mark
+
+        doc.undo() // reverse the crop
+        let out = render(doc)
+        #expect(out.pixelWidth == 200 && out.pixelHeight == 150) // full frame restored
+        #expect(isRed(Pixels(out).rgb(x: 100, y: 75))) // mark intact at the image centre
+    }
 }
 
 // MARK: - Vector tools appear
