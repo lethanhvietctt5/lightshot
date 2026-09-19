@@ -137,12 +137,11 @@ private struct Flattener {
         case let .stepMarker(number, center, radius):
             drawStepMarker(number: number, center: center, radius: radius, style: style)
 
-        case .highlight, .redaction:
-            // Highlighter (story 22) and blur/pixelate/blackout redaction (stories 23–24)
-            // are their own tickets, including the secure-erase semantics render must get
-            // exactly right. LIG-9 covers only the vector tools, so these are left for
-            // those tickets to draw and pixel-test.
-            break
+        case let .highlight(rect):
+            drawHighlight(rect, style: style)
+
+        case let .redaction(rect, redaction):
+            drawRedaction(rect, redaction)
         }
 
         context.restoreGState()
@@ -212,6 +211,81 @@ private struct Flattener {
         context.textPosition = CGPoint(x: c.x - textWidth / 2, y: c.y - (ascent - descent) / 2)
         CTLineDraw(line, context)
     }
+
+    // MARK: - Highlight & redaction (stories 22–24)
+
+    /// A translucent colored wash: the fill alpha is capped so the content beneath stays
+    /// visible (story 22). A highlighter draws attention — it is never a redaction, so it
+    /// must not fully cover what it sits on.
+    private func drawHighlight(_ rect: Rect, style: Style) {
+        var wash = style.color
+        wash.alpha = min(style.color.alpha, Self.highlightAlpha)
+        context.setFillColor(cgColor(wash))
+        context.fill(contextRect(rect))
+    }
+
+    private func drawRedaction(_ rect: Rect, _ redaction: RedactionStyle) {
+        switch redaction {
+        case .blackout:
+            // Secure erase (story 24): an opaque solid replaces the covered pixels, so
+            // nothing beneath survives in the exported bytes. Black and fully opaque — the
+            // only redaction the app treats as secret-safe.
+            context.setFillColor(cgColor(RGBAColor(red: 0, green: 0, blue: 0, alpha: 1)))
+            context.fill(contextRect(rect))
+        case .blur:
+            obscure(rect, smooth: true)
+        case .pixelate:
+            obscure(rect, smooth: false)
+        }
+    }
+
+    /// Obscures a region by resampling it through a much smaller buffer and drawing it back
+    /// enlarged: a smooth (bilinear) shrink reads as blur, a nearest-neighbor shrink as
+    /// pixelation. Both only *transform* the covered pixels — they are visual obscuring, not
+    /// secure redaction (see `RedactionStyle`); only `blackout` genuinely erases.
+    private func obscure(_ rect: Rect, smooth: Bool) {
+        let dest = contextRect(rect)
+        guard dest.width >= 1, dest.height >= 1, let snapshot = context.makeImage() else { return }
+
+        // The rendered output shares image space's top-left origin (offset by the crop
+        // frame), so cropping the snapshot needs no y-flip — only the y-up *drawing*
+        // coordinates do (which `contextRect` already handles for the draw-back).
+        let s = rect.standardized
+        let crop = CGRect(x: s.minX - frame.minX, y: s.minY - frame.minY, width: s.width, height: s.height)
+            .integral
+            .intersection(CGRect(x: 0, y: 0, width: snapshot.width, height: snapshot.height))
+        guard !crop.isNull, crop.width >= 1, crop.height >= 1,
+              let region = snapshot.cropping(to: crop) else { return }
+
+        let factor = smooth ? Self.blurShrink : Self.pixelateBlock
+        let smallWidth = max(1, region.width / factor)
+        let smallHeight = max(1, region.height / factor)
+        guard let small = resample(region, width: smallWidth, height: smallHeight, smooth: smooth) else { return }
+
+        context.saveGState()
+        context.interpolationQuality = smooth ? .high : .none
+        context.setBlendMode(.copy)  // replace the region outright; don't blend resample edges
+        context.draw(small, in: dest)
+        context.restoreGState()
+    }
+
+    /// Redraws `image` into a fresh `width`×`height` buffer, choosing interpolation to
+    /// match the effect (bilinear for blur, nearest-neighbor for pixelation).
+    private func resample(_ image: CGImage, width: Int, height: Int, smooth: Bool) -> CGImage? {
+        guard let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.interpolationQuality = smooth ? .high : .none
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return ctx.makeImage()
+    }
+
+    /// Alpha cap for the highlighter wash — low enough that the content beneath reads through.
+    private static let highlightAlpha: Double = 0.35
+    /// Shrink divisor for blur (bilinear resample) and block size for pixelate (nearest).
+    private static let blurShrink = 10
+    private static let pixelateBlock = 12
 
     private func makeLine(_ string: String, fontSize: Double, color: RGBAColor) -> CTLine {
         let font = CTFontCreateWithName("Helvetica" as CFString, CGFloat(fontSize), nil)
