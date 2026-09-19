@@ -14,9 +14,10 @@ import LightshotKit
 @Observable
 final class EditorModel {
 
-    /// The annotation tools the palette offers (vector marks + step markers, plus crop).
+    /// The annotation tools the palette offers: vector marks + step markers (LIG-9), the
+    /// highlighter and region redaction (LIG-12), plus crop (LIG-10).
     enum Tool: String, CaseIterable, Identifiable {
-        case select, arrow, line, rectangle, ellipse, freehand, text, step, crop
+        case select, arrow, line, rectangle, ellipse, freehand, text, step, highlight, redact, crop
         var id: String { rawValue }
 
         /// SF Symbol for the palette button.
@@ -36,6 +37,8 @@ final class EditorModel {
             case .freehand: return ("scribble", "Freehand")
             case .text: return ("textformat", "Text")
             case .step: return ("1.circle.fill", "Step marker")
+            case .highlight: return ("highlighter", "Highlighter — translucent wash, doesn't hide content")
+            case .redact: return ("eye.slash", "Redact a region (blackout, blur, or pixelate)")
             case .crop: return ("crop", "Crop")
             }
         }
@@ -43,6 +46,9 @@ final class EditorModel {
 
     private(set) var document: AnnotationDocument
     private let copy: (AnnotationDocument) -> Void
+    private let save: (AnnotationDocument) -> Void
+    private let saveAs: (AnnotationDocument) -> Void
+    private let makeDrag: (AnnotationDocument) -> NSItemProvider
 
     var tool: Tool = .select {
         didSet {
@@ -57,6 +63,11 @@ final class EditorModel {
             }
         }
     }
+
+    /// Which style a new redaction uses. **Defaults to `blackout`** — the only secure
+    /// redaction (story 24): `blur`/`pixelate` merely obscure and must never be presented as
+    /// secret-safe. The toolbar surfaces this and warns when a non-secure style is chosen.
+    var redactionStyle: RedactionStyle = .blackout
 
     /// The style applied to new marks, kept in sync with the selection while one exists.
     private(set) var style: Style = .default
@@ -77,9 +88,18 @@ final class EditorModel {
     /// Committed to the document live on each drag; `nil` outside crop mode.
     private(set) var cropDraft: Rect?
 
-    init(document: AnnotationDocument, copy: @escaping (AnnotationDocument) -> Void) {
+    init(
+        document: AnnotationDocument,
+        copy: @escaping (AnnotationDocument) -> Void,
+        save: @escaping (AnnotationDocument) -> Void,
+        saveAs: @escaping (AnnotationDocument) -> Void,
+        makeDrag: @escaping (AnnotationDocument) -> NSItemProvider
+    ) {
         self.document = document
         self.copy = copy
+        self.save = save
+        self.saveAs = saveAs
+        self.makeDrag = makeDrag
     }
 
     // MARK: - Derived state for the view
@@ -192,6 +212,16 @@ final class EditorModel {
     }
     func copyToClipboard() { endTextEditing(); copy(document) }
 
+    /// Save to disk with the configured defaults (story 43).
+    func saveToDisk() { endTextEditing(); save(document) }
+
+    /// Save to disk choosing location and format (stories 41–42).
+    func saveToDiskAs() { endTextEditing(); saveAs(document) }
+
+    /// The drag-out payload for the current document (story 45), committing any in-flight text
+    /// first so the dragged image reflects what's on screen.
+    func dragProvider() -> NSItemProvider { endTextEditing(); return makeDrag(document) }
+
     // MARK: - Z-order (story 33)
 
     /// Moves the selected element one step up in the z-order (toward the front).
@@ -280,8 +310,8 @@ final class EditorModel {
             beginSelectGesture(at: point)
         case .crop:
             beginCropGesture(at: point)
-        case .arrow, .line, .rectangle, .ellipse, .freehand, .text, .step:
-            draft = Draft(tool: tool, start: point, current: point, points: [point])
+        case .arrow, .line, .rectangle, .ellipse, .freehand, .text, .step, .highlight, .redact:
+            draft = Draft(tool: tool, start: point, current: point, points: [point], redactionStyle: redactionStyle)
         }
     }
 
@@ -408,6 +438,9 @@ private struct Draft {
     var start: Point
     var current: Point
     var points: [Point]
+    /// The redaction style captured when the draft began, so a mid-draw style change can't
+    /// retroactively alter the mark being drawn.
+    let redactionStyle: RedactionStyle
 
     /// The element geometry for this draft, or nil when it's too small / not a shape tool.
     var kind: AnnotationElement.Kind? {
@@ -417,6 +450,8 @@ private struct Draft {
         case .rectangle: return hasMinimumArea ? .rectangle(rectBetween(start, current)) : nil
         case .ellipse: return hasMinimumArea ? .ellipse(rectBetween(start, current)) : nil
         case .freehand: return points.count > 1 ? .freehand(points: points) : nil
+        case .highlight: return hasMinimumArea ? .highlight(rectBetween(start, current)) : nil
+        case .redact: return hasMinimumArea ? .redaction(rectBetween(start, current), style: redactionStyle) : nil
         case .select, .text, .step, .crop: return nil
         }
     }

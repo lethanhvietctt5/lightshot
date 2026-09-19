@@ -30,10 +30,12 @@ private struct LightshotMenu: View {
     let controller: AppController
 
     var body: some View {
-        // The fullscreen spine is wired (LIG-7). Area (LIG-13) and window (LIG-14) capture stay
-        // inert until their tickets land.
-        Button("Capture Area…") {}
-            .disabled(true)
+        // Fullscreen (LIG-7) and area (LIG-13) capture are wired; window capture (LIG-14) stays
+        // inert until its ticket lands.
+        Button("Capture Area…") {
+            controller.captureArea()
+        }
+        .keyboardShortcut("4", modifiers: [.command, .shift])
         Button("Capture Window…") {}
             .disabled(true)
         Button("Capture Fullscreen") {

@@ -11,8 +11,16 @@ struct EditorView: View {
     @State private var model: EditorModel
     @FocusState private var textFieldFocused: Bool
 
-    init(document: AnnotationDocument, onCopy: @escaping (AnnotationDocument) -> Void) {
-        _model = State(initialValue: EditorModel(document: document, copy: onCopy))
+    init(
+        document: AnnotationDocument,
+        onCopy: @escaping (AnnotationDocument) -> Void,
+        onSave: @escaping (AnnotationDocument) -> Void,
+        onSaveAs: @escaping (AnnotationDocument) -> Void,
+        onDrag: @escaping (AnnotationDocument) -> NSItemProvider
+    ) {
+        _model = State(initialValue: EditorModel(
+            document: document, copy: onCopy, save: onSave, saveAs: onSaveAs, makeDrag: onDrag
+        ))
     }
 
     var body: some View {
@@ -32,6 +40,7 @@ struct EditorView: View {
             toolPalette
             Divider().frame(height: 20)
             styleControls
+            redactionControls
             if model.canResetCrop {
                 Button("Reset Crop") { model.resetCrop() }
                     .help("Restore the full image (⌘Z also reverses)")
@@ -92,6 +101,49 @@ struct EditorView: View {
         .help("Font size")
     }
 
+    /// The redaction style picker, shown only while the redact tool is active. Blackout is
+    /// the default and the only style framed as secure; blur/pixelate carry an explicit
+    /// "not secure" warning so they are never mistaken for secret-safe redaction (story 24).
+    @ViewBuilder
+    private var redactionControls: some View {
+        @Bindable var model = model
+        if model.tool == .redact {
+            Divider().frame(height: 20)
+            Picker("Redaction style", selection: $model.redactionStyle) {
+                Text("Blackout").tag(RedactionStyle.blackout)
+                Text("Blur").tag(RedactionStyle.blur)
+                Text("Pixelate").tag(RedactionStyle.pixelate)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help(redactionHelp)
+
+            if model.redactionStyle == .blackout {
+                Label("Secure erase", systemImage: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Label("Not secure — visual only", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .labelStyle(.titleAndIcon)
+            }
+        }
+    }
+
+    private var redactionHelp: String {
+        switch model.redactionStyle {
+        case .blackout:
+            return "Blackout replaces the covered pixels with an opaque fill on export — the only secure redaction."
+        case .blur:
+            return "Blur only obscures the region and can be reversed or inferred. Use Blackout to hide secrets."
+        case .pixelate:
+            return "Pixelate only obscures the region and can be reversed or inferred. Use Blackout to hide secrets."
+        }
+    }
+
     private var historyControls: some View {
         HStack(spacing: 6) {
             Button { model.sendBackward() } label: { Image(systemName: "square.2.layers.3d.bottom.filled") }
@@ -120,6 +172,20 @@ struct EditorView: View {
                 .disabled(!model.canRedo)
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .help("Redo")
+
+            Image(systemName: "arrow.up.forward.square")
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
+                .help("Drag the rendered image into another app")
+                .onDrag { model.dragProvider() }
+
+            Button { model.saveToDisk() } label: { Image(systemName: "square.and.arrow.down") }
+                .keyboardShortcut("s", modifiers: .command)
+                .help("Save to disk (⌘S)")
+
+            Button { model.saveToDiskAs() } label: { Image(systemName: "square.and.arrow.down.on.square") }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .help("Save As… (⇧⌘S)")
 
             Button("Copy") { model.copyToClipboard() }
                 .keyboardShortcut("c", modifiers: .command)
@@ -265,10 +331,32 @@ private func draw(_ element: AnnotationElement, into context: GraphicsContext, p
             at: c, anchor: .center
         )
 
-    case .highlight, .redaction:
-        break // owned by the highlighter / redaction tickets
+    case let .highlight(rect):
+        // A translucent wash: cap the color's alpha exactly as the flatten does
+        // (`render`'s `highlightAlpha`) — capping, not multiplying by opacity — so the canvas
+        // and the exported image agree even when the chosen color is already translucent.
+        var wash = element.style.color
+        wash.alpha = min(element.style.color.alpha, highlightPreviewAlpha)
+        context.fill(Path(projection.toView(rect).cgRect), with: .color(wash.color))
+
+    case let .redaction(rect, redactionStyle):
+        let path = Path(projection.toView(rect).cgRect)
+        switch redactionStyle {
+        case .blackout:
+            // Exact preview: an opaque black fill is what the export produces.
+            context.fill(path, with: .color(.black))
+        case .blur, .pixelate:
+            // The real blur/pixelate is applied by `render` on export; on canvas we show a
+            // translucent scrim so the region reads as "obscured, not erased" (visibly
+            // different from blackout's solid fill) without re-implementing the filter here.
+            context.fill(path, with: .color(.gray.opacity(0.55)))
+        }
     }
 }
+
+/// Alpha of the highlighter preview wash — mirrors `render`'s `highlightAlpha` so the canvas
+/// and the exported image agree.
+private let highlightPreviewAlpha: Double = 0.35
 
 private func drawSelection(_ box: Rect, into context: GraphicsContext, projection: CanvasProjection) {
     let vr = projection.toView(box).cgRect

@@ -73,6 +73,37 @@ private func isRed(_ c: (r: Double, g: Double, b: Double)) -> Bool {
 private func isWhite(_ c: (r: Double, g: Double, b: Double)) -> Bool {
     c.r > 0.9 && c.g > 0.9 && c.b > 0.9
 }
+private func isGreen(_ c: (r: Double, g: Double, b: Double)) -> Bool {
+    c.g > 0.6 && c.r < 0.4 && c.b < 0.4
+}
+private func isBlack(_ c: (r: Double, g: Double, b: Double)) -> Bool {
+    c.r < 0.1 && c.g < 0.1 && c.b < 0.1
+}
+
+/// Manhattan distance between two colors — used to assert a region *changed* (blur/pixelate)
+/// without asserting anything about what it changed into.
+private func channelDistance(_ a: (r: Double, g: Double, b: Double), _ b: (r: Double, g: Double, b: Double)) -> Double {
+    abs(a.r - b.r) + abs(a.g - b.g) + abs(a.b - b.b)
+}
+
+/// A base image split left/right into two solid colors, so a filter that blends or shifts
+/// pixels across the vertical seam is observable.
+private func halvesImage(width: Int, height: Int, left: (Double, Double, Double), right: (Double, Double, Double)) -> CapturedImage {
+    let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.setFillColor(CGColor(red: left.0, green: left.1, blue: left.2, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width / 2, height: height))
+    context.setFillColor(CGColor(red: right.0, green: right.1, blue: right.2, alpha: 1))
+    context.fill(CGRect(x: width / 2, y: 0, width: width - width / 2, height: height))
+    let cgImage = context.makeImage()!
+    let data = NSMutableData()
+    let dest = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
+    CGImageDestinationAddImage(dest, cgImage, nil)
+    CGImageDestinationFinalize(dest)
+    return CapturedImage(pixelWidth: width, pixelHeight: height, data: data as Data)
+}
 
 private func document(width: Int = 100, height: Int = 100, rgb: (Double, Double, Double) = (1, 1, 1)) -> AnnotationDocument {
     AnnotationDocument(baseImage: solidImage(width: width, height: height, rgb: rgb))
@@ -165,6 +196,65 @@ private func document(width: Int = 100, height: Int = 100, rgb: (Double, Double,
         let pixels = Pixels(render(doc))
         #expect(isRed(pixels.rgb(x: 50, y: 50)))   // center
         #expect(isWhite(pixels.rgb(x: 12, y: 12)))  // corner outside the ellipse
+    }
+}
+
+// MARK: - Highlight & redaction (stories 22–24)
+
+@Suite struct RenderRedactionTests {
+    @Test func highlighterWashesTheRegionButLetsContentShowThrough() {
+        var doc = document() // white base
+        _ = doc.add(AnnotationElement(
+            kind: .highlight(Rect(x: 20, y: 20, width: 60, height: 60)),
+            style: Style(color: .red)
+        ))
+        let c = Pixels(render(doc)).rgb(x: 50, y: 50)
+        // Translucent red over white reads as pink: the red channel stays high, but green and
+        // blue are only partly knocked down — the white beneath still shows. A solid fill
+        // would drive green/blue to ~0, which would mean the highlighter hid the content.
+        #expect(c.r > 0.9)
+        #expect(c.g > 0.4 && c.g < 0.95)
+        #expect(c.b > 0.4 && c.b < 0.95)
+    }
+
+    @Test func blackoutErasesTheSentinelBeneathIt() {
+        // The whole base is a green sentinel; a blackout covers the middle.
+        var doc = AnnotationDocument(baseImage: solidImage(width: 100, height: 100, rgb: (0, 1, 0)))
+        _ = doc.add(AnnotationElement(kind: .redaction(Rect(x: 20, y: 20, width: 60, height: 60), style: .blackout)))
+        let pixels = Pixels(render(doc))
+        // Inside the box: opaque black, with no trace of the sentinel — secure erase.
+        for (x, y) in [(30, 30), (50, 50), (70, 70)] {
+            let c = pixels.rgb(x: x, y: y)
+            #expect(isBlack(c))
+            #expect(!isGreen(c))
+        }
+        // Outside the box the sentinel survives, so the fill is scoped to its region.
+        #expect(isGreen(pixels.rgb(x: 5, y: 5)))
+    }
+
+    @Test func blurChangesTheRegionWithoutErasingIt() {
+        // Red | blue halves; a blur straddling the seam must blend the two, not replace them.
+        let base = halvesImage(width: 100, height: 100, left: (1, 0, 0), right: (0, 0, 1))
+        var doc = AnnotationDocument(baseImage: base)
+        _ = doc.add(AnnotationElement(kind: .redaction(Rect(x: 30, y: 30, width: 40, height: 40), style: .blur)))
+        let plain = Pixels(render(AnnotationDocument(baseImage: base)))
+        let blurred = Pixels(render(doc))
+        // The sharp seam pixel changed (obscuring), but the assertion says nothing about
+        // recoverability — blur is explicitly not a secure erase.
+        #expect(channelDistance(plain.rgb(x: 50, y: 50), blurred.rgb(x: 50, y: 50)) > 0.05)
+    }
+
+    @Test func pixelateChangesTheRegion() {
+        let base = halvesImage(width: 100, height: 100, left: (1, 0, 0), right: (0, 0, 1))
+        var doc = AnnotationDocument(baseImage: base)
+        _ = doc.add(AnnotationElement(kind: .redaction(Rect(x: 30, y: 30, width: 40, height: 40), style: .pixelate)))
+        let plain = Pixels(render(AnnotationDocument(baseImage: base)))
+        let pixelated = Pixels(render(doc))
+        // Blocking shifts the seam, so at least one pixel around it differs from the base.
+        let changed = (44...56).contains { x in
+            channelDistance(plain.rgb(x: x, y: 50), pixelated.rgb(x: x, y: 50)) > 0.05
+        }
+        #expect(changed)
     }
 }
 
