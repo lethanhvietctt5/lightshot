@@ -1,0 +1,156 @@
+import Testing
+import Foundation
+import CoreGraphics
+import ImageIO
+@testable import LightshotKit
+
+// Pixel-level behavior of `render(_ document:)` — the flatten seam (stories 15–20, 25,
+// 33, 44). These decode the output PNG and assert coarse pixel facts (a mark appears,
+// z-order wins, crop resizes) rather than snapshotting bytes. They use CoreGraphics /
+// ImageIO to build fixtures and read pixels — never AppKit / ScreenCaptureKit — so the
+// domain seam still holds.
+
+// MARK: - Fixtures & pixel probing
+
+/// A solid-color PNG `CapturedImage` to flatten annotations onto.
+private func solidImage(width: Int, height: Int, rgb: (Double, Double, Double)) -> CapturedImage {
+    let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.setFillColor(CGColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    let cgImage = context.makeImage()!
+    let data = NSMutableData()
+    let dest = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
+    CGImageDestinationAddImage(dest, cgImage, nil)
+    CGImageDestinationFinalize(dest)
+    return CapturedImage(pixelWidth: width, pixelHeight: height, data: data as Data)
+}
+
+private struct Pixels {
+    let width: Int
+    let height: Int
+    private let buffer: [UInt8] // RGBA8, row-major, top-left origin
+
+    /// Decodes a rendered PNG into a top-left-origin RGBA8 buffer for probing.
+    init(_ rendered: RenderedImage) {
+        let source = CGImageSourceCreateWithData(rendered.data as CFData, nil)!
+        let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)!
+        let w = cgImage.width
+        let h = cgImage.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        bytes.withUnsafeMutableBytes { raw in
+            let context = CGContext(
+                data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        // `draw` uses bottom-left origin, so flip rows to a top-left buffer.
+        var flipped = [UInt8](repeating: 0, count: bytes.count)
+        for row in 0..<h {
+            let src = (h - 1 - row) * w * 4
+            let dst = row * w * 4
+            flipped.replaceSubrange(dst..<(dst + w * 4), with: bytes[src..<(src + w * 4)])
+        }
+        width = w
+        height = h
+        buffer = flipped
+    }
+
+    /// RGB at an image-space pixel (top-left origin), each channel `0.0...1.0`.
+    func rgb(x: Int, y: Int) -> (r: Double, g: Double, b: Double) {
+        let i = (y * width + x) * 4
+        return (Double(buffer[i]) / 255, Double(buffer[i + 1]) / 255, Double(buffer[i + 2]) / 255)
+    }
+}
+
+private func isRed(_ c: (r: Double, g: Double, b: Double)) -> Bool {
+    c.r > 0.6 && c.g < 0.4 && c.b < 0.4
+}
+private func isWhite(_ c: (r: Double, g: Double, b: Double)) -> Bool {
+    c.r > 0.9 && c.g > 0.9 && c.b > 0.9
+}
+
+private func document(width: Int = 100, height: Int = 100, rgb: (Double, Double, Double) = (1, 1, 1)) -> AnnotationDocument {
+    AnnotationDocument(baseImage: solidImage(width: width, height: height, rgb: rgb))
+}
+
+// MARK: - Dimensions & base pass-through
+
+@Suite struct RenderDimensionTests {
+    @Test func emptyDocumentKeepsBaseDimensions() {
+        let doc = document(width: 128, height: 96)
+        let out = render(doc)
+        #expect(out.pixelWidth == 128)
+        #expect(out.pixelHeight == 96)
+    }
+
+    @Test func emptyDocumentReproducesTheBasePixels() {
+        let doc = document(width: 40, height: 40, rgb: (1, 1, 1))
+        let pixels = Pixels(render(doc))
+        #expect(isWhite(pixels.rgb(x: 20, y: 20)))
+    }
+
+    @Test func cropShrinksOutputToTheCropRect() {
+        var doc = document(width: 200, height: 150)
+        doc.applyCrop(Rect(x: 20, y: 10, width: 80, height: 60))
+        let out = render(doc)
+        #expect(out.pixelWidth == 80)
+        #expect(out.pixelHeight == 60)
+    }
+}
+
+// MARK: - Vector tools appear
+
+@Suite struct RenderVectorTests {
+    @Test func filledRectanglePaintsItsInterior() {
+        var doc = document() // white base
+        var element = AnnotationElement(kind: .rectangle(Rect(x: 20, y: 20, width: 60, height: 60)))
+        element.style = Style(color: .red, strokeWidth: 3, fill: .red)
+        _ = doc.add(element)
+        let pixels = Pixels(render(doc))
+        #expect(isRed(pixels.rgb(x: 50, y: 50)))  // inside the box
+        #expect(isWhite(pixels.rgb(x: 5, y: 5)))   // outside stays base
+    }
+
+    @Test func strokedLineMarksThePixelsAlongIt() {
+        var doc = document()
+        _ = doc.add(AnnotationElement(
+            kind: .line(from: Point(x: 10, y: 50), to: Point(x: 90, y: 50)),
+            style: Style(color: .red, strokeWidth: 6)
+        ))
+        let pixels = Pixels(render(doc))
+        #expect(isRed(pixels.rgb(x: 50, y: 50)))   // on the line
+        #expect(isWhite(pixels.rgb(x: 50, y: 20)))  // above it
+    }
+
+    @Test func filledEllipsePaintsCenterButNotBoundingBoxCorner() {
+        var doc = document()
+        var element = AnnotationElement(kind: .ellipse(Rect(x: 10, y: 10, width: 80, height: 80)))
+        element.style = Style(color: .red, fill: .red)
+        _ = doc.add(element)
+        let pixels = Pixels(render(doc))
+        #expect(isRed(pixels.rgb(x: 50, y: 50)))   // center
+        #expect(isWhite(pixels.rgb(x: 12, y: 12)))  // corner outside the ellipse
+    }
+}
+
+// MARK: - Z-order
+
+@Suite struct RenderZOrderTests {
+    @Test func laterElementDrawsOnTopAtOverlap() {
+        var doc = document()
+        var bottom = AnnotationElement(kind: .rectangle(Rect(x: 10, y: 10, width: 60, height: 60)))
+        bottom.style = Style(color: .black, fill: .black)
+        var top = AnnotationElement(kind: .rectangle(Rect(x: 30, y: 30, width: 60, height: 60)))
+        top.style = Style(color: .red, fill: .red)
+        _ = doc.add(bottom)
+        _ = doc.add(top)
+        let pixels = Pixels(render(doc))
+        // The overlap region (40,40) belongs to the top (red) element.
+        #expect(isRed(pixels.rgb(x: 45, y: 45)))
+    }
+}

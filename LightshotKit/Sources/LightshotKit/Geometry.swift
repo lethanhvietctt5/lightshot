@@ -96,6 +96,56 @@ public enum Handle: Equatable, Sendable, CaseIterable {
     case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
 }
 
+/// Where the eight resize handles sit on a bounding box.
+///
+/// Pure geometry over `Handle`/`Rect`, so it lives beside them here rather than in the
+/// app layer: both the editor's hit-testing and its handle drawing read from it.
+public func handlePoint(_ handle: Handle, in box: Rect) -> Point {
+    let b = box.standardized
+    switch handle {
+    case .topLeft: return Point(x: b.minX, y: b.minY)
+    case .top: return Point(x: b.midX, y: b.minY)
+    case .topRight: return Point(x: b.maxX, y: b.minY)
+    case .right: return Point(x: b.maxX, y: b.midY)
+    case .bottomRight: return Point(x: b.maxX, y: b.maxY)
+    case .bottom: return Point(x: b.midX, y: b.maxY)
+    case .bottomLeft: return Point(x: b.minX, y: b.maxY)
+    case .left: return Point(x: b.minX, y: b.midY)
+    }
+}
+
+/// The axis-aligned rect spanned by two corner points.
+public func rectBetween(_ a: Point, _ b: Point) -> Rect {
+    Rect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+}
+
+/// The three corners of the filled triangle drawn at the head of an arrow whose shaft
+/// runs `from`→`to`. The first point is the tip (`to`); the other two are the base
+/// corners, flared perpendicular to the shaft. Returns an empty array for a zero-length
+/// shaft.
+///
+/// Coordinate-space-agnostic: the corners come back in the same space as the inputs, so
+/// the on-screen preview (view space) and the flatten render (context space) share one
+/// definition of an arrowhead instead of duplicating the trigonometry.
+public func arrowheadPoints(from: Point, to: Point, lineWidth: Double) -> [Point] {
+    let dx = to.x - from.x
+    let dy = to.y - from.y
+    let length = (dx * dx + dy * dy).squareRoot()
+    guard length > 0 else { return [] }
+    let ux = dx / length, uy = dy / length
+    // Head size scales with stroke so it reads at any weight.
+    let headLength = max(lineWidth * 3.5, 10)
+    let headWidth = headLength * 0.6
+    let baseX = to.x - ux * headLength
+    let baseY = to.y - uy * headLength
+    let px = -uy, py = ux // perpendicular unit vector
+    return [
+        to,
+        Point(x: baseX + px * headWidth, y: baseY + py * headWidth),
+        Point(x: baseX - px * headWidth, y: baseY - py * headWidth),
+    ]
+}
+
 /// Shortest distance from `point` to the line segment `a`–`b`.
 ///
 /// Used by hit-testing for one-dimensional marks (lines, arrows, freehand

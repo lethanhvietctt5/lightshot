@@ -141,6 +141,96 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         #expect(doc.elements.isEmpty)
         #expect(doc.canUndo == false)
     }
+
+    @Test func setStepRadiusResizesTheDisc() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .stepMarker(number: 0, center: Point(x: 50, y: 50), radius: 12)))
+        doc.setStepRadius(id, 30)
+        guard case let .stepMarker(_, center, radius) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
+        #expect(radius == 30)
+        #expect(center == Point(x: 50, y: 50)) // size only; the marker stays put
+    }
+
+    @Test func setStepRadiusOnNonMarkerIsANoOp() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .rectangle(rect(0, 0, 10, 10))))
+        doc.setStepRadius(id, 30)
+        doc.undo() // only the add is on the stack
+        #expect(doc.elements.isEmpty)
+        #expect(doc.canUndo == false)
+    }
+}
+
+// MARK: - Undo coalescing (story 35: one interaction is one undo step)
+
+@Suite struct CoalescingTests {
+    @Test func consecutiveStyleEditsCollapseToOneUndoStep() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .rectangle(rect(0, 0, 10, 10))))
+        doc.setStyle(id, Style(strokeWidth: 4))
+        doc.setStyle(id, Style(strokeWidth: 8))
+        doc.setStyle(id, Style(strokeWidth: 12))
+        doc.undo() // a single step reverts the whole run back to the added element's style
+        #expect(doc.element(id: id)?.style.strokeWidth == Style.default.strokeWidth)
+        #expect(doc.canUndo)        // only the add is left
+        doc.undo()
+        #expect(doc.elements.isEmpty)
+    }
+
+    @Test func consecutiveTextEditsCollapseToOneUndoStep() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .text("", box: rect(0, 0, 80, 20))))
+        doc.updateText(id, to: "h")
+        doc.updateText(id, to: "he")
+        doc.updateText(id, to: "hello")
+        doc.undo() // one step, not three
+        if case let .text(string, _) = doc.element(id: id)?.kind { #expect(string == "") }
+        #expect(doc.canUndo) // add remains
+    }
+
+    @Test func endCoalescingSplitsRunsIntoSeparateUndoSteps() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .rectangle(rect(0, 0, 10, 10))))
+        doc.setStyle(id, Style(strokeWidth: 8))
+        doc.endCoalescing()
+        doc.setStyle(id, Style(strokeWidth: 16))
+        doc.undo() // reverts only the second run
+        #expect(doc.element(id: id)?.style.strokeWidth == 8)
+    }
+
+    @Test func selectionClosesTheRun() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .rectangle(rect(0, 0, 10, 10))))
+        doc.setStyle(id, Style(strokeWidth: 8))
+        doc.select(id)                       // a selection change is a boundary
+        doc.setStyle(id, Style(strokeWidth: 16))
+        doc.undo()
+        #expect(doc.element(id: id)?.style.strokeWidth == 8)
+    }
+
+    @Test func styleAndStepRadiusShareOneUndoStep() {
+        // Font-size edits on a marker touch both `setStyle` and `setStepRadius`; they must
+        // collapse into one step so a font-size drag is a single undo.
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .stepMarker(number: 0, center: Point(x: 20, y: 20), radius: 12)))
+        doc.setStyle(id, Style(fontSize: 40))
+        doc.setStepRadius(id, 40)
+        doc.undo() // one step reverts both
+        guard case let .stepMarker(_, _, radius) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
+        #expect(radius == 12)
+        #expect(doc.canUndo) // add remains
+    }
+
+    @Test func differentCommandsBetweenEditsBreakCoalescing() {
+        // A move between two style edits keeps them as distinct undo steps.
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .rectangle(rect(0, 0, 10, 10))))
+        doc.setStyle(id, Style(strokeWidth: 8))
+        doc.transform(id, by: .move(dx: 5, dy: 5))
+        doc.setStyle(id, Style(strokeWidth: 16))
+        doc.undo() // reverts the second style edit only
+        #expect(doc.element(id: id)?.style.strokeWidth == 8)
+    }
 }
 
 // MARK: - Z-order & reorder

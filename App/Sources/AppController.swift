@@ -30,8 +30,9 @@ final class AppController: NSObject, CaptureUI {
     // MARK: - CaptureUI
 
     func openEditor(with image: CapturedImage) {
-        let view = EditorView(image: image) { [weak self] in
-            self?.coordinator.copyToClipboard(image)
+        let document = AnnotationDocument(baseImage: image)
+        let view = EditorView(document: document) { [weak self] edited in
+            self?.coordinator.copyToClipboard(edited)
         }
         let window = editorWindow ?? makeEditorWindow()
         window.contentViewController = NSHostingController(rootView: view)

@@ -29,6 +29,20 @@ public struct AnnotationDocument: Equatable, Sendable {
     private var undoStack: [State] = []
     private var redoStack: [State] = []
 
+    /// Identifies a run of edits that should collapse into one undo entry.
+    ///
+    /// Consecutive commands sharing a key — with nothing else between — push only a
+    /// single undo entry, so dragging a slider or typing a word is one undo step, not
+    /// dozens. Any command with a different (or nil) key, a `select`, an `undo`/`redo`,
+    /// or an explicit `endCoalescing()` closes the run.
+    private enum CoalesceKey: Equatable {
+        case style(ElementID)
+        case text(ElementID)
+    }
+
+    /// The open coalescing run, if any (see `CoalesceKey`).
+    private var coalesceKey: CoalesceKey?
+
     /// The currently selected element, if any. Not part of undo history.
     public private(set) var selectedID: ElementID?
 
@@ -104,8 +118,10 @@ public struct AnnotationDocument: Equatable, Sendable {
     }
 
     /// Records the selection. Passing `nil` clears it; an unknown id is ignored,
-    /// leaving the current selection intact. Not undoable.
+    /// leaving the current selection intact. Not undoable, but it closes any open
+    /// coalescing run so edits before and after a selection change stay distinct.
     public mutating func select(_ id: ElementID?) {
+        coalesceKey = nil
         guard let id else { selectedID = nil; return }
         if state.elements.contains(where: { $0.id == id }) { selectedID = id }
     }
@@ -122,18 +138,35 @@ public struct AnnotationDocument: Equatable, Sendable {
         }
     }
 
-    /// Replaces the element's style. No-op if `id` is unknown.
+    /// Replaces the element's style. No-op if `id` is unknown. Consecutive style edits
+    /// on the same element coalesce, so one slider drag is one undo step (story 35).
     public mutating func setStyle(_ id: ElementID, _ style: Style) {
-        withElement(id) { $0.style = style }
+        withElement(id, coalescing: .style(id)) { $0.style = style }
+    }
+
+    /// Sets a step marker's `radius` — its on-image size. No-op if `id` is not a step
+    /// marker. Shares the `setStyle` coalescing key so a font-size change (which sizes
+    /// both the disc and its number) lands as a single undo step (stories 28, 35).
+    public mutating func setStepRadius(_ id: ElementID, _ radius: Double) {
+        withElement(id, coalescing: .style(id)) { element in
+            guard case let .stepMarker(number, center, _) = element.kind else { return }
+            element.kind = .stepMarker(number: number, center: center, radius: max(radius, 1))
+        }
     }
 
     /// Rewrites a text element's string, keeping its box. No-op if `id` is not text.
+    /// Consecutive edits coalesce, so typing a word is one undo step (story 35).
     public mutating func updateText(_ id: ElementID, to string: String) {
-        withElement(id) { element in
+        withElement(id, coalescing: .text(id)) { element in
             guard case let .text(_, box) = element.kind else { return }
             element.kind = .text(string, box: box)
         }
     }
+
+    /// Closes any open coalescing run so the next edit starts a fresh undo entry. The
+    /// editor calls this at interaction boundaries (a slider release, the end of a text
+    /// edit) so two separate drags become two undo steps rather than one.
+    public mutating func endCoalescing() { coalesceKey = nil }
 
     /// Removes the element. Clears selection if it pointed at it. No-op if unknown.
     public mutating func delete(_ id: ElementID) {
@@ -165,6 +198,7 @@ public struct AnnotationDocument: Equatable, Sendable {
 
     /// Reverts the most recent content command; no-op when there's nothing to undo.
     public mutating func undo() {
+        coalesceKey = nil
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(state)
         state = previous
@@ -173,6 +207,7 @@ public struct AnnotationDocument: Equatable, Sendable {
 
     /// Re-applies the most recently undone command; no-op when the redo stack is empty.
     public mutating func redo() {
+        coalesceKey = nil
         guard let next = redoStack.popLast() else { return }
         undoStack.append(state)
         state = next
@@ -183,8 +218,14 @@ public struct AnnotationDocument: Equatable, Sendable {
 
     /// Applies `body` to the element addressed by `id` (if any) as a content
     /// mutation. Centralizes the id lookup shared by `transform`/`setStyle`/`updateText`.
-    private mutating func withElement(_ id: ElementID, _ body: (inout AnnotationElement) -> Void) {
-        perform { state in
+    /// `key` opts the edit into a coalescing run (see `CoalesceKey`); `nil` keeps it a
+    /// standalone undo step.
+    private mutating func withElement(
+        _ id: ElementID,
+        coalescing key: CoalesceKey? = nil,
+        _ body: (inout AnnotationElement) -> Void
+    ) {
+        perform(coalescing: key) { state in
             guard let index = state.elements.firstIndex(where: { $0.id == id }) else { return }
             body(&state.elements[index])
         }
@@ -192,12 +233,20 @@ public struct AnnotationDocument: Equatable, Sendable {
 
     /// Runs a content mutation, pushing an undo entry only if the state actually
     /// changed. A new content command clears the redo stack (redo invalidation).
-    private mutating func perform(_ change: (inout State) -> Void) {
+    ///
+    /// When `key` matches the open coalescing run, the change folds into the entry
+    /// already on the stack instead of pushing a new one, so a continuous interaction
+    /// (a slider drag, a burst of keystrokes) collapses to a single undo step. Any other
+    /// key — including the default `nil` — closes the run and starts a fresh entry.
+    private mutating func perform(coalescing key: CoalesceKey? = nil, _ change: (inout State) -> Void) {
         let before = state
         change(&state)
         guard state != before else { return }
-        undoStack.append(before)
+        if key == nil || key != coalesceKey {
+            undoStack.append(before)
+        }
         redoStack.removeAll()
+        coalesceKey = key
     }
 
     /// Drops a dangling selection after undo/redo removed the selected element.
