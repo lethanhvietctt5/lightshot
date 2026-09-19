@@ -45,6 +45,13 @@ private struct LightshotMenu: View {
 
         Divider()
 
+        Button("History…") {
+            controller.showHistory()
+        }
+        .keyboardShortcut("y", modifiers: [.command, .shift])
+
+        Divider()
+
         Text("Lightshot — core v\(LightshotKit.version)")
 
         Divider()

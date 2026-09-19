@@ -31,6 +31,7 @@ public final class AppCoordinator {
     private let overlay: OverlayController
     private let imageSink: ImageSink
     private let settings: SettingsStore
+    private let history: HistoryStore?
     private unowned let ui: CaptureUI
 
     public init(
@@ -38,12 +39,14 @@ public final class AppCoordinator {
         overlay: OverlayController,
         imageSink: ImageSink,
         settings: SettingsStore,
+        history: HistoryStore? = nil,
         ui: CaptureUI
     ) {
         self.captureService = captureService
         self.overlay = overlay
         self.imageSink = imageSink
         self.settings = settings
+        self.history = history
         self.ui = ui
     }
 
@@ -54,6 +57,7 @@ public final class AppCoordinator {
     public func captureFullscreen() async {
         switch await captureService.captureFullscreen() {
         case let .success(image):
+            record(image, source: .fullscreen)
             ui.openEditor(with: image)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
@@ -74,6 +78,7 @@ public final class AppCoordinator {
         guard let region = await overlay.selectRegion() else { return }
         switch await captureService.captureRegion(region) {
         case let .success(image):
+            record(image, source: .area)
             ui.presentPostCaptureToolbar(for: image, at: region)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
@@ -82,6 +87,13 @@ public final class AppCoordinator {
         case let .failure(error):
             ui.presentCaptureFailure(error)
         }
+    }
+
+    /// Record a fresh capture in the local history as it happens (story 50). Best-effort: a history
+    /// write failure must never block the user from seeing their capture, so it is swallowed rather
+    /// than surfaced. No-op when no store is wired.
+    private func record(_ image: CapturedImage, source: CaptureSource) {
+        try? history?.add(image, source: source)
     }
 
     /// Editor output (stories 40/44): flatten base + all elements in z-order via
