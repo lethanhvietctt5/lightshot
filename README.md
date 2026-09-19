@@ -56,6 +56,41 @@ xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -destination 'platform
 xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -destination 'platform=macOS' test
 ```
 
+### Local code signing — keep permissions across rebuilds
+
+The committed default builds **unsigned** ([`App/Config/Signing.xcconfig`](App/Config/Signing.xcconfig)), so CI and fresh clones need no certificate. The catch: an unsigned build gets a new code identity on every rebuild, so macOS forgets Screen Recording (and every other granted permission) each time — while System Settings still shows the stale toggle as on.
+
+To fix it, sign with your own stable identity via a gitignored override:
+
+1. In Xcode → **Settings → Accounts**, add your Apple ID (a free one works), then **Manage Certificates → + → Apple Development**.
+2. Find your **team ID** — it is the certificate's `OU` field, *not* the code in parentheses in the certificate name:
+
+   ```bash
+   security find-certificate -a -c "Apple Development" -p | openssl x509 -noout -subject
+   # subject=UID=…, CN=Apple Development: you@example.com (NOT-THIS-ONE), OU=ABCDE12345, …
+   ```
+
+3. Create `App/Config/Local.xcconfig`:
+
+   ```
+   CODE_SIGNING_ALLOWED = YES
+   CODE_SIGNING_REQUIRED = YES
+   CODE_SIGN_STYLE = Automatic
+   DEVELOPMENT_TEAM = ABCDE12345
+   ```
+
+4. Regenerate, rebuild, and clear the grants left over from unsigned builds (one time), then grant the permissions once more:
+
+   ```bash
+   xcodegen generate
+   xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -destination 'platform=macOS' build
+   tccutil reset All dev.lightshot.app
+   ```
+
+Verify with `codesign -dr - <path-to>/Lightshot.app` — the designated requirement should name your certificate rather than a `cdhash`.
+
+Don't set `CODE_SIGN*` keys in `project.yml`: target build settings there override the xcconfig. If you use [Conductor](https://conductor.build), [`.conductor/settings.toml`](.conductor/settings.toml) copies `Local.xcconfig` from your main checkout into each new workspace, so create it there.
+
 ## Contributing
 
 This project is spec-driven and issue-tracked. Read [`AGENTS.md`](AGENTS.md) first — it is the single source of truth for the working agreement.
