@@ -19,8 +19,8 @@ public protocol CaptureUI: AnyObject {
 /// out through the sink. Holds only protocol references, so the domain core never imports the OS
 /// capture/clipboard APIs.
 ///
-/// This tracer bullet wires the single fullscreen spine — capture → `openEditor(with:)` →
-/// base-only `render` → clipboard — proving the whole path before any annotation exists.
+/// It wires the single fullscreen spine — capture → `openEditor(with:)` → `render` →
+/// clipboard — so what the user copies is always the flattened document.
 @MainActor
 public final class AppCoordinator {
     private let captureService: CaptureService
@@ -50,14 +50,9 @@ public final class AppCoordinator {
         }
     }
 
-    /// Editor output: flatten the image (base-only for now) and place it on the clipboard
-    /// (stories 40/44). What lands on the clipboard is the *rendered* image, not the raw capture.
-    public func copyToClipboard(_ image: CapturedImage) {
-        imageSink.copyToClipboard(render(image))
-    }
-
-    /// Editor output for an annotated document (stories 40/44): flatten base + all
-    /// elements in z-order via `render(_ document:)` and place that on the clipboard.
+    /// Editor output (stories 40/44): flatten base + all elements in z-order via
+    /// `render(_ document:)` and place that on the clipboard. What lands on the clipboard
+    /// is the *rendered* image, not the raw capture.
     public func copyToClipboard(_ document: AnnotationDocument) {
         imageSink.copyToClipboard(render(document))
     }

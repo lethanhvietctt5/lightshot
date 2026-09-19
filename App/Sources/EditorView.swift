@@ -67,21 +67,41 @@ struct EditorView: View {
 
         HStack(spacing: 4) {
             Image(systemName: "lineweight").foregroundStyle(.secondary)
-            Slider(value: Binding(get: { model.style.strokeWidth }, set: { model.setStrokeWidth($0) }), in: 1...24)
-                .frame(width: 90)
+            Slider(
+                value: Binding(get: { model.style.strokeWidth }, set: { model.setStrokeWidth($0) }),
+                in: 1...24,
+                onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
+            )
+            .frame(width: 90)
         }
         .help("Stroke width")
 
         HStack(spacing: 4) {
             Image(systemName: "textformat.size").foregroundStyle(.secondary)
-            Slider(value: Binding(get: { model.style.fontSize }, set: { model.setFontSize($0) }), in: 9...96)
-                .frame(width: 90)
+            Slider(
+                value: Binding(get: { model.style.fontSize }, set: { model.setFontSize($0) }),
+                in: 9...96,
+                onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
+            )
+            .frame(width: 90)
         }
         .help("Font size")
     }
 
     private var historyControls: some View {
         HStack(spacing: 6) {
+            Button { model.sendBackward() } label: { Image(systemName: "square.2.layers.3d.bottom.filled") }
+                .disabled(!model.hasSelection)
+                .keyboardShortcut("[", modifiers: .command)
+                .help("Send backward (⌘[)")
+
+            Button { model.bringForward() } label: { Image(systemName: "square.2.layers.3d.top.filled") }
+                .disabled(!model.hasSelection)
+                .keyboardShortcut("]", modifiers: .command)
+                .help("Bring forward (⌘])")
+
+            Divider().frame(height: 20)
+
             Button { model.deleteSelection() } label: { Image(systemName: "trash") }
                 .disabled(!model.hasSelection)
                 .keyboardShortcut(.delete, modifiers: [])
@@ -265,18 +285,14 @@ private func segment(from a: CGPoint, to b: CGPoint) -> Path {
 }
 
 private func arrowhead(from: CGPoint, to: CGPoint, lineWidth: CGFloat) -> Path {
-    let dx = to.x - from.x, dy = to.y - from.y
-    let length = (dx * dx + dy * dy).squareRoot()
-    guard length > 0 else { return Path() }
-    let ux = dx / length, uy = dy / length
-    let headLength = max(lineWidth * 3.5, 10)
-    let headWidth = headLength * 0.6
-    let baseX = to.x - ux * headLength, baseY = to.y - uy * headLength
-    let px = -uy, py = ux
+    // Shares its trigonometry with the flatten render (`arrowheadPoints`) so the on-screen
+    // preview and the exported image draw the same head.
+    let corners = arrowheadPoints(from: Point(from), to: Point(to), lineWidth: Double(lineWidth))
+    guard corners.count == 3 else { return Path() }
     var path = Path()
-    path.move(to: to)
-    path.addLine(to: CGPoint(x: baseX + px * headWidth, y: baseY + py * headWidth))
-    path.addLine(to: CGPoint(x: baseX - px * headWidth, y: baseY - py * headWidth))
+    path.move(to: corners[0].cgPoint)
+    path.addLine(to: corners[1].cgPoint)
+    path.addLine(to: corners[2].cgPoint)
     path.closeSubpath()
     return path
 }

@@ -19,29 +19,23 @@ final class EditorModel {
         case select, arrow, line, rectangle, ellipse, freehand, text, step
         var id: String { rawValue }
 
-        var symbol: String {
-            switch self {
-            case .select: return "arrow.up.left.and.arrow.down.right"
-            case .arrow: return "arrow.up.right"
-            case .line: return "line.diagonal"
-            case .rectangle: return "rectangle"
-            case .ellipse: return "circle"
-            case .freehand: return "scribble"
-            case .text: return "textformat"
-            case .step: return "1.circle.fill"
-            }
-        }
+        /// SF Symbol for the palette button.
+        var symbol: String { info.symbol }
+        /// Tooltip shown on hover.
+        var help: String { info.help }
 
-        var help: String {
+        /// Single source for the per-tool palette metadata, so symbol and help can't
+        /// drift out of a case each (one switch, not one per attribute).
+        private var info: (symbol: String, help: String) {
             switch self {
-            case .select: return "Select, move, and resize"
-            case .arrow: return "Arrow"
-            case .line: return "Line"
-            case .rectangle: return "Rectangle"
-            case .ellipse: return "Ellipse"
-            case .freehand: return "Freehand"
-            case .text: return "Text"
-            case .step: return "Step marker"
+            case .select: return ("arrow.up.left.and.arrow.down.right", "Select, move, and resize")
+            case .arrow: return ("arrow.up.right", "Arrow")
+            case .line: return ("line.diagonal", "Line")
+            case .rectangle: return ("rectangle", "Rectangle")
+            case .ellipse: return ("circle", "Ellipse")
+            case .freehand: return ("scribble", "Freehand")
+            case .text: return ("textformat", "Text")
+            case .step: return ("1.circle.fill", "Step marker")
             }
         }
     }
@@ -109,7 +103,22 @@ final class EditorModel {
 
     func setColor(_ color: RGBAColor) { style.color = color; applyStyleToSelection() }
     func setStrokeWidth(_ width: Double) { style.strokeWidth = width; applyStyleToSelection() }
-    func setFontSize(_ size: Double) { style.fontSize = size; applyStyleToSelection() }
+
+    /// Changes the font size of the selection. For a text label this reweights the glyphs;
+    /// for a step marker — whose drawn size is its geometry `radius`, not `style.fontSize`
+    /// — it also resizes the disc, so the control isn't a no-op there (story 28).
+    func setFontSize(_ size: Double) {
+        style.fontSize = size
+        guard let id = document.selectedID else { return }
+        document.setStyle(id, style)
+        if case .stepMarker? = document.element(id: id)?.kind {
+            document.setStepRadius(id, size)
+        }
+    }
+
+    /// Closes the current style-edit coalescing run so the next drag is a distinct undo
+    /// step. The view calls this when a slider ends editing (story 35).
+    func commitStyleEdit() { document.endCoalescing() }
 
     private func applyStyleToSelection() {
         if let id = document.selectedID { document.setStyle(id, style) }
@@ -125,6 +134,26 @@ final class EditorModel {
         document.delete(id)
     }
     func copyToClipboard() { endTextEditing(); copy(document) }
+
+    // MARK: - Z-order (story 33)
+
+    /// Moves the selected element one step up in the z-order (toward the front).
+    func bringForward() {
+        guard let id = document.selectedID, let index = selectedIndex else { return }
+        document.reorder(id, to: index + 1)
+    }
+
+    /// Moves the selected element one step down in the z-order (toward the back).
+    func sendBackward() {
+        guard let id = document.selectedID, let index = selectedIndex else { return }
+        document.reorder(id, to: index - 1)
+    }
+
+    /// z-order index of the current selection, or nil when nothing is selected.
+    private var selectedIndex: Int? {
+        guard let id = document.selectedID else { return nil }
+        return document.elements.firstIndex { $0.id == id }
+    }
 
     // MARK: - Text editing (story 21)
 
@@ -160,6 +189,8 @@ final class EditorModel {
     func endTextEditing() {
         guard let id = editingTextID else { return }
         editingTextID = nil
+        // Close the typing run so re-editing the same label later is a distinct undo step.
+        document.endCoalescing()
         if case let .text(string, _)? = document.element(id: id)?.kind,
            string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             document.delete(id)
@@ -272,27 +303,15 @@ final class EditorModel {
     /// Reflects the tapped element's style back into the palette controls so the sliders
     /// and color well show what they will change. Called by the view after a click.
     func syncStyleToSelection() {
-        if let id = document.selectedID, let element = document.element(id: id) {
-            style = element.style
-        }
+        guard let id = document.selectedID, let element = document.element(id: id) else { return }
+        var synced = element.style
+        // A step marker's size lives in its geometry, not `style.fontSize`; surface the
+        // radius through the font-size control so the slider reflects (and drives) it.
+        if case let .stepMarker(_, _, radius) = element.kind { synced.fontSize = radius }
+        style = synced
     }
 
     private static let handleRadius: Double = 6
-}
-
-/// Where the eight resize handles sit on a bounding box, in image space.
-func handlePoint(_ handle: Handle, in box: Rect) -> Point {
-    let b = box.standardized
-    switch handle {
-    case .topLeft: return Point(x: b.minX, y: b.minY)
-    case .top: return Point(x: b.midX, y: b.minY)
-    case .topRight: return Point(x: b.maxX, y: b.minY)
-    case .right: return Point(x: b.maxX, y: b.midY)
-    case .bottomRight: return Point(x: b.maxX, y: b.maxY)
-    case .bottom: return Point(x: b.midX, y: b.maxY)
-    case .bottomLeft: return Point(x: b.minX, y: b.maxY)
-    case .left: return Point(x: b.minX, y: b.midY)
-    }
 }
 
 /// A shape being drawn from a press-drag, before it becomes a committed element.
@@ -305,17 +324,19 @@ private struct Draft {
     /// The element geometry for this draft, or nil when it's too small / not a shape tool.
     var kind: AnnotationElement.Kind? {
         switch tool {
-        case .arrow: return committedLength ? .arrow(from: start, to: current) : nil
-        case .line: return committedLength ? .line(from: start, to: current) : nil
-        case .rectangle: return committedArea ? .rectangle(rectBetween(start, current)) : nil
-        case .ellipse: return committedArea ? .ellipse(rectBetween(start, current)) : nil
+        case .arrow: return hasMinimumLength ? .arrow(from: start, to: current) : nil
+        case .line: return hasMinimumLength ? .line(from: start, to: current) : nil
+        case .rectangle: return hasMinimumArea ? .rectangle(rectBetween(start, current)) : nil
+        case .ellipse: return hasMinimumArea ? .ellipse(rectBetween(start, current)) : nil
         case .freehand: return points.count > 1 ? .freehand(points: points) : nil
         case .select, .text, .step: return nil
         }
     }
 
-    private var committedLength: Bool { start.distance(to: current) >= 3 }
-    private var committedArea: Bool { abs(current.x - start.x) >= 3 && abs(current.y - start.y) >= 3 }
+    /// Whether the drag spans far enough to commit a one-dimensional mark (line/arrow).
+    private var hasMinimumLength: Bool { start.distance(to: current) >= 3 }
+    /// Whether the drag spans far enough in both axes to commit an area mark (rect/ellipse).
+    private var hasMinimumArea: Bool { abs(current.x - start.x) >= 3 && abs(current.y - start.y) >= 3 }
 }
 
 /// An in-progress move or resize of the selected element.
@@ -334,9 +355,4 @@ private struct DragSession {
         case let .resize(handle): return .resize(handle: handle, dx: dx, dy: dy)
         }
     }
-}
-
-/// The axis-aligned rect spanned by two corner points.
-func rectBetween(_ a: Point, _ b: Point) -> Rect {
-    Rect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
 }

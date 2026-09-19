@@ -105,15 +105,15 @@ private func sampleImage() -> CapturedImage {
 
 @MainActor
 @Test func copyPlacesTheRenderedImageOnTheClipboard() async {
-    let image = sampleImage()
+    let document = AnnotationDocument(baseImage: sampleImage())
     let sink = SpyImageSink()
     let coordinator = AppCoordinator(
-        captureService: StubCaptureService(.success(image)),
+        captureService: StubCaptureService(.success(document.baseImage)),
         imageSink: sink,
         ui: SpyUI()
     )
 
-    coordinator.copyToClipboard(image)
+    coordinator.copyToClipboard(document)
 
-    #expect(sink.copied == [render(image)])   // the rendered image, not the raw capture
+    #expect(sink.copied == [render(document)])   // the flattened document, not the raw capture
 }
