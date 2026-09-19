@@ -12,11 +12,13 @@ import LightshotKit
 final class AppController: NSObject, CaptureUI {
     private var coordinator: AppCoordinator!
     private var editorWindow: NSWindow?
+    private let postCaptureToolbar = PostCaptureToolbarController()
 
     override init() {
         super.init()
         coordinator = AppCoordinator(
             captureService: SCCaptureService(),
+            overlay: OverlaySelectionController(),
             imageSink: PasteboardImageSink(),
             ui: self
         )
@@ -27,7 +29,23 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.captureFullscreen() }
     }
 
+    /// Menu / hotkey entry point for area capture: overlay → capture → post-capture toolbar.
+    func captureArea() {
+        Task { await coordinator.captureArea() }
+    }
+
     // MARK: - CaptureUI
+
+    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {
+        // Wire the toolbar's actions to capabilities that already exist: annotate opens the editor
+        // (story 13's `openEditor(with:)`), copy flattens the un-annotated capture through the same
+        // render → clipboard path the editor uses, discard just dismisses.
+        postCaptureToolbar.present(
+            at: region,
+            annotate: { [weak self] in self?.openEditor(with: image) },
+            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: image)) }
+        )
+    }
 
     func openEditor(with image: CapturedImage) {
         let document = AnnotationDocument(baseImage: image)

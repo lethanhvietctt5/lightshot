@@ -9,6 +9,10 @@ import Foundation
 public protocol CaptureUI: AnyObject {
     /// Open the annotation editor showing the captured image.
     func openEditor(with image: CapturedImage)
+    /// Present the post-capture toolbar at the selection (story 14): quick actions — annotate,
+    /// copy, discard — over the freshly captured image. A separate surface shown *after* the image
+    /// exists, positioned using `region`; not part of the pre-capture selection overlay.
+    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion)
     /// Show the permission recovery path: a message plus a deep link to System Settings.
     func presentPermissionDenied()
     /// Surface a distinct, non-blank error message for a failure other than permission/cancel.
@@ -24,11 +28,18 @@ public protocol CaptureUI: AnyObject {
 @MainActor
 public final class AppCoordinator {
     private let captureService: CaptureService
+    private let overlay: OverlayController
     private let imageSink: ImageSink
     private unowned let ui: CaptureUI
 
-    public init(captureService: CaptureService, imageSink: ImageSink, ui: CaptureUI) {
+    public init(
+        captureService: CaptureService,
+        overlay: OverlayController,
+        imageSink: ImageSink,
+        ui: CaptureUI
+    ) {
         self.captureService = captureService
+        self.overlay = overlay
         self.imageSink = imageSink
         self.ui = ui
     }
@@ -41,6 +52,26 @@ public final class AppCoordinator {
         switch await captureService.captureFullscreen() {
         case let .success(image):
             ui.openEditor(with: image)
+        case .failure(.permissionDenied):
+            ui.presentPermissionDenied()
+        case .failure(.userCancelled):
+            break
+        case let .failure(error):
+            ui.presentCaptureFailure(error)
+        }
+    }
+
+    /// Area capture flow (stories 1–5, 14). Ordering matters: the **overlay runs first** to
+    /// resolve a `CaptureRegion` (drag a rect, Escape to cancel), *then* `CaptureService` captures
+    /// it — the service needs a target. A cancelled overlay (`nil`) is a silent no-op with no
+    /// capture. On success the post-capture toolbar is shown at the selection; failures route
+    /// exactly as fullscreen does — `permissionDenied` to recovery, `userCancelled` silent, the
+    /// rest to a distinct message — so a capture never lands the user in a blank editor.
+    public func captureArea() async {
+        guard let region = await overlay.selectRegion() else { return }
+        switch await captureService.captureRegion(region) {
+        case let .success(image):
+            ui.presentPostCaptureToolbar(for: image, at: region)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied()
         case .failure(.userCancelled):
