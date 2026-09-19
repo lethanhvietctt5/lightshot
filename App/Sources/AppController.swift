@@ -39,6 +39,11 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.captureArea() }
     }
 
+    /// Menu / hotkey entry point for window capture: hover-highlight overlay → capture → toolbar.
+    func captureWindow() {
+        Task { await coordinator.captureWindow() }
+    }
+
     /// Menu entry point for opening an existing image file (story 39): file picker → editor. The
     /// panel is modal (synchronous), so unlike the capture spine this needs no `Task`.
     func openFile() {

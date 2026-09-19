@@ -90,6 +90,27 @@ public final class AppCoordinator {
         }
     }
 
+    /// Window capture flow (stories 6–7). Structurally identical to `captureArea()` — only the
+    /// overlay mode differs: `selectWindow()` hover-highlights windows and resolves the clicked one
+    /// to a `.window` `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then
+    /// captures cleanly without its surroundings. Escape (`nil`) is a silent no-op with no capture;
+    /// success shows the post-capture toolbar at the window; failures route exactly as the other
+    /// paths do — `permissionDenied` to recovery, `userCancelled` silent, the rest to a distinct
+    /// message — so a capture never lands the user in a blank editor.
+    public func captureWindow() async {
+        guard let region = await overlay.selectWindow() else { return }
+        switch await captureService.captureRegion(region) {
+        case let .success(image):
+            ui.presentPostCaptureToolbar(for: image, at: region)
+        case .failure(.permissionDenied):
+            ui.presentPermissionDenied()
+        case .failure(.userCancelled):
+            break
+        case let .failure(error):
+            ui.presentCaptureFailure(error)
+        }
+    }
+
     /// Open-existing-file flow (story 39). A file picker (via `ImageSource`) yields the *same*
     /// `CapturedImage` a capture produces, so the result converges on the one `openEditor(with:)`
     /// entry — the editor never learns whether the pixels came from a capture or a file. The typed
