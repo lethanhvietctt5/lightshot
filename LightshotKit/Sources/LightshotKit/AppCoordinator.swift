@@ -84,6 +84,27 @@ public final class AppCoordinator {
         }
     }
 
+    /// Window capture flow (stories 6–7). Structurally identical to `captureArea()` — only the
+    /// overlay mode differs: `selectWindow()` hover-highlights windows and resolves the clicked one
+    /// to a `.window` `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then
+    /// captures cleanly without its surroundings. Escape (`nil`) is a silent no-op with no capture;
+    /// success shows the post-capture toolbar at the window; failures route exactly as the other
+    /// paths do — `permissionDenied` to recovery, `userCancelled` silent, the rest to a distinct
+    /// message — so a capture never lands the user in a blank editor.
+    public func captureWindow() async {
+        guard let region = await overlay.selectWindow() else { return }
+        switch await captureService.captureRegion(region) {
+        case let .success(image):
+            ui.presentPostCaptureToolbar(for: image, at: region)
+        case .failure(.permissionDenied):
+            ui.presentPermissionDenied()
+        case .failure(.userCancelled):
+            break
+        case let .failure(error):
+            ui.presentCaptureFailure(error)
+        }
+    }
+
     /// Editor output (stories 40/44): flatten base + all elements in z-order via
     /// `render(_ document:)` and place that on the clipboard. What lands on the clipboard
     /// is the *rendered* image, not the raw capture.

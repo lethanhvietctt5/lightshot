@@ -5,11 +5,19 @@ import Foundation
 ///
 /// The overlay (`OverlayController`) resolves the user's choice into a `CaptureRegion` and hands
 /// it to `CaptureService`; the overlay itself never captures. Modeled as a sum type because the
-/// spec's two selection modes are genuinely different targets — a dragged rectangle (this ticket,
+/// spec's two selection modes are genuinely different targets — a dragged rectangle (LIG-13,
 /// stories 2–4) versus a hovered window id (LIG-14, stories 6–7). Keeping it an enum means the
 /// window case is an addition, not a breaking change to the capture signature.
 public enum CaptureRegion: Equatable, Sendable {
     /// A rectangular selection in **screen point coordinates** (top-left origin), as dragged in
     /// the overlay. The concrete `CaptureService` maps it to the target display's native pixels.
     case rect(Rect)
+
+    /// A single window, hover-picked in window-capture mode (stories 6–7). `id` is the window
+    /// server's `CGWindowID` — modeled as `UInt32` so the domain core stays free of CoreGraphics —
+    /// which `CaptureService` resolves back to the live window it captures cleanly, without the
+    /// surroundings. `frame` is the window's on-screen bounds in **screen point coordinates**
+    /// (top-left origin), carried so the post-capture toolbar can position itself at the window
+    /// exactly as it does for a dragged rect — the capture itself only needs the `id`.
+    case window(id: UInt32, frame: Rect)
 }

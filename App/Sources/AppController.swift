@@ -38,6 +38,11 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.captureArea() }
     }
 
+    /// Menu / hotkey entry point for window capture: hover-highlight overlay → capture → toolbar.
+    func captureWindow() {
+        Task { await coordinator.captureWindow() }
+    }
+
     // MARK: - CaptureUI
 
     func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {

@@ -19,7 +19,13 @@ final class PostCaptureToolbarController {
         copy: @escaping () -> Void
     ) {
         dismiss()
-        guard case let .rect(rect) = region else { return }
+        // Both selection modes place the toolbar the same way — at the captured region's bounds.
+        // A rect carries its own bounds; a window carries its on-screen frame for exactly this.
+        let rect: Rect
+        switch region {
+        case let .rect(r): rect = r
+        case let .window(_, frame): rect = frame
+        }
 
         let view = PostCaptureToolbarView(
             annotate: { [weak self] in self?.dismiss(); annotate() },
