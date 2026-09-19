@@ -56,7 +56,7 @@ This project is spec-driven and issue-tracked. Follow the loop:
 1. **Spec** lives in `specs/NNNN-*.md` **and** as a Linear issue — keep the two in sync when either changes.
 2. **Tracker:** Linear team **Lightshot**. A spec ready to build carries the **`ready-for-agent`** label. Feature/Bug/Improvement labels classify the kind.
 3. **Branch per issue**, using Linear's suggested name (e.g. `…/lig-5-core-capture-annotate-v1`). Branch off `main`.
-4. **PR targets `main`.** Keep the PR description linked to the Linear issue.
+4. **PR targets `main`.** Title it **`<type>(LIG-<n>): <title>`** — Conventional-Commits type with the Linear issue as the scope, e.g. `feat(LIG-100): add scrolling capture`. Use `feat` for a story/feature, `fix` for a bug, `chore`/`docs`/`refactor`/`test` otherwise. Keep the PR description linked to the Linear issue.
 5. **Review loop (Copilot reviews PRs):** for each finding — fix in the spec/code, reply on the thread referencing the commit, resolve the thread, then **re-request review** (request reviewer `Copilot`). Mirror any spec change into the Linear issue so all three (file, issue, PR) stay consistent.
 6. Only `main` and the feature branches are long-lived; `main` had to be pushed explicitly (the repo started with no `main` on the remote).
 
