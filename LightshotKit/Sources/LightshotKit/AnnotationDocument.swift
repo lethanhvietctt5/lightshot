@@ -134,6 +134,8 @@ public struct AnnotationDocument: Equatable, Sendable {
                 element.kind = element.kind.moved(dx: dx, dy: dy)
             case let .resize(handle, dx, dy):
                 element.kind = element.kind.resized(handle: handle, dx: dx, dy: dy)
+            case let .reshape(handle, dx, dy):
+                element.kind = element.kind.reshaped(handle: handle, dx: dx, dy: dy)
             }
         }
     }
@@ -151,6 +153,27 @@ public struct AnnotationDocument: Equatable, Sendable {
         withElement(id, coalescing: .style(id)) { element in
             guard case let .stepMarker(number, center, _) = element.kind else { return }
             element.kind = .stepMarker(number: number, center: center, radius: max(radius, 1))
+        }
+    }
+
+    /// Redraws an arrow in `style`, keeping its tail and tip. No-op if `id` is not an arrow.
+    /// Only bendable styles carry a bend: switching to one gives a straight arrow the
+    /// default arc, and switching away drops the bend so the shaft is straight again.
+    public mutating func setArrowStyle(_ id: ElementID, _ style: ArrowStyle) {
+        withElement(id) { element in
+            guard case let .arrow(from, to, bend, _) = element.kind else { return }
+            let newBend = style.isBendable ? (bend ?? defaultArrowBend(from: from, to: to)) : nil
+            element.kind = .arrow(from: from, to: to, bend: newBend, style: style)
+        }
+    }
+
+    /// Changes how a redaction obscures its region, keeping its rect and seed. `strength`
+    /// is clamped to `0...1`. No-op if `id` is not a redaction. Shares the `setStyle`
+    /// coalescing key, so one strength-slider drag is one undo step (story 35).
+    public mutating func setRedaction(_ id: ElementID, style: RedactionStyle, strength: Double) {
+        withElement(id, coalescing: .style(id)) { element in
+            guard case let .redaction(rect, _, _, seed) = element.kind else { return }
+            element.kind = .redaction(rect, style: style, strength: min(max(strength, 0), 1), seed: seed)
         }
     }
 

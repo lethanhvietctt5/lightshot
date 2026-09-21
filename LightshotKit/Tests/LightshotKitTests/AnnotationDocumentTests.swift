@@ -67,7 +67,7 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         var doc = makeDocument()
         let id = doc.add(AnnotationElement(kind: .arrow(from: Point(x: 10, y: 10), to: Point(x: 30, y: 40))))
         doc.transform(id, by: .move(dx: 5, dy: -3))
-        guard case let .arrow(from, to) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
+        guard case let .arrow(from, to, _, _) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
         #expect(from == Point(x: 15, y: 7))
         #expect(to == Point(x: 35, y: 37))
     }
@@ -390,7 +390,7 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         let id = doc.add(AnnotationElement(kind: .arrow(from: Point(x: 0, y: 0), to: Point(x: 10, y: 10))))
         doc.transform(id, by: .move(dx: 25, dy: 25))
         doc.undo()
-        guard case let .arrow(from, _) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
+        guard case let .arrow(from, _, _, _) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
         #expect(from == Point(x: 0, y: 0))
     }
 
@@ -411,7 +411,7 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         doc.transform(id, by: .move(dx: 25, dy: 25))
         doc.undo() // revert the move
         doc.redo() // reapply it
-        guard case let .arrow(from, _) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
+        guard case let .arrow(from, _, _, _) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
         #expect(from == Point(x: 25, y: 25))
     }
 
@@ -496,5 +496,101 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         #expect(doc.elements == before)
         #expect(doc.element(id: a)?.kind.boundingBox == rect(10, 10, 40, 30))
         #expect(doc.element(id: b) != nil)
+    }
+}
+
+// MARK: - Arrow styles, endpoint handles, redaction strength (spec 0003)
+
+@Suite struct ArrowAndRedactionCommandTests {
+    private func arrow(_ doc: AnnotationDocument, _ id: ElementID) -> (from: Point, to: Point, bend: Point?, style: ArrowStyle)? {
+        guard case let .arrow(from, to, bend, style) = doc.element(id: id)?.kind else { return nil }
+        return (from, to, bend, style)
+    }
+
+    @Test func reshapingTheTipLeavesTheTailWhereItWas() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .arrow(from: Point(x: 10, y: 10), to: Point(x: 110, y: 10))))
+        doc.transform(id, by: .reshape(handle: .tip, dx: 20, dy: 30))
+        #expect(arrow(doc, id)?.from == Point(x: 10, y: 10))
+        #expect(arrow(doc, id)?.to == Point(x: 130, y: 40))
+    }
+
+    @Test func reshapingALineMovesOneEndpoint() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .line(from: Point(x: 10, y: 10), to: Point(x: 110, y: 10))))
+        doc.transform(id, by: .reshape(handle: .tail, dx: 5, dy: 5))
+        #expect(doc.element(id: id)?.kind == .line(from: Point(x: 15, y: 15), to: Point(x: 110, y: 10)))
+    }
+
+    @Test func draggingAnEndpointCarriesTheBendWithTheShaft() {
+        var doc = makeDocument()
+        // A horizontal arrow bowed 30px upward at its middle…
+        let id = doc.add(AnnotationElement(kind: .arrow(
+            from: Point(x: 100, y: 100), to: Point(x: 200, y: 100), bend: Point(x: 150, y: 70), style: .curved
+        )))
+        // …whose tip swings a quarter turn to point straight down.
+        doc.transform(id, by: .reshape(handle: .tip, dx: -100, dy: 100))
+        let bend = arrow(doc, id)?.bend
+        // The bow rotates with it: still mid-shaft, still 30px off it, now to the side.
+        #expect(abs((bend?.x ?? 0) - 130) < 0.001)
+        #expect(abs((bend?.y ?? 0) - 150) < 0.001)
+    }
+
+    @Test func draggingTheBendRecurvesABendableArrowOnly() {
+        var doc = makeDocument()
+        let curved = doc.add(AnnotationElement(kind: .arrow(
+            from: Point(x: 0, y: 0), to: Point(x: 100, y: 0), bend: Point(x: 50, y: -10), style: .curved
+        )))
+        let straight = doc.add(AnnotationElement(kind: .arrow(from: Point(x: 0, y: 50), to: Point(x: 100, y: 50))))
+        doc.transform(curved, by: .reshape(handle: .bend, dx: 0, dy: -20))
+        doc.transform(straight, by: .reshape(handle: .bend, dx: 0, dy: -20))
+        #expect(arrow(doc, curved)?.bend == Point(x: 50, y: -30))
+        #expect(arrow(doc, straight)?.bend == nil)
+    }
+
+    @Test func movingACurvedArrowMovesItsBend() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .arrow(
+            from: Point(x: 0, y: 0), to: Point(x: 100, y: 0), bend: Point(x: 50, y: -10), style: .double
+        )))
+        doc.transform(id, by: .move(dx: 7, dy: 9))
+        #expect(arrow(doc, id)?.bend == Point(x: 57, y: -1))
+    }
+
+    @Test func switchingToABendableStyleAddsABendAndSwitchingBackDropsIt() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .arrow(from: Point(x: 0, y: 100), to: Point(x: 100, y: 100))))
+        doc.setArrowStyle(id, .curved)
+        #expect(arrow(doc, id)?.style == .curved)
+        #expect(arrow(doc, id)?.bend != nil)
+        doc.setArrowStyle(id, .fancy)
+        #expect(arrow(doc, id)?.bend == nil)
+        doc.undo()
+        #expect(arrow(doc, id)?.style == .curved)
+    }
+
+    @Test func aCurvedArrowIsHitAlongItsCurveNotItsChord() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .arrow(
+            from: Point(x: 50, y: 200), to: Point(x: 250, y: 200), bend: Point(x: 150, y: 120), style: .curved
+        )))
+        #expect(doc.elementID(at: Point(x: 150, y: 120)) == id)
+        #expect(doc.elementID(at: Point(x: 150, y: 200)) == nil)
+    }
+
+    @Test func setRedactionRestylesInPlaceKeepingRectAndSeed() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .redaction(rect(10, 10, 80, 40), style: .blackout, strength: 0.5, seed: 42)))
+        doc.setRedaction(id, style: .blur, strength: 1.7)
+        #expect(doc.element(id: id)?.kind == .redaction(rect(10, 10, 80, 40), style: .blur, strength: 1, seed: 42))
+    }
+
+    @Test func oneStrengthSliderDragIsOneUndoStep() {
+        var doc = makeDocument()
+        let id = doc.add(AnnotationElement(kind: .redaction(rect(10, 10, 80, 40), style: .blur, strength: 0.2, seed: 1)))
+        for strength in [0.3, 0.4, 0.5] { doc.setRedaction(id, style: .blur, strength: strength) }
+        doc.endCoalescing()
+        doc.undo()
+        #expect(doc.element(id: id)?.kind == .redaction(rect(10, 10, 80, 40), style: .blur, strength: 0.2, seed: 1))
     }
 }

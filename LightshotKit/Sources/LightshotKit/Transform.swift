@@ -2,13 +2,15 @@ import Foundation
 
 /// A geometric edit applied to an element via the `transform` command.
 ///
-/// Both cases are expressed as deltas so the editor can feed raw drag offsets
-/// straight through: `move` translates the whole element, while `resize` drags a
+/// Every case is expressed as deltas so the editor can feed raw drag offsets
+/// straight through: `move` translates the whole element, `resize` drags a
 /// single bounding-box `Handle` by `(dx, dy)` and the element's geometry is
-/// remapped into the new box (see `Kind.resized(from:to:)`).
+/// remapped into the new box (see `Kind.resized(from:to:)`), and `reshape` drags one
+/// `EndpointHandle` of a line or arrow (see `Kind.reshaped(handle:dx:dy:)`).
 public enum Transform: Equatable, Sendable {
     case move(dx: Double, dy: Double)
     case resize(handle: Handle, dx: Double, dy: Double)
+    case reshape(handle: EndpointHandle, dx: Double, dy: Double)
 }
 
 extension Rect {

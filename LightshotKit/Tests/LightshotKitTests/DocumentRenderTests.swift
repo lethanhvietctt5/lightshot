@@ -48,16 +48,11 @@ private struct Pixels {
             )!
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
         }
-        // `draw` uses bottom-left origin, so flip rows to a top-left buffer.
-        var flipped = [UInt8](repeating: 0, count: bytes.count)
-        for row in 0..<h {
-            let src = (h - 1 - row) * w * 4
-            let dst = row * w * 4
-            flipped.replaceSubrange(dst..<(dst + w * 4), with: bytes[src..<(src + w * 4)])
-        }
+        // A bitmap context's memory is already row-major from the *top* row (only its drawing
+        // coordinates are bottom-left), so the bytes are a top-left buffer as they stand.
         width = w
         height = h
-        buffer = flipped
+        buffer = bytes
     }
 
     /// RGB at an image-space pixel (top-left origin), each channel `0.0...1.0`.
@@ -272,5 +267,120 @@ private func document(width: Int = 100, height: Int = 100, rgb: (Double, Double,
         let pixels = Pixels(render(doc))
         // The overlap region (40,40) belongs to the top (red) element.
         #expect(isRed(pixels.rgb(x: 45, y: 45)))
+    }
+}
+
+// MARK: - Arrow styles & redaction effect (spec 0003)
+
+/// Wraps a `CGImage` as a `RenderedImage` so `Pixels` can probe a preview patch the same
+/// way it probes an export.
+private func rendered(_ image: CGImage) -> RenderedImage {
+    let data = NSMutableData()
+    let dest = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
+    CGImageDestinationAddImage(dest, image, nil)
+    CGImageDestinationFinalize(dest)
+    return RenderedImage(pixelWidth: image.width, pixelHeight: image.height, data: data as Data)
+}
+
+@Suite struct RenderArrowStyleTests {
+    @Test func standardArrowIsThinAtTheTailAndWideAtTheHead() {
+        var doc = document(width: 200, height: 100)
+        _ = doc.add(AnnotationElement(
+            kind: .arrow(from: Point(x: 10, y: 50), to: Point(x: 190, y: 50)),
+            style: Style(color: .red, strokeWidth: 8)
+        ))
+        let pixels = Pixels(render(doc))
+        // 4px off the axis: bare near the tail, painted where the shaft meets the head.
+        #expect(isRed(pixels.rgb(x: 30, y: 50)))
+        #expect(isWhite(pixels.rgb(x: 30, y: 55)))
+        #expect(isRed(pixels.rgb(x: 145, y: 55)))
+        // …and the head flares well past the shaft.
+        #expect(isRed(pixels.rgb(x: 155, y: 64)))
+    }
+
+    @Test func curvedArrowIsDrawnThroughItsBendNotAlongItsChord() {
+        var doc = document(width: 200, height: 120)
+        _ = doc.add(AnnotationElement(
+            kind: .arrow(from: Point(x: 20, y: 100), to: Point(x: 180, y: 100), bend: Point(x: 100, y: 30), style: .curved),
+            style: Style(color: .red, strokeWidth: 6)
+        ))
+        let pixels = Pixels(render(doc))
+        #expect(isRed(pixels.rgb(x: 100, y: 30)))
+        #expect(isWhite(pixels.rgb(x: 100, y: 100)))
+    }
+}
+
+@Suite struct RenderRedactionEffectTests {
+    private let base = halvesImage(width: 200, height: 120, left: (1, 0, 0), right: (0, 0, 1))
+    private let region = Rect(x: 60, y: 30, width: 80, height: 60)
+
+    private func doc(_ style: RedactionStyle, strength: Double = 0.5, seed: UInt64 = 7) -> AnnotationDocument {
+        var doc = AnnotationDocument(baseImage: base)
+        _ = doc.add(AnnotationElement(kind: .redaction(region, style: style, strength: strength, seed: seed)))
+        return doc
+    }
+
+    @Test(arguments: [RedactionStyle.blur, .pixelate])
+    func theSameElementAlwaysFlattensToTheSamePixels(style: RedactionStyle) {
+        #expect(render(doc(style)).data == render(doc(style)).data)
+    }
+
+    @Test(arguments: [RedactionStyle.blur, .pixelate])
+    func aDifferentSeedScramblesDifferently(style: RedactionStyle) {
+        #expect(render(doc(style, seed: 1)).data != render(doc(style, seed: 2)).data)
+    }
+
+    @Test(arguments: [RedactionStyle.blur, .pixelate])
+    func strengthChangesTheResult(style: RedactionStyle) {
+        #expect(render(doc(style, strength: 0.1)).data != render(doc(style, strength: 0.9)).data)
+    }
+
+    @Test func blurSmearsTheSeamWidelyAndStaysInsideItsRegion() {
+        let plain = Pixels(render(AnnotationDocument(baseImage: base)))
+        let blurred = Pixels(render(doc(.blur, strength: 1)))
+        // 20px from the red/blue seam is still solid on the base; a strong blur reaches it.
+        #expect(channelDistance(plain.rgb(x: 80, y: 60), blurred.rgb(x: 80, y: 60)) > 0.05)
+        // Just outside the region nothing moved.
+        #expect(channelDistance(plain.rgb(x: 55, y: 60), blurred.rgb(x: 55, y: 60)) < 0.001)
+        #expect(channelDistance(plain.rgb(x: 100, y: 25), blurred.rgb(x: 100, y: 25)) < 0.001)
+    }
+
+    @Test func blurObscuresAnnotationsBeneathItButNotThoseAbove() {
+        var doc = AnnotationDocument(baseImage: solidImage(width: 200, height: 120, rgb: (1, 1, 1)))
+        let mark = Rect(x: 90, y: 50, width: 20, height: 20)
+        _ = doc.add(AnnotationElement(kind: .rectangle(mark), style: Style(color: .red, fill: .red)))
+        _ = doc.add(AnnotationElement(kind: .redaction(region, style: .blur, strength: 0.3, seed: 7)))
+        // Beneath the blur the red square bleeds into its white surroundings: no longer
+        // solid red at its center, no longer pure white just outside it.
+        let blurred = Pixels(render(doc))
+        #expect(!isRed(blurred.rgb(x: 100, y: 60)))
+        #expect(channelDistance(blurred.rgb(x: 82, y: 60), (1, 1, 1)) > 0.02)
+
+        _ = doc.add(AnnotationElement(kind: .rectangle(mark), style: Style(color: .red, fill: .red)))
+        #expect(isRed(Pixels(render(doc)).rgb(x: 100, y: 60)))
+    }
+
+    @Test(arguments: [RedactionStyle.blur, .pixelate])
+    func theCanvasPreviewPatchIsExactlyWhatExports(style: RedactionStyle) throws {
+        let document = doc(style)
+        let patch = try #require(redactionBackdrop(document, below: 0)?.patch(region, style: style, strength: 0.5, seed: 7))
+        #expect(patch.rect == region)
+        let preview = Pixels(rendered(patch.image))
+        let export = Pixels(render(document))
+        for (x, y) in [(0, 0), (40, 30), (39, 10), (79, 59), (12, 47)] {
+            let a = preview.rgb(x: x, y: y), b = export.rgb(x: 60 + x, y: 30 + y)
+            #expect(channelDistance(a, b) < 0.001)
+        }
+    }
+
+    @Test func blackoutNeedsNoPatch() {
+        #expect(redactionBackdrop(doc(.blackout), below: 0)?.patch(region, style: .blackout, strength: 0.5, seed: 7) == nil)
+    }
+
+    @Test func aRegionPokingOutsideTheCropIsClippedToTheVisibleFrame() throws {
+        var document = doc(.pixelate)
+        document.applyCrop(Rect(x: 100, y: 0, width: 100, height: 120))
+        let patch = try #require(redactionBackdrop(document, below: 0)?.patch(region, style: .pixelate, strength: 0.5, seed: 7))
+        #expect(patch.rect == Rect(x: 100, y: 30, width: 40, height: 60))
     }
 }

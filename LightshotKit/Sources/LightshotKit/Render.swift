@@ -43,6 +43,21 @@ public func render(_ document: AnnotationDocument) -> RenderedImage {
     let width = max(1, Int(frame.width.rounded()))
     let height = max(1, Int(frame.height.rounded()))
 
+    // A context this small should never fail to allocate; fall back to the raw base
+    // bytes rather than crash, so `render` is total.
+    guard let image = flatten(document, elements: document.elements[...]) else {
+        return RenderedImage(pixelWidth: width, pixelHeight: height, data: document.baseImage.data)
+    }
+    return RenderedImage(pixelWidth: width, pixelHeight: height, data: encodePNG(image))
+}
+
+/// Base image plus `elements`, drawn in order into the document's visible frame. Shared by
+/// `render` (every element) and `redactionBackdrop` (only those beneath a redaction).
+func flatten(_ document: AnnotationDocument, elements: ArraySlice<AnnotationElement>) -> CGImage? {
+    let frame = document.visibleFrame
+    let width = max(1, Int(frame.width.rounded()))
+    let height = max(1, Int(frame.height.rounded()))
+
     guard let context = CGContext(
         data: nil,
         width: width,
@@ -51,11 +66,7 @@ public func render(_ document: AnnotationDocument) -> RenderedImage {
         bytesPerRow: 0,
         space: CGColorSpaceCreateDeviceRGB(),
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    ) else {
-        // A context this small should never fail to allocate; fall back to the raw
-        // base bytes rather than crash, so `render` is total.
-        return RenderedImage(pixelWidth: width, pixelHeight: height, data: document.baseImage.data)
-    }
+    ) else { return nil }
 
     context.setAllowsAntialiasing(true)
     context.interpolationQuality = .high
@@ -64,14 +75,10 @@ public func render(_ document: AnnotationDocument) -> RenderedImage {
 
     let flattener = Flattener(context: context, frame: frame, height: height)
     flattener.drawBase(document.baseImage)
-    for element in document.elements {
+    for element in elements {
         flattener.draw(element)
     }
-
-    guard let image = context.makeImage() else {
-        return RenderedImage(pixelWidth: width, pixelHeight: height, data: document.baseImage.data)
-    }
-    return RenderedImage(pixelWidth: width, pixelHeight: height, data: encodePNG(image))
+    return context.makeImage()
 }
 
 /// Draws base + elements into a bottom-left/y-up CGContext, converting each
@@ -118,9 +125,8 @@ private struct Flattener {
         case let .line(from, to):
             strokePolyline([from, to])
 
-        case let .arrow(from, to):
-            strokePolyline([from, to])
-            drawArrowhead(from: from, to: to, style: style)
+        case let .arrow(from, to, bend, arrowStyle):
+            drawArrow(from: from, to: to, bend: bend, arrowStyle: arrowStyle, style: style)
 
         case let .rectangle(rect):
             fillThenStroke(CGPath(rect: contextRect(rect), transform: nil), style: style)
@@ -140,8 +146,8 @@ private struct Flattener {
         case let .highlight(rect):
             drawHighlight(rect, style: style)
 
-        case let .redaction(rect, redaction):
-            drawRedaction(rect, redaction)
+        case let .redaction(rect, redaction, strength, seed):
+            drawRedaction(rect, redaction, strength: strength, seed: seed)
         }
 
         context.restoreGState()
@@ -167,23 +173,36 @@ private struct Flattener {
         }
     }
 
-    private func drawArrowhead(from: Point, to: Point, style: Style) {
-        // Compute the triangle in context space via the shared geometry helper, so the
+    private func drawArrow(from: Point, to: Point, bend: Point?, arrowStyle: ArrowStyle, style: Style) {
+        // Build the outline in context space via the shared geometry (`arrowShape`), so the
         // on-screen preview (`EditorView`) and this flatten path never drift apart.
-        let tail = contextPoint(from)
-        let tip = contextPoint(to)
-        let corners = arrowheadPoints(
-            from: Point(x: tail.x, y: tail.y),
-            to: Point(x: tip.x, y: tip.y),
-            lineWidth: style.strokeWidth
+        func point(_ p: Point) -> Point { let c = contextPoint(p); return Point(x: c.x, y: c.y) }
+        let shape = arrowShape(
+            from: point(from), to: point(to), bend: bend.map(point),
+            style: arrowStyle, lineWidth: style.strokeWidth
         )
-        guard corners.count == 3 else { return }
+        guard !shape.path.isEmpty else { return }
+
         context.beginPath()
-        context.move(to: CGPoint(x: corners[0].x, y: corners[0].y))
-        context.addLine(to: CGPoint(x: corners[1].x, y: corners[1].y))
-        context.addLine(to: CGPoint(x: corners[2].x, y: corners[2].y))
-        context.closePath()
-        context.fillPath()
+        for element in shape.path {
+            switch element {
+            case let .move(p): context.move(to: CGPoint(x: p.x, y: p.y))
+            case let .line(p): context.addLine(to: CGPoint(x: p.x, y: p.y))
+            case let .quadCurve(to, control):
+                context.addQuadCurve(to: CGPoint(x: to.x, y: to.y), control: CGPoint(x: control.x, y: control.y))
+            case .close: context.closePath()
+            }
+        }
+        switch shape.paint {
+        case let .fill(rounding) where rounding > 0:
+            context.setLineWidth(rounding)
+            context.drawPath(using: .fillStroke)
+        case .fill:
+            context.fillPath()
+        case let .stroke(width):
+            context.setLineWidth(width)
+            context.strokePath()
+        }
     }
 
     private func drawText(_ string: String, box: Rect, style: Style) {
@@ -224,68 +243,30 @@ private struct Flattener {
         context.fill(contextRect(rect))
     }
 
-    private func drawRedaction(_ rect: Rect, _ redaction: RedactionStyle) {
-        switch redaction {
-        case .blackout:
+    private func drawRedaction(_ rect: Rect, _ redaction: RedactionStyle, strength: Double, seed: UInt64) {
+        if redaction == .blackout {
             // Secure erase (story 24): an opaque solid replaces the covered pixels, so
             // nothing beneath survives in the exported bytes. Black and fully opaque — the
             // only redaction the app treats as secret-safe.
             context.setFillColor(cgColor(RGBAColor(red: 0, green: 0, blue: 0, alpha: 1)))
             context.fill(contextRect(rect))
-        case .blur:
-            obscure(rect, smooth: true)
-        case .pixelate:
-            obscure(rect, smooth: false)
+            return
         }
-    }
 
-    /// Obscures a region by resampling it through a much smaller buffer and drawing it back
-    /// enlarged: a smooth (bilinear) shrink reads as blur, a nearest-neighbor shrink as
-    /// pixelation. Both only *transform* the covered pixels — they are visual obscuring, not
-    /// secure redaction (see `RedactionStyle`); only `blackout` genuinely erases.
-    private func obscure(_ rect: Rect, smooth: Bool) {
-        let dest = contextRect(rect)
-        guard dest.width >= 1, dest.height >= 1, let snapshot = context.makeImage() else { return }
-
-        // The rendered output shares image space's top-left origin (offset by the crop
-        // frame), so cropping the snapshot needs no y-flip — only the y-up *drawing*
-        // coordinates do (which `contextRect` already handles for the draw-back).
-        let s = rect.standardized
-        let crop = CGRect(x: s.minX - frame.minX, y: s.minY - frame.minY, width: s.width, height: s.height)
-            .integral
-            .intersection(CGRect(x: 0, y: 0, width: snapshot.width, height: snapshot.height))
-        guard !crop.isNull, crop.width >= 1, crop.height >= 1,
-              let region = snapshot.cropping(to: crop) else { return }
-
-        let factor = smooth ? Self.blurShrink : Self.pixelateBlock
-        let smallWidth = max(1, region.width / factor)
-        let smallHeight = max(1, region.height / factor)
-        guard let small = resample(region, width: smallWidth, height: smallHeight, smooth: smooth) else { return }
-
+        // Blur / pixelate obscure everything drawn so far — the same backdrop-and-patch
+        // path the editor canvas previews with, so what you see is what exports.
+        guard let snapshot = context.makeImage(),
+              let patch = RedactionBackdrop(image: snapshot, frame: frame)
+                .patch(rect, style: redaction, strength: strength, seed: seed) else { return }
         context.saveGState()
-        context.interpolationQuality = smooth ? .high : .none
-        context.setBlendMode(.copy)  // replace the region outright; don't blend resample edges
-        context.draw(small, in: dest)
+        context.interpolationQuality = .none
+        context.setBlendMode(.copy)  // replace the region outright; don't blend patch edges
+        context.draw(patch.image, in: contextRect(patch.rect))
         context.restoreGState()
-    }
-
-    /// Redraws `image` into a fresh `width`×`height` buffer, choosing interpolation to
-    /// match the effect (bilinear for blur, nearest-neighbor for pixelation).
-    private func resample(_ image: CGImage, width: Int, height: Int, smooth: Bool) -> CGImage? {
-        guard let ctx = CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-        ctx.interpolationQuality = smooth ? .high : .none
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return ctx.makeImage()
     }
 
     /// Alpha cap for the highlighter wash — low enough that the content beneath reads through.
     private static let highlightAlpha: Double = 0.35
-    /// Shrink divisor for blur (bilinear resample) and block size for pixelate (nearest).
-    private static let blurShrink = 10
-    private static let pixelateBlock = 12
 
     private func makeLine(_ string: String, fontSize: Double, color: RGBAColor) -> CTLine {
         let font = CTFontCreateWithName("Helvetica" as CFString, CGFloat(fontSize), nil)
