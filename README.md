@@ -18,6 +18,94 @@ Everything happens on your machine. No cloud, no accounts, no network in v1.
 
 See [`specs/0001-core-capture-and-annotate.md`](specs/0001-core-capture-and-annotate.md) for the full contract.
 
+## Install
+
+**Requirements:** a Mac running **macOS 14 (Sonoma) or later**, Apple Silicon or Intel.
+
+There are two ways to install Lightshot:
+
+- **[Download a release](#option-1--download-a-release-recommended)** — the quick way, no developer tools needed.
+- **[Build from source](#option-2--build-from-source)** — if you want the latest `main`, or the [Releases page](https://github.com/lethanhvietctt5/lightshot/releases) has no download yet.
+
+### Option 1 — Download a release (recommended)
+
+1. **Download** `Lightshot-<version>.dmg` from the [latest release](https://github.com/lethanhvietctt5/lightshot/releases/latest) (under **Assets**).
+2. **Install.** Open the DMG and drag **Lightshot** into **Applications**. Eject the DMG afterwards. Always run Lightshot from Applications, not from the DMG or your Downloads folder — otherwise macOS runs it from a temporary location, which breaks launch-at-login and confuses the permission entry.
+3. **Get past the first-launch warning.** Lightshot is open source and **not notarized by Apple** (that requires a paid developer account), so macOS blocks the first launch with *"Apple could not verify…"*. This is expected. Allow it once:
+   - **macOS 15 (Sequoia) or later:** open Lightshot and dismiss the warning with **Done**. Go to **System Settings → Privacy & Security**, scroll down to the message about Lightshot, click **Open Anyway**, and confirm.
+   - **macOS 14 (Sonoma):** in Applications, right-click (or Control-click) **Lightshot** → **Open**, then click **Open** in the dialog.
+   - **Or, on any version, in Terminal:**
+
+     ```bash
+     xattr -dr com.apple.quarantine /Applications/Lightshot.app
+     ```
+
+4. **[Grant Screen Recording](#grant-screen-recording)** when the app asks.
+
+**Verify your download (optional).** Each release's notes include a SHA-256 checksum. Compare it with your file's:
+
+```bash
+shasum -a 256 ~/Downloads/Lightshot-*.dmg
+```
+
+### Option 2 — Build from source
+
+Takes a few minutes and needs no Apple Developer account.
+
+1. **Get the tools.** Install **Xcode** (with Swift 6) from the Mac App Store and open it once to finish setup, then install [XcodeGen](https://github.com/yonaskolb/XcodeGen) with [Homebrew](https://brew.sh):
+
+   ```bash
+   brew install xcodegen
+   ```
+
+2. **Build the app** and wait for `** BUILD SUCCEEDED **`:
+
+   ```bash
+   git clone https://github.com/lethanhvietctt5/lightshot.git
+   cd lightshot
+   xcodegen generate
+   xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -configuration Release \
+     -destination 'platform=macOS' -derivedDataPath build build
+   ```
+
+3. **Move it to Applications and launch.** Because you built it on your own Mac, there is no first-launch warning:
+
+   ```bash
+   cp -R build/Build/Products/Release/Lightshot.app /Applications/
+   open /Applications/Lightshot.app
+   ```
+
+4. **[Grant Screen Recording](#grant-screen-recording)** when the app asks.
+
+### Grant Screen Recording
+
+Lightshot is a **menu-bar app** — it has no Dock icon or main window. Look for its icon in the menu bar.
+
+On first launch, follow the in-app onboarding to allow **Screen Recording** in **System Settings → Privacy & Security → Screen & System Audio Recording** (named **Screen Recording** on macOS 14), then relaunch Lightshot if macOS asks. This is the only permission Lightshot needs; without it captures come back black or empty.
+
+### Updating
+
+Lightshot never connects to the network, so it does not update itself. Choose **Quit Lightshot** from its menu-bar menu, then:
+
+- **Release download:** download the new DMG and drag Lightshot into Applications again, choosing **Replace**. The first-launch warning appears once more for each new download.
+- **Source build:** `git pull`, repeat the `xcodegen generate` and `xcodebuild` commands above, then replace the installed copy:
+
+  ```bash
+  rm -rf /Applications/Lightshot.app
+  cp -R build/Build/Products/Release/Lightshot.app /Applications/
+  ```
+
+> **If captures come back black or empty after an update,** macOS has lost the Screen Recording grant even though System Settings still shows the toggle as on. Run `tccutil reset All dev.lightshot.app`, relaunch, and grant the permission again. Source builds hit this on **every** rebuild unless you set up [local code signing](#local-code-signing--keep-permissions-across-rebuilds) once (a free Apple ID is enough).
+
+### Uninstalling
+
+Quit Lightshot, then remove the app and its permission entries:
+
+```bash
+rm -rf /Applications/Lightshot.app
+tccutil reset All dev.lightshot.app
+```
+
 ## Architecture
 
 Everything interesting is a pure function over a value type; everything OS-facing hides behind a protocol. The app depends on the package, never the reverse.
@@ -30,6 +118,8 @@ Everything interesting is a pure function over a value type; everything OS-facin
 - **[`project.yml`](project.yml)** — the XcodeGen spec. **`Lightshot.xcodeproj` is generated, not committed** — run `xcodegen generate` after cloning or after editing `project.yml`.
 
 ## Getting started
+
+For contributors — if you just want to use the app, see [Install](#install).
 
 **Prerequisites:** macOS 14+, Xcode with Swift 6, and [XcodeGen](https://github.com/yonaskolb/XcodeGen):
 
