@@ -29,6 +29,27 @@ public enum RedactionStyle: Equatable, Sendable {
     case blackout
     case blur
     case pixelate
+
+    /// Strength a new redaction starts at — the midpoint of the `0...1` range that `blur`
+    /// maps to a Gaussian radius and `pixelate` to a block size. `blackout` ignores it.
+    public static let defaultStrength: Double = 0.5
+}
+
+/// How an arrow is drawn. `standard` and `fancy` are straight, filled, and taper from a
+/// thin tail into the head; `curved` and `double` are an even stroke with open heads that
+/// can be bent through a midpoint (see `AnnotationElement.Kind.arrow`).
+public enum ArrowStyle: Equatable, Sendable, CaseIterable {
+    /// Tapered shaft, solid head with softened corners.
+    case standard
+    /// Tapered shaft, sharp swept-back (barbed) head.
+    case fancy
+    /// Even stroke with an open head at the tip; bendable.
+    case curved
+    /// Even stroke with an open head at both ends; bendable.
+    case double
+
+    /// Whether the style follows a bend point. Straight styles never carry one.
+    public var isBendable: Bool { self == .curved || self == .double }
 }
 
 /// Visual attributes shared by every annotation element.

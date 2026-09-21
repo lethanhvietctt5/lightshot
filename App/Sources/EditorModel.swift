@@ -69,7 +69,33 @@ final class EditorModel {
     /// Which style a new redaction uses. **Defaults to `blackout`** — the only secure
     /// redaction (story 24): `blur`/`pixelate` merely obscure and must never be presented as
     /// secret-safe. The toolbar surfaces this and warns when a non-secure style is chosen.
-    var redactionStyle: RedactionStyle = .blackout
+    private(set) var redactionStyle: RedactionStyle = EditorModel.lastRedaction.style
+
+    /// How hard a new (or the selected) `blur`/`pixelate` redaction obscures, `0...1`.
+    private(set) var redactionStrength: Double = EditorModel.lastRedaction.strength
+
+    /// Which style a new (or the selected) arrow is drawn in. Starts at the last style used.
+    private(set) var arrowStyle: ArrowStyle = EditorModel.lastArrowStyle
+
+    /// The last redaction choice, shared by every editor this launch so blurring a run of
+    /// captures doesn't mean re-picking Blur each time. Deliberately not persisted: a fresh
+    /// launch always starts back at `blackout`, the only secure style (story 24).
+    private static var lastRedaction: (style: RedactionStyle, strength: Double) =
+        (.blackout, RedactionStyle.defaultStrength)
+
+    /// The last arrow style used, remembered across launches.
+    private static var lastArrowStyle: ArrowStyle {
+        get {
+            let stored = UserDefaults.standard.integer(forKey: arrowStyleDefaultsKey)
+            return ArrowStyle.allCases.indices.contains(stored) ? ArrowStyle.allCases[stored] : .standard
+        }
+        set { UserDefaults.standard.set(ArrowStyle.allCases.firstIndex(of: newValue) ?? 0, forKey: arrowStyleDefaultsKey) }
+    }
+    private static let arrowStyleDefaultsKey = "editor.lastArrowStyle"
+
+    /// Flattened backdrops and obscured patches for the blur/pixelate previews. A cache,
+    /// not state — it must not trigger view updates when it fills during a draw.
+    @ObservationIgnored private let redactionPreviews = RedactionPreviewCache()
 
     /// The style applied to new marks, kept in sync with the selection while one exists.
     private(set) var style: Style = .default
@@ -120,11 +146,14 @@ final class EditorModel {
     var hasSelection: Bool { document.selectedID != nil }
 
     /// Elements to draw, with any in-progress move/resize applied as a preview.
-    var displayElements: [AnnotationElement] {
-        guard let drag else { return document.elements }
+    var displayElements: [AnnotationElement] { displayDocument.elements }
+
+    /// The document as currently shown: the real one, plus any in-progress drag.
+    private var displayDocument: AnnotationDocument {
+        guard let drag else { return document }
         var preview = document
         preview.transform(drag.id, by: drag.transform)
-        return preview.elements
+        return preview
     }
 
     /// The shape being drawn right now, if any (drawn on top of `displayElements`).
@@ -133,10 +162,53 @@ final class EditorModel {
         return AnnotationElement(kind: kind, style: style)
     }
 
-    /// The bounding box (image space) to hang selection handles on, or nil.
+    /// The real obscured pixels for the blur/pixelate redaction at `index` of
+    /// `displayElements` — cut by the same code the export uses, so the canvas shows
+    /// exactly what will be flattened. `nil` for anything else (including `blackout`).
+    func redactionPatch(at index: Int) -> RedactionPatch? {
+        redactionPreviews.patch(at: index, in: displayDocument)
+    }
+
+    /// The obscured pixels for a redaction still being drawn; it will land on top.
+    var draftRedactionPatch: RedactionPatch? {
+        guard let draftElement else { return nil }
+        return redactionPreviews.patch(for: draftElement, at: displayElements.count, in: displayDocument)
+    }
+
+    /// The bounding box (image space) to hang selection handles on, or nil. Lines and
+    /// arrows are grabbed by their endpoints instead (see `selectionEndpoints`).
     var selectionBox: Rect? {
+        guard let kind = selectedKindAtRest, kind.endpointHandles == nil else { return nil }
+        return kind.boundingBox
+    }
+
+    /// The endpoint handles (image space) of a selected line or arrow, or nil.
+    var selectionEndpoints: [Point]? {
+        selectedKindAtRest?.endpointHandles?.map(\.point)
+    }
+
+    /// The selected element's geometry, while no gesture is reshaping the canvas.
+    private var selectedKindAtRest: AnnotationElement.Kind? {
         guard drag == nil, draft == nil, let id = document.selectedID else { return nil }
-        return document.element(id: id)?.kind.boundingBox
+        return document.element(id: id)?.kind
+    }
+
+    /// Whether the arrow-style picker applies: drawing arrows, or an arrow is selected.
+    var showsArrowControls: Bool {
+        if tool == .arrow { return true }
+        if case .arrow? = selectedKind { return true }
+        return false
+    }
+
+    /// Whether the redaction controls apply: drawing a redaction, or one is selected.
+    var showsRedactionControls: Bool {
+        if tool == .redact { return true }
+        if case .redaction? = selectedKind { return true }
+        return false
+    }
+
+    private var selectedKind: AnnotationElement.Kind? {
+        document.selectedID.flatMap { document.element(id: $0)?.kind }
     }
 
     // MARK: - Crop (stories 36–38)
@@ -196,6 +268,30 @@ final class EditorModel {
         document.setStyle(id, style)
         if case .stepMarker? = document.element(id: id)?.kind {
             document.setStepRadius(id, size)
+        }
+    }
+
+    /// Picks the arrow style for new arrows and restyles a selected arrow in place.
+    func setArrowStyle(_ arrowStyle: ArrowStyle) {
+        self.arrowStyle = arrowStyle
+        Self.lastArrowStyle = arrowStyle
+        if let id = document.selectedID { document.setArrowStyle(id, arrowStyle) }
+    }
+
+    func setRedactionStyle(_ redactionStyle: RedactionStyle) {
+        self.redactionStyle = redactionStyle
+        applyRedactionToSelection()
+    }
+
+    func setRedactionStrength(_ strength: Double) {
+        redactionStrength = strength
+        applyRedactionToSelection()
+    }
+
+    private func applyRedactionToSelection() {
+        Self.lastRedaction = (redactionStyle, redactionStrength)
+        if let id = document.selectedID {
+            document.setRedaction(id, style: redactionStyle, strength: redactionStrength)
         }
     }
 
@@ -325,7 +421,11 @@ final class EditorModel {
         case .crop:
             beginCropGesture(at: point)
         case .arrow, .line, .rectangle, .ellipse, .freehand, .text, .step, .highlight, .redact:
-            draft = Draft(tool: tool, start: point, current: point, points: [point], redactionStyle: redactionStyle)
+            draft = Draft(
+                tool: tool, start: point, current: point, points: [point], arrowStyle: arrowStyle,
+                redactionStyle: redactionStyle, redactionStrength: redactionStrength,
+                redactionSeed: UInt64.random(in: .min ... .max)
+            )
         }
     }
 
@@ -376,11 +476,17 @@ final class EditorModel {
     // MARK: - Select / move / resize (stories 29–31)
 
     private func beginSelectGesture(at point: Point) {
-        if let id = document.selectedID,
-           let box = document.element(id: id)?.kind.boundingBox,
-           let handle = handle(at: point, of: box) {
-            drag = DragSession(id: id, mode: .resize(handle), start: point, current: point)
-            return
+        if let id = document.selectedID, let kind = document.element(id: id)?.kind {
+            if let endpoints = kind.endpointHandles {
+                // Later handles win a tie, so a bend resting near an endpoint stays grabbable.
+                if let hit = endpoints.last(where: { isWithinGrabRadius(point, of: $0.point) }) {
+                    drag = DragSession(id: id, mode: .reshape(hit.handle), start: point, current: point)
+                    return
+                }
+            } else if let handle = handle(at: point, of: kind.boundingBox) {
+                drag = DragSession(id: id, mode: .resize(handle), start: point, current: point)
+                return
+            }
         }
         if let hit = document.elementID(at: point) {
             document.select(hit)
@@ -406,11 +512,12 @@ final class EditorModel {
 
     /// The resize handle near `point`, if the point is within a grab radius of one.
     private func handle(at point: Point, of box: Rect) -> Handle? {
+        Handle.allCases.first { isWithinGrabRadius(point, of: handlePoint($0, in: box)) }
+    }
+
+    private func isWithinGrabRadius(_ point: Point, of handle: Point) -> Bool {
         let tolerance = max(Self.handleRadius / max(viewScale, 0.0001), 4)
-        return Handle.allCases.first { h in
-            let hp = handlePoint(h, in: box)
-            return abs(hp.x - point.x) <= tolerance && abs(hp.y - point.y) <= tolerance
-        }
+        return abs(handle.x - point.x) <= tolerance && abs(handle.y - point.y) <= tolerance
     }
 
     // MARK: - Placement (stories 20, 25)
@@ -439,6 +546,16 @@ final class EditorModel {
         // radius through the font-size control so the slider reflects (and drives) it.
         if case let .stepMarker(_, _, radius) = element.kind { synced.fontSize = radius }
         style = synced
+        // Likewise the arrow-style picker and redaction controls show the selection's own values.
+        switch element.kind {
+        case let .arrow(_, _, _, arrowStyle):
+            self.arrowStyle = arrowStyle
+        case let .redaction(_, redactionStyle, strength, _):
+            self.redactionStyle = redactionStyle
+            redactionStrength = strength
+        default:
+            break
+        }
     }
 
     private static let handleRadius: Double = 6
@@ -452,20 +569,30 @@ private struct Draft {
     var start: Point
     var current: Point
     var points: [Point]
-    /// The redaction style captured when the draft began, so a mid-draw style change can't
-    /// retroactively alter the mark being drawn.
+    /// The arrow and redaction settings captured when the draft began, so a mid-draw change
+    /// can't retroactively alter the mark being drawn. The seed is rolled once per draft so
+    /// the scramble holds still while the region is dragged out.
+    let arrowStyle: ArrowStyle
     let redactionStyle: RedactionStyle
+    let redactionStrength: Double
+    let redactionSeed: UInt64
 
     /// The element geometry for this draft, or nil when it's too small / not a shape tool.
     var kind: AnnotationElement.Kind? {
         switch tool {
-        case .arrow: return hasMinimumLength ? .arrow(from: start, to: current) : nil
+        case .arrow:
+            guard hasMinimumLength else { return nil }
+            let bend = arrowStyle.isBendable ? defaultArrowBend(from: start, to: current) : nil
+            return .arrow(from: start, to: current, bend: bend, style: arrowStyle)
         case .line: return hasMinimumLength ? .line(from: start, to: current) : nil
         case .rectangle: return hasMinimumArea ? .rectangle(rectBetween(start, current)) : nil
         case .ellipse: return hasMinimumArea ? .ellipse(rectBetween(start, current)) : nil
         case .freehand: return points.count > 1 ? .freehand(points: points) : nil
         case .highlight: return hasMinimumArea ? .highlight(rectBetween(start, current)) : nil
-        case .redact: return hasMinimumArea ? .redaction(rectBetween(start, current), style: redactionStyle) : nil
+        case .redact:
+            guard hasMinimumArea else { return nil }
+            return .redaction(rectBetween(start, current), style: redactionStyle,
+                              strength: redactionStrength, seed: redactionSeed)
         case .select, .text, .step, .crop: return nil
         }
     }
@@ -478,7 +605,7 @@ private struct Draft {
 
 /// An in-progress move or resize of the selected element.
 private struct DragSession {
-    enum Mode { case move; case resize(Handle) }
+    enum Mode { case move; case resize(Handle); case reshape(EndpointHandle) }
     let id: ElementID
     let mode: Mode
     let start: Point
@@ -490,7 +617,55 @@ private struct DragSession {
         switch mode {
         case .move: return .move(dx: dx, dy: dy)
         case let .resize(handle): return .resize(handle: handle, dx: dx, dy: dy)
+        case let .reshape(handle): return .reshape(handle: handle, dx: dx, dy: dy)
         }
+    }
+}
+
+/// Keeps the blur/pixelate canvas preview cheap. Flattening what lies beneath a redaction
+/// is the costly step, so each redaction's backdrop is kept until the elements under it (or
+/// the crop) change; cutting the obscured patch is fast and is redone only when the
+/// redaction itself changes — so dragging one out re-cuts per frame but never re-flattens.
+@MainActor
+private final class RedactionPreviewCache {
+    private struct Entry {
+        let below: [AnnotationElement]
+        let frame: Rect
+        let backdrop: RedactionBackdrop
+        var kind: AnnotationElement.Kind?
+        var patch: RedactionPatch?
+    }
+
+    /// Keyed by z-order index; `elements.count` is the redaction still being drawn.
+    private var entries: [Int: Entry] = [:]
+
+    func patch(at index: Int, in document: AnnotationDocument) -> RedactionPatch? {
+        guard document.elements.indices.contains(index) else { return nil }
+        return patch(for: document.elements[index], at: index, in: document)
+    }
+
+    func patch(for element: AnnotationElement, at index: Int, in document: AnnotationDocument) -> RedactionPatch? {
+        // Slots past the top of the z-order (after a delete or undo) would otherwise pin a
+        // full-size bitmap each for the life of the editor.
+        entries = entries.filter { $0.key <= document.elements.count }
+        guard case let .redaction(rect, style, strength, seed) = element.kind, style != .blackout else {
+            entries[index] = nil  // don't hold a full-size bitmap for a slot that stopped needing one
+            return nil
+        }
+        let below = Array(document.elements.prefix(index))
+        var entry: Entry
+        if let cached = entries[index], cached.below == below, cached.frame == document.visibleFrame {
+            entry = cached
+        } else {
+            guard let backdrop = redactionBackdrop(document, below: index) else { return nil }
+            entry = Entry(below: below, frame: document.visibleFrame, backdrop: backdrop)
+        }
+        if entry.kind != element.kind {
+            entry.kind = element.kind
+            entry.patch = entry.backdrop.patch(rect, style: style, strength: strength, seed: seed)
+        }
+        entries[index] = entry
+        return entry.patch
     }
 }
 

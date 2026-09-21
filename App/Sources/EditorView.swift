@@ -43,6 +43,7 @@ struct EditorView: View {
             toolPalette
             Divider().frame(height: 20)
             styleControls
+            arrowControls
             redactionControls
             if model.canResetCrop {
                 Button("Reset Crop") { model.resetCrop() }
@@ -104,15 +105,38 @@ struct EditorView: View {
         .help("Font size")
     }
 
-    /// The redaction style picker, shown only while the redact tool is active. Blackout is
-    /// the default and the only style framed as secure; blur/pixelate carry an explicit
-    /// "not secure" warning so they are never mistaken for secret-safe redaction (story 24).
+    /// The arrow style picker, shown while drawing arrows or with one selected (which it
+    /// restyles in place). Each button draws its style with the same geometry as the canvas.
+    @ViewBuilder
+    private var arrowControls: some View {
+        if model.showsArrowControls {
+            Divider().frame(height: 20)
+            HStack(spacing: 2) {
+                ForEach(ArrowStyle.allCases, id: \.self) { arrowStyle in
+                    Button {
+                        model.setArrowStyle(arrowStyle)
+                    } label: {
+                        ArrowStyleIcon(style: arrowStyle).frame(width: 30, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .background(model.arrowStyle == arrowStyle ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 5))
+                    .help(arrowStyle.help)
+                }
+            }
+        }
+    }
+
+    /// The redaction style picker and strength slider, shown while the redact tool is active
+    /// or a redaction is selected (which they restyle in place). Blackout is the default and
+    /// the only style framed as secure; blur/pixelate carry an explicit "not secure" warning
+    /// so they are never mistaken for secret-safe redaction (story 24).
     @ViewBuilder
     private var redactionControls: some View {
-        @Bindable var model = model
-        if model.tool == .redact {
+        if model.showsRedactionControls {
             Divider().frame(height: 20)
-            Picker("Redaction style", selection: $model.redactionStyle) {
+            Picker("Redaction style", selection: Binding(
+                get: { model.redactionStyle }, set: { model.setRedactionStyle($0) }
+            )) {
                 Text("Blackout").tag(RedactionStyle.blackout)
                 Text("Blur").tag(RedactionStyle.blur)
                 Text("Pixelate").tag(RedactionStyle.pixelate)
@@ -121,6 +145,19 @@ struct EditorView: View {
             .labelsHidden()
             .fixedSize()
             .help(redactionHelp)
+
+            if model.redactionStyle != .blackout {
+                HStack(spacing: 4) {
+                    Image(systemName: "circle.lefthalf.filled").foregroundStyle(.secondary)
+                    Slider(
+                        value: Binding(get: { model.redactionStrength }, set: { model.setRedactionStrength($0) }),
+                        in: 0...1,
+                        onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
+                    )
+                    .frame(width: 90)
+                }
+                .help("Intensity")
+            }
 
             if model.redactionStyle == .blackout {
                 Label("Secure erase", systemImage: "lock.fill")
@@ -224,14 +261,17 @@ struct EditorView: View {
                 }
 
                 Canvas { context, _ in
-                    for element in model.displayElements {
-                        draw(element, into: context, projection: projection)
+                    for (index, element) in model.displayElements.enumerated() {
+                        draw(element, redactionPatch: model.redactionPatch(at: index), into: context, projection: projection)
                     }
                     if let draft = model.draftElement {
-                        draw(draft, into: context, projection: projection)
+                        draw(draft, redactionPatch: model.draftRedactionPatch, into: context, projection: projection)
                     }
                     if let box = model.selectionBox {
                         drawSelection(box, into: context, projection: projection)
+                    }
+                    if let endpoints = model.selectionEndpoints {
+                        drawHandles(at: endpoints, size: 9, round: true, stroke: .accentColor, into: context, projection: projection)
                     }
                     if let crop = model.cropFrame {
                         drawCropOverlay(
@@ -293,7 +333,10 @@ struct EditorView: View {
 
 // MARK: - Element drawing
 
-private func draw(_ element: AnnotationElement, into context: GraphicsContext, projection: CanvasProjection) {
+private func draw(
+    _ element: AnnotationElement, redactionPatch: RedactionPatch?,
+    into context: GraphicsContext, projection: CanvasProjection
+) {
     let color = element.style.color.color
     let lineWidth = max(element.style.strokeWidth * projection.scale, 0.5)
     let stroke = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
@@ -302,11 +345,14 @@ private func draw(_ element: AnnotationElement, into context: GraphicsContext, p
     case let .line(from, to):
         context.stroke(segment(projection.toView(from), projection.toView(to)), with: .color(color), style: stroke)
 
-    case let .arrow(from, to):
-        let a = projection.toView(from).cgPoint
-        let b = projection.toView(to).cgPoint
-        context.stroke(segment(from: a, to: b), with: .color(color), style: stroke)
-        context.fill(arrowhead(from: a, to: b, lineWidth: lineWidth), with: .color(color))
+    case let .arrow(from, to, bend, arrowStyle):
+        // Shares its geometry with the flatten render (`arrowShape`) so the on-screen
+        // preview and the exported image draw the same arrow.
+        let shape = arrowShape(
+            from: projection.toView(from), to: projection.toView(to), bend: bend.map(projection.toView),
+            style: arrowStyle, lineWidth: Double(lineWidth)
+        )
+        draw(shape, color: color, into: context)
 
     case let .rectangle(rect):
         let path = Path(projection.toView(rect).cgRect)
@@ -352,17 +398,69 @@ private func draw(_ element: AnnotationElement, into context: GraphicsContext, p
         wash.alpha = min(element.style.color.alpha, highlightPreviewAlpha)
         context.fill(Path(projection.toView(rect).cgRect), with: .color(wash.color))
 
-    case let .redaction(rect, redactionStyle):
-        let path = Path(projection.toView(rect).cgRect)
+    case let .redaction(rect, redactionStyle, _, _):
         switch redactionStyle {
         case .blackout:
             // Exact preview: an opaque black fill is what the export produces.
-            context.fill(path, with: .color(.black))
+            context.fill(Path(projection.toView(rect).cgRect), with: .color(.black))
         case .blur, .pixelate:
-            // The real blur/pixelate is applied by `render` on export; on canvas we show a
-            // translucent scrim so the region reads as "obscured, not erased" (visibly
-            // different from blackout's solid fill) without re-implementing the filter here.
-            context.fill(path, with: .color(.gray.opacity(0.55)))
+            // Exact preview too: the patch is cut by the same code `render` exports with
+            // (see `RedactionBackdrop`), over everything beneath this element.
+            guard let redactionPatch else { break }
+            context.draw(
+                Image(decorative: redactionPatch.image, scale: 1),
+                in: projection.toView(redactionPatch.rect).cgRect
+            )
+        }
+    }
+}
+
+/// Paints an `ArrowShape` whose points are already in view space.
+private func draw(_ shape: ArrowShape, color: Color, into context: GraphicsContext) {
+    var path = Path()
+    for element in shape.path {
+        switch element {
+        case let .move(p): path.move(to: p.cgPoint)
+        case let .line(p): path.addLine(to: p.cgPoint)
+        case let .quadCurve(to, control): path.addQuadCurve(to: to.cgPoint, control: control.cgPoint)
+        case .close: path.closeSubpath()
+        }
+    }
+    switch shape.paint {
+    case let .fill(rounding):
+        context.fill(path, with: .color(color))
+        if rounding > 0 {
+            context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: rounding, lineJoin: .round))
+        }
+    case let .stroke(width):
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+    }
+}
+
+/// A toolbar glyph for an arrow style, drawn with the canvas's own arrow geometry.
+private struct ArrowStyleIcon: View {
+    let style: ArrowStyle
+
+    var body: some View {
+        Canvas { context, size in
+            let tail = Point(x: 4, y: Double(size.height) - 6)
+            let tip = Point(x: Double(size.width) - 4, y: 6)
+            let shape = arrowShape(
+                from: tail, to: tip, bend: style.isBendable ? defaultArrowBend(from: tail, to: tip) : nil,
+                style: style, lineWidth: style.isBendable ? 1.8 : 2.4
+            )
+            draw(shape, color: .primary, into: context)
+        }
+    }
+}
+
+private extension ArrowStyle {
+    var help: String {
+        switch self {
+        case .standard: return "Standard arrow"
+        case .fancy: return "Fancy arrow"
+        case .curved: return "Curved arrow — drag its middle handle to bend it"
+        case .double: return "Double-headed arrow — drag its middle handle to bend it"
         }
     }
 }
@@ -386,11 +484,24 @@ private func drawHandles(
     on box: Rect, size: CGFloat, stroke: Color,
     into context: GraphicsContext, projection: CanvasProjection
 ) {
-    for handle in Handle.allCases {
-        let p = projection.toView(handlePoint(handle, in: box)).cgPoint
+    drawHandles(
+        at: Handle.allCases.map { handlePoint($0, in: box) }, size: size, round: false,
+        stroke: stroke, into: context, projection: projection
+    )
+}
+
+/// Draws a handle at each image-space point — round for a line or arrow's endpoints, square
+/// for a bounding box's — so the two kinds of grab read differently at a glance.
+private func drawHandles(
+    at points: [Point], size: CGFloat, round: Bool, stroke: Color,
+    into context: GraphicsContext, projection: CanvasProjection
+) {
+    for point in points {
+        let p = projection.toView(point).cgPoint
         let square = CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size)
-        context.fill(Path(roundedRect: square, cornerRadius: 1.5), with: .color(.white))
-        context.stroke(Path(roundedRect: square, cornerRadius: 1.5), with: .color(stroke), lineWidth: 1)
+        let path = Path(roundedRect: square, cornerRadius: round ? size / 2 : 1.5)
+        context.fill(path, with: .color(.white))
+        context.stroke(path, with: .color(stroke), lineWidth: 1)
     }
 }
 
@@ -422,19 +533,6 @@ private func segment(from a: CGPoint, to b: CGPoint) -> Path {
     var path = Path()
     path.move(to: a)
     path.addLine(to: b)
-    return path
-}
-
-private func arrowhead(from: CGPoint, to: CGPoint, lineWidth: CGFloat) -> Path {
-    // Shares its trigonometry with the flatten render (`arrowheadPoints`) so the on-screen
-    // preview and the exported image draw the same head.
-    let corners = arrowheadPoints(from: Point(from), to: Point(to), lineWidth: Double(lineWidth))
-    guard corners.count == 3 else { return Path() }
-    var path = Path()
-    path.move(to: corners[0].cgPoint)
-    path.addLine(to: corners[1].cgPoint)
-    path.addLine(to: corners[2].cgPoint)
-    path.closeSubpath()
     return path
 }
 

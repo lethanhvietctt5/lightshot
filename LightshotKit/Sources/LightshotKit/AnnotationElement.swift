@@ -25,14 +25,20 @@ public struct AnnotationElement: Identifiable, Equatable, Sendable {
 
     /// The geometric shape of an element. Each case carries its own geometry.
     public enum Kind: Equatable, Sendable {
-        case arrow(from: Point, to: Point)
+        /// A pointer from a tail (`from`) to a tip (`to`). `bend` is the point the shaft
+        /// passes through at its middle — only bendable styles (`ArrowStyle.isBendable`)
+        /// carry one; `nil` means a straight shaft.
+        case arrow(from: Point, to: Point, bend: Point? = nil, style: ArrowStyle = .standard)
         case line(from: Point, to: Point)
         case rectangle(Rect)
         case ellipse(Rect)
         case freehand(points: [Point])
         case text(String, box: Rect)
         case highlight(Rect)
-        case redaction(Rect, style: RedactionStyle)
+        /// `strength` (`0...1`) sets how hard `blur`/`pixelate` obscure; `seed` fixes their
+        /// randomization so the same element always flattens to the same pixels.
+        case redaction(Rect, style: RedactionStyle,
+                       strength: Double = RedactionStyle.defaultStrength, seed: UInt64 = 0)
         /// An auto-numbered step marker drawn as a circle of `radius` about `center`.
         /// The document assigns `number` on `add`; callers pass any placeholder.
         case stepMarker(number: Int, center: Point, radius: Double)
@@ -44,11 +50,12 @@ extension AnnotationElement.Kind {
     /// the coarse hit-test for area shapes.
     public var boundingBox: Rect {
         switch self {
-        case let .arrow(from, to), let .line(from, to):
-            return Rect(x: min(from.x, to.x), y: min(from.y, to.y),
-                        width: abs(to.x - from.x), height: abs(to.y - from.y))
+        case let .arrow(from, to, bend, _):
+            return Self.boundingBox(of: [from, to] + (bend.map { [$0] } ?? []))
+        case let .line(from, to):
+            return Self.boundingBox(of: [from, to])
         case let .rectangle(rect), let .ellipse(rect),
-             let .highlight(rect), let .redaction(rect, _):
+             let .highlight(rect), let .redaction(rect, _, _, _):
             return rect.standardized
         case let .text(_, box):
             return box.standardized
@@ -60,18 +67,35 @@ extension AnnotationElement.Kind {
         }
     }
 
+    /// Where a selected line or arrow can be grabbed: its tail and tip, plus — for a bendable
+    /// arrow — the bend on the middle of its shaft. `nil` for every other shape, which is
+    /// resized by its bounding box instead.
+    public var endpointHandles: [(handle: EndpointHandle, point: Point)]? {
+        switch self {
+        case let .line(from, to):
+            return [(.tail, from), (.tip, to)]
+        case let .arrow(from, to, bend, style):
+            let ends: [(handle: EndpointHandle, point: Point)] = [(.tail, from), (.tip, to)]
+            return style.isBendable ? ends + [(.bend, bend ?? arrowMidpoint(from, to))] : ends
+        default:
+            return nil
+        }
+    }
+
     /// Translates every stored coordinate by `(dx, dy)`.
     func moved(dx: Double, dy: Double) -> AnnotationElement.Kind {
         func shift(_ p: Point) -> Point { Point(x: p.x + dx, y: p.y + dy) }
         func shift(_ r: Rect) -> Rect { Rect(origin: shift(r.origin), size: r.size) }
 
         switch self {
-        case let .arrow(from, to): return .arrow(from: shift(from), to: shift(to))
+        case let .arrow(from, to, bend, style):
+            return .arrow(from: shift(from), to: shift(to), bend: bend.map(shift), style: style)
         case let .line(from, to): return .line(from: shift(from), to: shift(to))
         case let .rectangle(rect): return .rectangle(shift(rect))
         case let .ellipse(rect): return .ellipse(shift(rect))
         case let .highlight(rect): return .highlight(shift(rect))
-        case let .redaction(rect, style): return .redaction(shift(rect), style: style)
+        case let .redaction(rect, style, strength, seed):
+            return .redaction(shift(rect), style: style, strength: strength, seed: seed)
         case let .text(string, box): return .text(string, box: shift(box))
         case let .freehand(points): return .freehand(points: points.map(shift))
         case let .stepMarker(number, center, radius):
@@ -98,12 +122,14 @@ extension AnnotationElement.Kind {
         }
 
         switch self {
-        case let .arrow(from, to): return .arrow(from: remap(from), to: remap(to))
+        case let .arrow(from, to, bend, style):
+            return .arrow(from: remap(from), to: remap(to), bend: bend.map(remap), style: style)
         case let .line(from, to): return .line(from: remap(from), to: remap(to))
         case let .rectangle(rect): return .rectangle(remap(rect))
         case let .ellipse(rect): return .ellipse(remap(rect))
         case let .highlight(rect): return .highlight(remap(rect))
-        case let .redaction(rect, style): return .redaction(remap(rect), style: style)
+        case let .redaction(rect, style, strength, seed):
+            return .redaction(remap(rect), style: style, strength: strength, seed: seed)
         case let .text(string, box): return .text(string, box: remap(box))
         case let .freehand(points): return .freehand(points: points.map(remap))
         case let .stepMarker(number, _, _):
@@ -112,12 +138,49 @@ extension AnnotationElement.Kind {
         }
     }
 
+    /// Drags one `EndpointHandle` of a line or arrow by `(dx, dy)`. Moving an arrow's tail
+    /// or tip carries its bend along — rotated and scaled with the shaft — so the curve
+    /// keeps its shape; moving the bend re-curves a bendable arrow. Other shapes (and a
+    /// bend on a straight style) are returned unchanged.
+    func reshaped(handle: EndpointHandle, dx: Double, dy: Double) -> AnnotationElement.Kind {
+        func shift(_ p: Point) -> Point { Point(x: p.x + dx, y: p.y + dy) }
+
+        switch self {
+        case let .line(from, to):
+            switch handle {
+            case .tail: return .line(from: shift(from), to: to)
+            case .tip: return .line(from: from, to: shift(to))
+            case .bend: return self
+            }
+        case let .arrow(from, to, bend, style):
+            switch handle {
+            case .tail:
+                let moved = shift(from)
+                let carried = bend.map { carriedBend($0, from: from, to: to, newFrom: moved, newTo: to) }
+                return .arrow(from: moved, to: to, bend: carried, style: style)
+            case .tip:
+                let moved = shift(to)
+                let carried = bend.map { carriedBend($0, from: from, to: to, newFrom: from, newTo: moved) }
+                return .arrow(from: from, to: moved, bend: carried, style: style)
+            case .bend:
+                guard style.isBendable else { return self }
+                return .arrow(from: from, to: to, bend: shift(bend ?? arrowMidpoint(from, to)), style: style)
+            }
+        default:
+            return self
+        }
+    }
+
     /// Whether `point` hits the shape, using `tolerance` (derived from stroke
     /// width) to give thin marks a grabbable margin.
     func hitTest(_ point: Point, tolerance: Double) -> Bool {
         switch self {
-        case let .arrow(from, to), let .line(from, to):
+        case let .line(from, to):
             return distanceFromPoint(point, toSegment: from, to) <= tolerance
+        case let .arrow(from, to, bend, _):
+            // A bent shaft is hit-tested along its sampled centerline, like a freehand stroke.
+            return Self.freehand(points: arrowCenterline(from: from, to: to, bend: bend))
+                .hitTest(point, tolerance: tolerance)
         case let .freehand(points):
             guard points.count > 1 else {
                 return points.first.map { point.distance(to: $0) <= tolerance } ?? false
