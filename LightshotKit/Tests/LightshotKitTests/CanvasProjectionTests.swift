@@ -31,6 +31,19 @@ import Foundation
         #expect(r == Rect(x: 5, y: 10, width: 20, height: 30))
     }
 
+    @Test func insetKeepsTheImageClearOfEveryEdge() {
+        // 400×200 image in a 240×240 view with a 20pt inset: fitted to the 200pt inner width.
+        let p = CanvasProjection(imageSize: Size(width: 400, height: 200), viewSize: Size(width: 240, height: 240), inset: 20)
+        #expect(p.scale == 0.5)
+        #expect(p.toView(Rect(x: 0, y: 0, width: 400, height: 200)) == Rect(x: 20, y: 70, width: 200, height: 100))
+    }
+
+    @Test func anInsetLargerThanTheViewDegradesToZeroScale() {
+        let p = CanvasProjection(imageSize: Size(width: 100, height: 100), viewSize: Size(width: 30, height: 30), inset: 20)
+        #expect(p.scale == 0)
+        #expect(p.toImage(Point(x: 10, y: 10)) == Point(x: 0, y: 0))
+    }
+
     @Test func degenerateViewMapsToOriginInsteadOfDividingByZero() {
         let p = CanvasProjection(imageSize: Size(width: 100, height: 100), viewSize: Size(width: 0, height: 0))
         #expect(p.toImage(Point(x: 10, y: 10)) == Point(x: 0, y: 0))

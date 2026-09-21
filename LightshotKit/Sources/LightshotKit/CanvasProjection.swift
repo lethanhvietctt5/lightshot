@@ -16,10 +16,11 @@ public struct CanvasProjection: Equatable, Sendable {
     public let imageOrigin: Point
 
     /// Builds the aspect-fit projection of `imageSize` inside `viewSize`, centering
-    /// the drawn image so the unused axis is split into equal margins.
-    public init(imageSize: Size, viewSize: Size) {
-        let sx = imageSize.width > 0 ? viewSize.width / imageSize.width : 1
-        let sy = imageSize.height > 0 ? viewSize.height / imageSize.height : 1
+    /// the drawn image so the unused axis is split into equal margins. `inset` keeps at
+    /// least that much view space clear on every side, so the image never touches the edge.
+    public init(imageSize: Size, viewSize: Size, inset: Double = 0) {
+        let sx = imageSize.width > 0 ? max(viewSize.width - inset * 2, 0) / imageSize.width : 1
+        let sy = imageSize.height > 0 ? max(viewSize.height - inset * 2, 0) / imageSize.height : 1
         let s = min(sx, sy)
         scale = s
         imageOrigin = Point(

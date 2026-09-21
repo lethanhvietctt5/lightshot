@@ -3,6 +3,7 @@
 **Status:** implemented on branch, not yet tracked in Linear
 **Linear:** _none yet — create two issues (arrow, redaction) and link them here_
 **Platform:** Native macOS (Swift / SwiftUI), macOS 14+
+**Amended by:** [Spec 0004](0004-editor-usability-pass.md) — curved and double arrows now share the standard look and start straight (story 5); the redact tool starts at Pixelate (story 15).
 **Scope:** Local-only. Two editor tools brought in line with CleanShot X 4.8.3. Amends Spec 0001's `arrow` and `redaction` elements; adds no new seams.
 
 Vocabulary used here is defined in [`CONTEXT.md`](../CONTEXT.md). The Core Image decision is recorded in [ADR 0001](../docs/adr/0001-core-image-blur-and-shared-redaction-patch.md).

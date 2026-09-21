@@ -247,18 +247,33 @@ final class AppController: NSObject, CaptureUI {
                 self?.coordinator.copyToClipboard($0)
                 self?.editorWindow?.close()
             },
-            onSave: { [weak self] in self?.save($0) },
-            onSaveAs: { [weak self] in self?.saveAs($0) },
-            onPin: { [weak self] in self?.pin($0) },
-            onDrag: { [weak self] in self?.dragProvider(for: $0) ?? NSItemProvider() }
+            onSaveAs: { [weak self] in self?.saveAs($0) }
         )
         let window = editorWindow ?? makeEditorWindow()
         window.contentViewController = NSHostingController(rootView: view)
-        window.setContentSize(NSSize(width: 720, height: 480))
+        window.setContentSize(Self.editorContentSize(on: window.screen ?? NSScreen.main))
         window.center()
         editorWindow = window
 
+        // While the editor is open Lightshot is a regular app — Dock icon, ⌘-Tab entry, app menu —
+        // so the window can be found and switched to like any other. `editorWindowWillClose`
+        // returns it to a menu-bar-only accessory.
+        NSApp.setActivationPolicy(.regular)
         WindowPresenter.present(window)
+    }
+
+    @objc private func editorWindowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    /// The editor's opening size: roomy by default, but never larger than the screen allows.
+    private static func editorContentSize(on screen: NSScreen?) -> NSSize {
+        let preferred = NSSize(width: 1180, height: 800)
+        guard let visible = screen?.visibleFrame.size else { return preferred }
+        return NSSize(
+            width: min(preferred.width, visible.width * 0.9),
+            height: min(preferred.height, visible.height * 0.85)
+        )
     }
 
     func presentPermissionDenied() {
@@ -354,19 +369,6 @@ final class AppController: NSObject, CaptureUI {
         )
     }
 
-    /// The drag-out provider for the editor (story 45): wraps the coordinator's `ImageDragItem` in
-    /// an `NSItemProvider` so dropping onto another app yields the rendered image as a file.
-    private func dragProvider(for document: AnnotationDocument) -> NSItemProvider {
-        let item = coordinator.dragItem(for: document)
-        let provider = NSItemProvider()
-        provider.suggestedName = item.suggestedName
-        provider.registerDataRepresentation(forTypeIdentifier: item.format.utiIdentifier, visibility: .all) { completion in
-            completion(item.data, nil)
-            return nil
-        }
-        return provider
-    }
-
     private func presentSaveFailure(_ error: Error) {
         let alert = NSAlert()
         alert.messageText = "Couldn’t save the image"
@@ -381,13 +383,16 @@ final class AppController: NSObject, CaptureUI {
 
     private func makeEditorWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
+            contentRect: NSRect(origin: .zero, size: Self.editorContentSize(on: NSScreen.main)),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Lightshot"
         window.isReleasedWhenClosed = false
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(editorWindowWillClose), name: NSWindow.willCloseNotification, object: window
+        )
         return window
     }
 

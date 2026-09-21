@@ -22,24 +22,26 @@ final class EditorModel {
 
         /// SF Symbol for the palette button.
         var symbol: String { info.symbol }
-        /// Tooltip shown on hover.
+        /// Short name, shown the moment the pointer is over the button.
+        var title: String { info.title }
+        /// Longer description, for assistive technology.
         var help: String { info.help }
 
-        /// Single source for the per-tool palette metadata, so symbol and help can't
+        /// Single source for the per-tool palette metadata, so symbol, title, and help can't
         /// drift out of a case each (one switch, not one per attribute).
-        private var info: (symbol: String, help: String) {
+        private var info: (symbol: String, title: String, help: String) {
             switch self {
-            case .select: return ("arrow.up.left.and.arrow.down.right", "Select, move, and resize")
-            case .arrow: return ("arrow.up.right", "Arrow")
-            case .line: return ("line.diagonal", "Line")
-            case .rectangle: return ("rectangle", "Rectangle")
-            case .ellipse: return ("circle", "Ellipse")
-            case .freehand: return ("scribble", "Freehand")
-            case .text: return ("textformat", "Text")
-            case .step: return ("1.circle.fill", "Step marker")
-            case .highlight: return ("highlighter", "Highlighter — translucent wash, doesn't hide content")
-            case .redact: return ("eye.slash", "Redact a region (blackout, blur, or pixelate)")
-            case .crop: return ("crop", "Crop")
+            case .select: return ("arrow.up.left.and.arrow.down.right", "Select", "Select, move, and resize")
+            case .arrow: return ("arrow.up.right", "Arrow", "Arrow")
+            case .line: return ("line.diagonal", "Line", "Line")
+            case .rectangle: return ("rectangle", "Rectangle", "Rectangle")
+            case .ellipse: return ("circle", "Ellipse", "Ellipse")
+            case .freehand: return ("scribble", "Freehand", "Freehand")
+            case .text: return ("textformat", "Text", "Text")
+            case .step: return ("1.circle.fill", "Step Marker", "Step marker")
+            case .highlight: return ("highlighter", "Highlighter", "Highlighter — translucent wash, doesn't hide content")
+            case .redact: return ("eye.slash", "Redact", "Redact a region (pixelate, blur, or blackout)")
+            case .crop: return ("crop", "Crop", "Crop")
             }
         }
     }
@@ -47,14 +49,17 @@ final class EditorModel {
     private(set) var document: AnnotationDocument
     private let copy: (AnnotationDocument) -> Void
     private let done: (AnnotationDocument) -> Void
-    private let save: (AnnotationDocument) -> Void
     private let saveAs: (AnnotationDocument) -> Void
-    private let pin: (AnnotationDocument) -> Void
-    private let makeDrag: (AnnotationDocument) -> NSItemProvider
 
     var tool: Tool = .select {
         didSet {
             if tool != .select { endTextEditing() }
+            if tool == .redact {
+                // Opening the redact tool always starts a new redaction at the default style,
+                // whatever the last one (or a selected one) was showing in the picker.
+                document.select(nil)
+                redactionStyle = Self.defaultRedactionStyle
+            }
             if tool == .crop {
                 // Enter crop mode seeded with the current crop (or the whole image), and
                 // drop any element selection — crop has its own rectangle, not an element.
@@ -66,22 +71,22 @@ final class EditorModel {
         }
     }
 
-    /// Which style a new redaction uses. **Defaults to `blackout`** — the only secure
-    /// redaction (story 24): `blur`/`pixelate` merely obscure and must never be presented as
-    /// secret-safe. The toolbar surfaces this and warns when a non-secure style is chosen.
-    private(set) var redactionStyle: RedactionStyle = EditorModel.lastRedaction.style
+    /// Which style a new redaction uses. **Defaults to `pixelate`** each time the redact tool
+    /// is opened (spec 0004). Pixelate merely obscures — only `blackout` is secure redaction
+    /// (story 24) — so the toolbar keeps its "not secure" warning on it and on `blur`.
+    private(set) var redactionStyle: RedactionStyle = EditorModel.defaultRedactionStyle
 
     /// How hard a new (or the selected) `blur`/`pixelate` redaction obscures, `0...1`.
-    private(set) var redactionStrength: Double = EditorModel.lastRedaction.strength
+    private(set) var redactionStrength: Double = EditorModel.lastRedactionStrength
 
     /// Which style a new (or the selected) arrow is drawn in. Starts at the last style used.
     private(set) var arrowStyle: ArrowStyle = EditorModel.lastArrowStyle
 
-    /// The last redaction choice, shared by every editor this launch so blurring a run of
-    /// captures doesn't mean re-picking Blur each time. Deliberately not persisted: a fresh
-    /// launch always starts back at `blackout`, the only secure style (story 24).
-    private static var lastRedaction: (style: RedactionStyle, strength: Double) =
-        (.blackout, RedactionStyle.defaultStrength)
+    private static let defaultRedactionStyle: RedactionStyle = .pixelate
+
+    /// The last intensity used, shared by every editor this launch so obscuring a run of
+    /// captures doesn't mean re-setting the slider each time. Not persisted across launches.
+    private static var lastRedactionStrength: Double = RedactionStyle.defaultStrength
 
     /// The last arrow style used, remembered across launches.
     private static var lastArrowStyle: ArrowStyle {
@@ -120,18 +125,12 @@ final class EditorModel {
         document: AnnotationDocument,
         copy: @escaping (AnnotationDocument) -> Void,
         done: @escaping (AnnotationDocument) -> Void,
-        save: @escaping (AnnotationDocument) -> Void,
-        saveAs: @escaping (AnnotationDocument) -> Void,
-        pin: @escaping (AnnotationDocument) -> Void,
-        makeDrag: @escaping (AnnotationDocument) -> NSItemProvider
+        saveAs: @escaping (AnnotationDocument) -> Void
     ) {
         self.document = document
         self.copy = copy
         self.done = done
-        self.save = save
         self.saveAs = saveAs
-        self.pin = pin
-        self.makeDrag = makeDrag
     }
 
     // MARK: - Derived state for the view
@@ -289,7 +288,7 @@ final class EditorModel {
     }
 
     private func applyRedactionToSelection() {
-        Self.lastRedaction = (redactionStyle, redactionStrength)
+        Self.lastRedactionStrength = redactionStrength
         if let id = document.selectedID {
             document.setRedaction(id, style: redactionStyle, strength: redactionStrength)
         }
@@ -315,22 +314,11 @@ final class EditorModel {
     func copyToClipboard() { endTextEditing(); copy(document) }
 
     /// The finishing gesture (⌘S, LIG-23): copy the flattened document and close the editor. No
-    /// file is written — saving to disk stays on the Save button and Save As….
+    /// file is written — saving to disk stays on Save As….
     func copyAndClose() { endTextEditing(); done(document) }
-
-    /// Save to disk with the configured defaults (story 43).
-    func saveToDisk() { endTextEditing(); save(document) }
 
     /// Save to disk choosing location and format (stories 41–42).
     func saveToDiskAs() { endTextEditing(); saveAs(document) }
-
-    /// Pin the flattened document as an always-on-top floating window (stories 46–49), committing
-    /// any in-flight text first so the pin reflects what's on screen.
-    func pinToDesktop() { endTextEditing(); pin(document) }
-
-    /// The drag-out payload for the current document (story 45), committing any in-flight text
-    /// first so the dragged image reflects what's on screen.
-    func dragProvider() -> NSItemProvider { endTextEditing(); return makeDrag(document) }
 
     // MARK: - Z-order (story 33)
 

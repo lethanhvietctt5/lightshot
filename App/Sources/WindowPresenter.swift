@@ -3,9 +3,9 @@ import AppKit
 /// The one way Lightshot brings a standard window (settings, history, onboarding, editor) or a
 /// modal to the front (LIG-23).
 ///
-/// Lightshot is an `LSUIElement` app — no Dock icon — so a window that opens behind the frontmost
-/// app is genuinely hard to find. Every call site goes through here instead of repeating its own
-/// activation, so none of them can forget a step.
+/// Lightshot is an `LSUIElement` app — no Dock icon except while the editor is open (spec 0004) —
+/// so a window that opens behind the frontmost app is genuinely hard to find. Every call site goes
+/// through here instead of repeating its own activation, so none of them can forget a step.
 @MainActor
 enum WindowPresenter {
 

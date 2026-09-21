@@ -43,9 +43,9 @@ public enum ArrowStyle: Equatable, Sendable, CaseIterable {
     case standard
     /// Tapered shaft, sharp swept-back (barbed) head.
     case fancy
-    /// Even stroke with an open head at the tip; bendable.
+    /// The `standard` arrow's taper and solid head on a shaft that can be bent; drawn straight.
     case curved
-    /// Even stroke with an open head at both ends; bendable.
+    /// The `standard` arrow's solid head at both ends of a bendable shaft; drawn straight.
     case double
 
     /// Whether the style follows a bend point. Straight styles never carry one.
