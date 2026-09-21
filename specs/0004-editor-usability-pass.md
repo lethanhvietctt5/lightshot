@@ -1,0 +1,52 @@
+# Spec 0004 — Editor Usability Pass
+
+**Status:** implemented on branch, not yet tracked in Linear
+**Linear:** _none yet — create the issue and link it here_
+**Platform:** Native macOS (Swift / SwiftUI), macOS 14+
+**Scope:** Local-only. Editor window, toolbar, and two tool defaults. Amends Specs 0001, 0002 (window fronting) and 0003; adds no new seams.
+
+Vocabulary used here is defined in [`CONTEXT.md`](../CONTEXT.md).
+
+---
+
+## Problem Statement
+
+The editor opens small, with the image jammed against the window edges and a toolbar crowded with small buttons I rarely use. With no Dock icon I lose the editor behind other windows. I almost always pixelate rather than black out, and a curved arrow arrives already bowed and in a different look from the standard arrow, so I have to fix it before I can use it.
+
+## Solution
+
+The editor opens larger, keeps clear space around the image, and shows Lightshot in the Dock while it is open. The toolbar is two rows: big tool buttons and three actions — **Save As…**, **Copy**, **Done** — on top, the style controls for the active tool beneath. The redact tool starts at **Pixelate** every time. **Curved** and **double** arrows are the standard arrow with a bend handle — double with a head at both ends: drawn straight, bent on demand. Tool names appear the instant the pointer is over a button.
+
+## User Stories
+
+1. As a user, I want the editor to open at a roomy size, so that I can work without resizing first. It never opens larger than the screen allows.
+2. As a user, I want clear space between the image and the window edges, so that the image and the handles on its border are easy to see and grab.
+3. As a user, I want Lightshot in the Dock and the ⌘-Tab switcher while the editor is open, so that I can get back to it like any other app. When the editor closes, Lightshot is menu-bar-only again.
+4. As a user, I want the editor's only actions to be Save As…, Copy, and Done, so that the toolbar is about finishing, not managing.
+5. As a user, I want undo, redo, delete, and z-order to keep their standard keys (⌘Z, ⇧⌘Z, ⌫, ⌘[, ⌘]) even without buttons, so that I can still fix a mistake.
+6. As a user, I want larger tool and arrow-style buttons whose whole area is clickable, so that I hit the tool I aim for.
+7. As a user, I want the redact tool to start at Pixelate whenever I open it, so that my usual redaction is one drag away — while blur and pixelate stay labelled "not secure".
+8. As a user, I want a curved arrow to look exactly like the standard arrow and to be drawn straight, so that it only curves when I drag its bend handle. The taper and head follow the curve once bent.
+9. As a user, I want a double arrow to carry that same solid head at both ends, drawn straight and bendable the same way, so that the two bendable styles behave alike.
+10. As a user, I want a tool's name to appear the moment I hover its button, so that I can learn the icon-only palette by sweeping across it instead of waiting on each icon.
+
+## Implementation Decisions
+
+- **Window.** Opens at 1180×800, capped to 90% × 85% of the screen's visible frame. Minimum content size 760×520.
+- **Padding.** `CanvasProjection(imageSize:viewSize:inset:)` fits the image inside the view shrunk by `inset` on every side (24 pt in the editor). The canvas itself still spans the full area, so handles on the image border draw and hit-test in the margin.
+- **Dock.** `openEditor` sets the activation policy to `.regular` before presenting; the editor window's `willClose` returns it to `.accessory`. This **reverses Spec 0002's "activation policy is unchanged"** for the editor only — settings, history, and onboarding still open as accessory windows through `WindowPresenter`.
+- **App icon.** `App/Resources/Assets.xcassets/AppIcon.appiconset` (16–512 pt, 1x/2x), wired through `ASSETCATALOG_COMPILER_APPICON_NAME` in `project.yml`. The artwork sits on the macOS icon grid — an 824 px body centred in the 1024 px canvas — so it matches its Dock neighbours in size.
+- **Actions.** Removed from the editor: Send Backward, Bring Forward, Delete, Undo, Redo, drag-out, Save (default location), Pin. Save and Pin remain on the post-capture toolbar and pins; the drag-out seam (`AppCoordinator.dragItem`) stays in the kit, unused by the editor. The five editing commands survive as invisible key-equivalent buttons. **Reset Crop** stays: it is a contextual control of the crop tool, shown only while a crop is in effect.
+- **Redaction default.** Selecting the redact tool clears the selection and sets the style to `pixelate`. The intensity is still remembered for the launch; the last *style* no longer is. **Amends Spec 0001's "default to blackout" and Spec 0003 story 15.** The guardrail is unchanged: only blackout is secure, and blur/pixelate keep the "Not secure — visual only" warning.
+- **Curved arrow.** `arrowShape` draws `.curved` as the standard taper laid along the quadratic through the bend: shaft edges are the curve offset by a half-width growing from tail to neck; the head sits where the curve is one head-length short of the tip and points along that chord. With the bend on the midpoint the outline is the standard arrow's. `defaultArrowBend` is the midpoint, so both bendable styles (curved, double) start straight. **Amends Spec 0003 story 5.** `.double` is the same construction with a second head on the tail and a shaft of constant width (the width at which the standard shaft meets its head); each head takes at most 40% of a short arrow so the two never meet. The stroked open-head look is gone. The picker's curved/double glyphs stay bowed so the styles read as bendable.
+- **Instant tooltips.** Tool and arrow-style buttons show a short title in a tag hung below the button on `onHover`, replacing the delayed system `.help` tooltip there; the longer description moves to the accessibility hint. The toolbar rows are z-ordered above what follows so the tag isn't covered.
+
+## Testing Decisions
+
+- `ArrowGeometryTests`: an unbent curved arrow has every corner of the standard outline and its shaft points lie on the standard arrow's edges; a new bendable arrow's bend is the midpoint; the head's barbs rotate with the tangent; a bent arrow still widens tail → neck → head and leaves the chord; a double arrow has the standard head at the tip and its mirror image at the tail, and a short one keeps each head on its own half.
+- `CanvasProjectionTests`: an inset fits the image to the inner area and offsets it; an inset larger than the view degrades to the zero-scale projection.
+- The app shell has no unit tests; window size, padding, Dock presence, the three actions, key equivalents, the Pixelate default, instant tooltips, and drawing/bending curved and double arrows were verified by hand against a debug build.
+
+## Out of Scope
+
+- Main-menu commands (Edit ▸ Undo etc.) wired to the editor.

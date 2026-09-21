@@ -79,7 +79,7 @@ Takes a few minutes and needs no Apple Developer account.
 
 ### Grant Screen Recording
 
-Lightshot is a **menu-bar app** — it has no Dock icon or main window. Look for its icon in the menu bar.
+Lightshot is a **menu-bar app** — it has no main window, and appears in the Dock only while the editor is open. Look for its icon in the menu bar.
 
 On first launch, follow the in-app onboarding to allow **Screen Recording** in **System Settings → Privacy & Security → Screen & System Audio Recording** (named **Screen Recording** on macOS 14), then relaunch Lightshot if macOS asks. This is the only permission Lightshot needs; without it captures come back black or empty.
 

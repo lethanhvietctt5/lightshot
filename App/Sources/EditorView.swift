@@ -15,15 +15,9 @@ struct EditorView: View {
         document: AnnotationDocument,
         onCopy: @escaping (AnnotationDocument) -> Void,
         onDone: @escaping (AnnotationDocument) -> Void,
-        onSave: @escaping (AnnotationDocument) -> Void,
-        onSaveAs: @escaping (AnnotationDocument) -> Void,
-        onPin: @escaping (AnnotationDocument) -> Void,
-        onDrag: @escaping (AnnotationDocument) -> NSItemProvider
+        onSaveAs: @escaping (AnnotationDocument) -> Void
     ) {
-        _model = State(initialValue: EditorModel(
-            document: document, copy: onCopy, done: onDone, save: onSave, saveAs: onSaveAs, pin: onPin,
-            makeDrag: onDrag
-        ))
+        _model = State(initialValue: EditorModel(document: document, copy: onCopy, done: onDone, saveAs: onSaveAs))
     }
 
     var body: some View {
@@ -31,44 +25,67 @@ struct EditorView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
+            optionsBar
+            Divider()
             canvas
         }
-        .frame(minWidth: 640, minHeight: 460)
+        .background { editingShortcuts }
+        .frame(minWidth: 760, minHeight: 520)
     }
 
     // MARK: - Toolbar
 
+    /// Top row: the tools on the left, the output actions on the right.
     private var toolbar: some View {
         HStack(spacing: 12) {
             toolPalette
-            Divider().frame(height: 20)
-            styleControls
-            arrowControls
-            redactionControls
-            if model.canResetCrop {
-                Button("Reset Crop") { model.resetCrop() }
-                    .help("Restore the full image (⌘Z also reverses)")
-            }
             Spacer()
-            historyControls
+            outputActions
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+        // Tooltips hang below their buttons, over the rows that follow.
+        .zIndex(2)
+    }
+
+    /// Second row: the style controls for the active tool or selection. Kept off the tool row
+    /// so the larger tool buttons and the contextual pickers both fit at the minimum width.
+    private var optionsBar: some View {
+        HStack(spacing: 12) {
+            styleControls
+            arrowControls
+            redactionControls
+            if model.canResetCrop {
+                Divider().frame(height: 20)
+                Button("Reset Crop") { model.resetCrop() }
+                    .help("Restore the full image (⌘Z also reverses)")
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(.bar)
+        .zIndex(1)
     }
 
     private var toolPalette: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             ForEach(EditorModel.Tool.allCases) { tool in
                 Button {
                     model.selectTool(tool)
                 } label: {
                     Image(systemName: tool.symbol)
-                        .frame(width: 26, height: 22)
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: Self.toolButtonSize.width, height: Self.toolButtonSize.height)
+                        // The whole button is the target, not just the glyph's painted pixels.
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(model.tool == tool ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                .help(tool.help)
+                .background(model.tool == tool ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                .instantTooltip(tool.title)
+                .accessibilityLabel(tool.title)
+                .accessibilityHint(tool.help)
             }
         }
     }
@@ -111,25 +128,29 @@ struct EditorView: View {
     private var arrowControls: some View {
         if model.showsArrowControls {
             Divider().frame(height: 20)
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 ForEach(ArrowStyle.allCases, id: \.self) { arrowStyle in
                     Button {
                         model.setArrowStyle(arrowStyle)
                     } label: {
-                        ArrowStyleIcon(style: arrowStyle).frame(width: 30, height: 22)
+                        ArrowStyleIcon(style: arrowStyle)
+                            .frame(width: 40, height: 28)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .background(model.arrowStyle == arrowStyle ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                    .help(arrowStyle.help)
+                    .background(model.arrowStyle == arrowStyle ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .instantTooltip(arrowStyle.title)
+                    .accessibilityLabel(arrowStyle.title)
+                    .accessibilityHint(arrowStyle.help)
                 }
             }
         }
     }
 
     /// The redaction style picker and strength slider, shown while the redact tool is active
-    /// or a redaction is selected (which they restyle in place). Blackout is the default and
-    /// the only style framed as secure; blur/pixelate carry an explicit "not secure" warning
-    /// so they are never mistaken for secret-safe redaction (story 24).
+    /// or a redaction is selected (which they restyle in place). Pixelate is the default, but
+    /// blackout is the only style framed as secure; blur/pixelate carry an explicit "not
+    /// secure" warning so they are never mistaken for secret-safe redaction (story 24).
     @ViewBuilder
     private var redactionControls: some View {
         if model.showsRedactionControls {
@@ -137,11 +158,12 @@ struct EditorView: View {
             Picker("Redaction style", selection: Binding(
                 get: { model.redactionStyle }, set: { model.setRedactionStyle($0) }
             )) {
-                Text("Blackout").tag(RedactionStyle.blackout)
-                Text("Blur").tag(RedactionStyle.blur)
                 Text("Pixelate").tag(RedactionStyle.pixelate)
+                Text("Blur").tag(RedactionStyle.blur)
+                Text("Blackout").tag(RedactionStyle.blackout)
             }
             .pickerStyle(.segmented)
+            .controlSize(.large)
             .labelsHidden()
             .fixedSize()
             .help(redactionHelp)
@@ -184,70 +206,59 @@ struct EditorView: View {
         }
     }
 
-    private var historyControls: some View {
-        HStack(spacing: 6) {
-            Button { model.sendBackward() } label: { Image(systemName: "square.2.layers.3d.bottom.filled") }
-                .disabled(!model.hasSelection)
-                .keyboardShortcut("[", modifiers: .command)
-                .help("Send backward (⌘[)")
-
-            Button { model.bringForward() } label: { Image(systemName: "square.2.layers.3d.top.filled") }
-                .disabled(!model.hasSelection)
-                .keyboardShortcut("]", modifiers: .command)
-                .help("Bring forward (⌘])")
-
-            Divider().frame(height: 20)
-
-            Button { model.deleteSelection() } label: { Image(systemName: "trash") }
-                .disabled(!model.hasSelection)
-                .keyboardShortcut(.delete, modifiers: [])
-                .help("Delete selection")
-
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .disabled(!model.canUndo)
-                .keyboardShortcut("z", modifiers: .command)
-                .help("Undo")
-
-            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .disabled(!model.canRedo)
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-                .help("Redo")
-
-            Image(systemName: "arrow.up.forward.square")
-                .frame(width: 26, height: 22)
-                .contentShape(Rectangle())
-                .help("Drag the rendered image into another app")
-                .onDrag { model.dragProvider() }
-
-            Button { model.saveToDisk() } label: { Image(systemName: "square.and.arrow.down") }
-                .help("Save to disk")
-
-            Button { model.saveToDiskAs() } label: { Image(systemName: "square.and.arrow.down.on.square") }
+    /// The editor's only visible actions (spec 0004): Save As…, Copy, Done.
+    private var outputActions: some View {
+        HStack(spacing: 8) {
+            Button("Save As…") { model.saveToDiskAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .help("Save As… (⇧⌘S)")
-
-            Button { model.pinToDesktop() } label: { Image(systemName: "pin") }
-                .keyboardShortcut("p", modifiers: .command)
-                .help("Pin as a floating window (⌘P)")
 
             Button("Copy") { model.copyToClipboard() }
                 .keyboardShortcut("c", modifiers: .command)
                 .help("Copy to clipboard (⌘C)")
 
             // ⌘S is the finishing gesture (LIG-23): the image lands on the clipboard and the editor
-            // gets out of the way. It never writes a file — that's Save / Save As….
+            // gets out of the way. It never writes a file — that's Save As….
             Button("Done") { model.copyAndClose() }
                 .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)
                 .help("Copy to clipboard and close (⌘S)")
         }
+        .controlSize(.large)
+    }
+
+    /// The editing commands that lost their toolbar buttons (spec 0004) but keep their standard
+    /// keys, so a mistake can still be undone or deleted. Invisible and out of the layout.
+    private var editingShortcuts: some View {
+        Group {
+            Button("Undo") { model.undo() }
+                .disabled(!model.canUndo)
+                .keyboardShortcut("z", modifiers: .command)
+            Button("Redo") { model.redo() }
+                .disabled(!model.canRedo)
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+            Button("Delete") { model.deleteSelection() }
+                .disabled(!model.hasSelection)
+                .keyboardShortcut(.delete, modifiers: [])
+            Button("Send Backward") { model.sendBackward() }
+                .disabled(!model.hasSelection)
+                .keyboardShortcut("[", modifiers: .command)
+            Button("Bring Forward") { model.bringForward() }
+                .disabled(!model.hasSelection)
+                .keyboardShortcut("]", modifiers: .command)
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
 
     // MARK: - Canvas
 
     private var canvas: some View {
         GeometryReader { geo in
-            let projection = CanvasProjection(imageSize: model.baseSize, viewSize: Size(geo.size))
+            let projection = CanvasProjection(
+                imageSize: model.baseSize, viewSize: Size(geo.size), inset: Self.canvasInset
+            )
             let fitted = projection.toView(model.imageBounds).cgRect
 
             ZStack(alignment: .topLeading) {
@@ -329,6 +340,10 @@ struct EditorView: View {
     }
 
     private var nsImage: NSImage? { NSImage(data: model.document.baseImage.data) }
+
+    private static let toolButtonSize = CGSize(width: 36, height: 32)
+    /// Clear space kept between the image and the canvas edges, in points.
+    private static let canvasInset: Double = 24
 }
 
 // MARK: - Element drawing
@@ -437,6 +452,40 @@ private func draw(_ shape: ArrowShape, color: Color, into context: GraphicsConte
     }
 }
 
+/// A name tag shown under a control the instant the pointer is over it — the system `.help`
+/// tooltip waits over a second, too long to learn an icon-only palette by sweeping across it.
+private struct InstantTooltip: ViewModifier {
+    let text: String
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { isHovered = $0 }
+            .overlay(alignment: .bottom) {
+                if isHovered {
+                    // A zero-size anchor on the control's bottom edge; the tag hangs from it, so
+                    // it sits just below the control instead of covering it.
+                    Color.clear.frame(width: 0, height: 0).overlay(alignment: .top) {
+                        Text(text)
+                            .font(.caption)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
+                            .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                            .fixedSize()
+                            .padding(.top, 4)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
+    }
+}
+
+private extension View {
+    func instantTooltip(_ text: String) -> some View { modifier(InstantTooltip(text: text)) }
+}
+
 /// A toolbar glyph for an arrow style, drawn with the canvas's own arrow geometry.
 private struct ArrowStyleIcon: View {
     let style: ArrowStyle
@@ -445,9 +494,12 @@ private struct ArrowStyleIcon: View {
         Canvas { context, size in
             let tail = Point(x: 4, y: Double(size.height) - 6)
             let tip = Point(x: Double(size.width) - 4, y: 6)
+            // New bendable arrows start straight; the glyph still bows so the style reads as bendable.
+            let mid = arrowMidpoint(tail, tip)
+            let bow = Point(x: mid.x - (tip.y - tail.y) * 0.18, y: mid.y + (tip.x - tail.x) * 0.18)
             let shape = arrowShape(
-                from: tail, to: tip, bend: style.isBendable ? defaultArrowBend(from: tail, to: tip) : nil,
-                style: style, lineWidth: style.isBendable ? 1.8 : 2.4
+                from: tail, to: tip, bend: style.isBendable ? bow : nil,
+                style: style, lineWidth: 2.4
             )
             draw(shape, color: .primary, into: context)
         }
@@ -455,12 +507,21 @@ private struct ArrowStyleIcon: View {
 }
 
 private extension ArrowStyle {
+    var title: String {
+        switch self {
+        case .standard: return "Standard"
+        case .fancy: return "Fancy"
+        case .curved: return "Curved"
+        case .double: return "Double"
+        }
+    }
+
     var help: String {
         switch self {
         case .standard: return "Standard arrow"
         case .fancy: return "Fancy arrow"
-        case .curved: return "Curved arrow — drag its middle handle to bend it"
-        case .double: return "Double-headed arrow — drag its middle handle to bend it"
+        case .curved: return "Curved arrow — drawn straight; drag its middle handle to bend it"
+        case .double: return "Double-headed arrow — drawn straight; drag its middle handle to bend it"
         }
     }
 }

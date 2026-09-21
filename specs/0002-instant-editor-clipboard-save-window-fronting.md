@@ -3,6 +3,7 @@
 **Status:** ready-for-agent
 **Linear:** [LIG-23](https://linear.app/light-shot/issue/LIG-23/instant-editor-on-selection-release-s-copies-to-clipboard-windows-open)
 **Platform:** Native macOS (Swift / SwiftUI), macOS 14+ (ScreenCaptureKit)
+**Amended by:** [Spec 0004](0004-editor-usability-pass.md) — the editor now shows a Dock icon while open (story 42 and "activation policy is unchanged" no longer hold for the editor).
 **Scope:** Local-only. Three capture-flow polish changes on top of Spec 0001. No new features, no new seams.
 
 ---

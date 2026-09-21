@@ -29,6 +29,7 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: App/Sources
+      - path: App/Resources/Assets.xcassets
     # Signing lives in the xcconfig (unsigned by default, overridable per machine via a
     # gitignored Local.xcconfig) — do not set CODE_SIGN* keys below, they would win.
     configFiles:
@@ -40,6 +41,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.lightshot.app
         INFOPLIST_FILE: App/Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "0.0.1"
         CURRENT_PROJECT_VERSION: "1"
     dependencies:

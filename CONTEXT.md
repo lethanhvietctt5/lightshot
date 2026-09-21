@@ -11,11 +11,11 @@ A pointer from a tail to a tip. It is straight unless its arrow style is bendabl
 _Avoid_: Pointer, connector
 
 **Arrow style**:
-How an arrow is drawn: **standard** (tapered shaft, solid soft-cornered head), **fancy** (tapered shaft, sharp swept-back head), **curved** (even stroke, open head), or **double** (even stroke, open head at both ends).
+How an arrow is drawn: **standard** (tapered shaft, solid soft-cornered head), **fancy** (tapered shaft, sharp swept-back head), **curved** (the standard arrow on a bendable shaft), or **double** (the standard head at both ends of a bendable shaft).
 _Avoid_: Arrow type, arrowhead
 
 **Bendable**:
-An arrow style whose shaft can curve — curved and double. Standard and fancy arrows are never bent.
+An arrow style whose shaft can curve — curved and double. Both are drawn straight and curve only once their bend is dragged. Standard and fancy arrows are never bent.
 
 **Bend**:
 The point a bendable arrow's shaft passes through at its middle. It lies *on* the shaft, not off to the side of it.

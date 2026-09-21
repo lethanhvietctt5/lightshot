@@ -157,8 +157,8 @@ public struct AnnotationDocument: Equatable, Sendable {
     }
 
     /// Redraws an arrow in `style`, keeping its tail and tip. No-op if `id` is not an arrow.
-    /// Only bendable styles carry a bend: switching to one gives a straight arrow the
-    /// default arc, and switching away drops the bend so the shaft is straight again.
+    /// Only bendable styles carry a bend: switching to one gives a straight arrow a bend at
+    /// rest on its midpoint (still straight), and switching away drops the bend.
     public mutating func setArrowStyle(_ id: ElementID, _ style: ArrowStyle) {
         withElement(id) { element in
             guard case let .arrow(from, to, bend, _) = element.kind else { return }

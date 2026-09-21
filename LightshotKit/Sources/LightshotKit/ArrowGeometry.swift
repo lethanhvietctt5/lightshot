@@ -38,11 +38,10 @@ public func arrowMidpoint(_ a: Point, _ b: Point) -> Point {
     Point(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
 }
 
-/// The bend a freshly drawn bendable arrow starts with: a gentle arc (bowing upward for an
-/// arrow drawn right-to-left), so the style reads as curved the moment it is drawn.
+/// The bend a freshly drawn bendable arrow starts with: the shaft's midpoint, so the arrow
+/// is drawn straight and only curves once its bend handle is dragged.
 public func defaultArrowBend(from: Point, to: Point) -> Point {
-    let mid = arrowMidpoint(from, to)
-    return Point(x: mid.x - (to.y - from.y) * defaultBendRatio, y: mid.y + (to.x - from.x) * defaultBendRatio)
+    arrowMidpoint(from, to)
 }
 
 /// The shaft's centerline as a polyline — two points when straight, a sampled quadratic
@@ -70,8 +69,8 @@ public func arrowShape(
     case .standard, .fancy:
         return taperedArrow(from: from, to: to, length: length, fancy: style == .fancy, lineWidth: lineWidth)
     case .curved, .double:
-        return strokedArrow(from: from, to: to, bend: bend, length: length,
-                            bothEnds: style == .double, lineWidth: lineWidth)
+        return bentTaperedArrow(from: from, to: to, bend: bend, length: length,
+                                bothEnds: style == .double, lineWidth: lineWidth)
     }
 }
 
@@ -114,31 +113,86 @@ private func taperedArrow(from: Point, to: Point, length: Double, fancy: Bool, l
     )
 }
 
-/// An even stroke along the (possibly bent) shaft with an open two-stroke head at the tip,
-/// and at the tail too when `bothEnds`. Each head follows the shaft's tangent where it ends.
-private func strokedArrow(
+/// The `standard` arrow laid along a (possibly bent) shaft: the same thin-tail-to-solid-head
+/// taper and softened corners, so an unbent one is the standard arrow exactly. The shaft's
+/// edges follow the curve; the head sits on its end, pointing the way the shaft arrives.
+/// With `bothEnds` the tail carries the same solid head, and the shaft between the two keeps
+/// the width at which the standard shaft meets its head.
+private func bentTaperedArrow(
     from: Point, to: Point, bend: Point?, length: Double, bothEnds: Bool, lineWidth: Double
 ) -> ArrowShape {
     let control = bendControl(from: from, to: to, bend: bend ?? arrowMidpoint(from, to))
-    let arm = min(lineWidth * 4, length * 0.5)
+    // Sizes match `taperedArrow`'s non-fancy head; two heads each get a smaller share of a
+    // short arrow so they never meet.
+    let head = min(lineWidth * 5, length * (bothEnds ? 0.4 : 0.6))
+    let rounding = head * 0.1
+    let headHalf = head * 0.5
+    let shaftHalf = head * 0.17
+    let tailHalf = bothEnds ? shaftHalf : head * 0.04
+    let inset = rounding / 2
 
-    /// The two-stroke open head at `tip`, pointing away from `toward`.
-    func head(at tip: Point, comingFrom toward: Point) -> [PathElement] {
-        var dx = tip.x - toward.x, dy = tip.y - toward.y
-        var d = (dx * dx + dy * dy).squareRoot()
-        if d == 0 { dx = to.x - from.x; dy = to.y - from.y; d = length }
-        let t = Point(x: dx / d, y: dy / d)
-        // Arms sweep back from the tip at ±45° to the tangent.
-        let k = arm * 0.5.squareRoot()
-        let left = Point(x: tip.x - (t.x - t.y) * k, y: tip.y - (t.y + t.x) * k)
-        let right = Point(x: tip.x - (t.x + t.y) * k, y: tip.y - (t.y - t.x) * k)
-        return [.move(left), .line(tip), .line(right)]
+    func curve(_ t: Double) -> Point {
+        let a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t
+        return Point(x: a * from.x + b * control.x + c * to.x, y: a * from.y + b * control.y + c * to.y)
+    }
+    /// Unit tangent of the curve at `t`, falling back to the chord where the curve stalls.
+    func tangent(_ t: Double) -> Point {
+        let dx = (1 - t) * (control.x - from.x) + t * (to.x - control.x)
+        let dy = (1 - t) * (control.y - from.y) + t * (to.y - control.y)
+        let d = (dx * dx + dy * dy).squareRoot()
+        return d > 0 ? Point(x: dx / d, y: dy / d) : Point(x: (to.x - from.x) / length, y: (to.y - from.y) / length)
+    }
+    /// Where a head's base sits: the curve parameter one head-length short of `end` — the
+    /// nearest such crossing walking away from that end, refined by bisection.
+    func neckParameter(atTip: Bool) -> Double {
+        let end = atTip ? to : from
+        var outside = atTip ? 0.0 : 1.0, inside = atTip ? 1.0 : 0.0
+        for i in 1...centerlineSamples {
+            let step = Double(i) / Double(centerlineSamples)
+            let t = atTip ? 1 - step : step
+            if curve(t).distance(to: end) >= head { outside = t; break }
+            inside = t
+        }
+        for _ in 0..<24 {
+            let mid = (outside + inside) / 2
+            if curve(mid).distance(to: end) >= head { outside = mid } else { inside = mid }
+        }
+        return outside
+    }
+    /// A solid head based at `neck` and pointing at `end`: barb, tip, barb. As in
+    /// `taperedArrow`, the tip is pulled in by the rounding stroke's overhang.
+    func headOutline(neck: Point, end: Point) -> [PathElement] {
+        let d = max(neck.distance(to: end), .leastNonzeroMagnitude)
+        let u = Point(x: (end.x - neck.x) / d, y: (end.y - neck.y) / d)
+        let p = Point(x: -u.y, y: u.x)
+        return [
+            .line(Point(x: neck.x + p.x * headHalf, y: neck.y + p.y * headHalf)),
+            .line(Point(x: end.x - u.x * inset, y: end.y - u.y * inset)),
+            .line(Point(x: neck.x - p.x * headHalf, y: neck.y - p.y * headHalf)),
+        ]
     }
 
-    var path: [PathElement] = [.move(from), .quadCurve(to: to, control: control)]
-    path += head(at: to, comingFrom: control)
-    if bothEnds { path += head(at: from, comingFrom: control) }
-    return ArrowShape(path: path, paint: .stroke(width: lineWidth))
+    // Shaft edges: offset the curve either side, from the tail (or the tail head's base) to
+    // the tip head's base, widening along the way when the tail is bare.
+    let tipT = neckParameter(atTip: true)
+    let tailT = bothEnds ? neckParameter(atTip: false) : inset / length
+    var left: [Point] = [], right: [Point] = []
+    for i in 0...centerlineSamples {
+        let f = Double(i) / Double(centerlineSamples)
+        let t = tailT + (tipT - tailT) * f
+        let c = curve(t), dir = tangent(t)
+        let half = tailHalf + (shaftHalf - tailHalf) * f
+        left.append(Point(x: c.x - dir.y * half, y: c.y + dir.x * half))
+        right.append(Point(x: c.x + dir.y * half, y: c.y - dir.x * half))
+    }
+
+    var path: [PathElement] = [.move(left[0])]
+    path += left.dropFirst().map { .line($0) }
+    path += headOutline(neck: curve(tipT), end: to)
+    path += right.reversed().map { .line($0) }
+    if bothEnds { path += headOutline(neck: curve(tailT), end: from) }
+    path.append(.close)
+    return ArrowShape(path: path, paint: .fill(rounding: rounding))
 }
 
 // MARK: - Bend math
@@ -166,6 +220,4 @@ func carriedBend(_ bend: Point, from: Point, to: Point, newFrom: Point, newTo: P
     return Point(x: newFrom.x + along * nv.x - across * nv.y, y: newFrom.y + along * nv.y + across * nv.x)
 }
 
-/// How far a new bendable arrow bows, as a fraction of its length.
-private let defaultBendRatio: Double = 0.18
 private let centerlineSamples = 16
