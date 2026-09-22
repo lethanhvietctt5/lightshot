@@ -313,10 +313,12 @@ final class AppController: NSObject, CaptureUI {
         let window = settingsWindow ?? makeSettingsWindow()
         if window.contentViewController == nil {
             let hosting = NSHostingController(rootView: SettingsView(model: settingsModel))
+            // The pane's name becomes the window title, shown in the toolbar beside the sidebar.
+            hosting.sceneBridgingOptions = [.title, .toolbars]
+            // The window keeps the size set here; the panes scroll.
+            hosting.sizingOptions = []
             window.contentViewController = hosting
-            // Size to the form before centering — the hosting controller otherwise grows the window
-            // after `center()` has already placed it, leaving it off-center.
-            window.setContentSize(hosting.view.fittingSize)
+            window.setContentSize(NSSize(width: 820, height: 640))
             window.center()
         }
         settingsWindow = window
@@ -735,16 +737,19 @@ final class AppController: NSObject, CaptureUI {
         return window
     }
 
-    /// The settings window: titled and closable only — `SettingsView` lays itself out at a fixed
-    /// width and its own height, and the hosting controller sizes the window to fit.
+    /// The settings window, shaped like CleanShot's (LIG-44): the sidebar runs under a transparent
+    /// title bar, and a unified toolbar carries the selected pane's name.
     private func makeSettingsWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 600),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 820, height: 640),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "Lightshot Settings"
+        window.titlebarAppearsTransparent = true
+        window.toolbar = NSToolbar(identifier: "settings")
+        window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
         return window
     }

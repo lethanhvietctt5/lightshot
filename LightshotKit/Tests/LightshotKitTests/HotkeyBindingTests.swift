@@ -91,3 +91,11 @@ import Foundation
     // …but re-assigning it to the action that already owns it is not a self-clash.
     #expect(bindings.conflictingAction(for: chord, excluding: .area) == nil)
 }
+
+@Test func aChordSavedWithShiftsSymbolReadsAsItsDigit() {
+    // Recorded before the recorder asked for the unshifted key: ⇧⌘4 was stored as "$".
+    #expect(HotkeyBinding(keyCode: 21, modifiers: [.shift, .command], keyLabel: "$").displayString == "⇧⌘4")
+    #expect(HotkeyBinding(keyCode: 29, modifiers: [.shift, .option], keyLabel: ")").displayString == "⌥⇧0")
+    // Without Shift the symbol is what was pressed, so it stays.
+    #expect(HotkeyBinding(keyCode: 21, modifiers: [.command], keyLabel: "$").displayString == "⌘$")
+}
