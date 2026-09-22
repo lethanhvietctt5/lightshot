@@ -10,6 +10,9 @@ import LightshotKit
 struct EditorView: View {
     @State private var model: EditorModel
     @FocusState private var textFieldFocused: Bool
+    /// Keyboard focus of the font-size field. It must not hold focus while the user draws or
+    /// presses ⌫ / ⌘Z, so the canvas and the tool buttons take it back.
+    @FocusState private var fontSizeFocused: Bool
 
     init(
         document: AnnotationDocument,
@@ -73,6 +76,7 @@ struct EditorView: View {
         HStack(spacing: 4) {
             ForEach(EditorModel.Tool.allCases) { tool in
                 Button {
+                    fontSizeFocused = false
                     model.selectTool(tool)
                 } label: {
                     Image(systemName: tool.symbol)
@@ -88,6 +92,19 @@ struct EditorView: View {
                 .accessibilityHint(tool.help)
             }
         }
+    }
+
+    /// The number typed into the font-size field; applied on Return, clamped to `fontSizeRange`.
+    @State private var fontSizeEntry: Double = Style.default.fontSize
+    @State private var initialFocusSettled = false
+    private static let fontSizeRange: ClosedRange<Double> = 6...200
+
+    private func commitFontSizeEntry() {
+        let size = min(max(fontSizeEntry.rounded(), Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
+        fontSizeEntry = size
+        model.setFontSize(size)
+        model.commitStyleEdit()
+        fontSizeFocused = false
     }
 
     @ViewBuilder
@@ -112,14 +129,23 @@ struct EditorView: View {
 
         HStack(spacing: 4) {
             Image(systemName: "textformat.size").foregroundStyle(.secondary)
-            Slider(
-                value: Binding(get: { model.style.fontSize }, set: { model.setFontSize($0) }),
-                in: 9...96,
-                onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
-            )
-            .frame(width: 90)
+            TextField("Size", value: $fontSizeEntry, format: .number.precision(.fractionLength(0)))
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 48)
+                .focused($fontSizeFocused)
+                .onSubmit { commitFontSizeEntry() }
+                .onChange(of: model.style.fontSize) { _, size in fontSizeEntry = size }
+                .onAppear { fontSizeEntry = model.style.fontSize }
+                // AppKit hands a fresh key window's focus to its first text field; give it
+                // back (once) so ⌫ / ⌘Z reach the canvas until the field is clicked.
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+                    guard !initialFocusSettled else { return }
+                    initialFocusSettled = true
+                    DispatchQueue.main.async { fontSizeFocused = false }
+                }
         }
-        .help("Font size")
+        .help("Font size (points in the image)")
     }
 
     /// The arrow style picker, shown while drawing arrows or with one selected (which it
@@ -304,6 +330,7 @@ struct EditorView: View {
     private func dragGesture(projection: CanvasProjection) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                if fontSizeFocused { fontSizeFocused = false }
                 model.gestureChanged(at: projection.toImage(Point(value.location)))
             }
             .onEnded { value in

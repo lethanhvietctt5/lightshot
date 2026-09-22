@@ -41,6 +41,18 @@ The editor opens larger, keeps clear space around the image, and shows Lightshot
 - **Curved arrow.** `arrowShape` draws `.curved` as the standard taper laid along the quadratic through the bend: shaft edges are the curve offset by a half-width growing from tail to neck; the head sits where the curve is one head-length short of the tip and points along that chord. With the bend on the midpoint the outline is the standard arrow's. `defaultArrowBend` is the midpoint, so both bendable styles (curved, double) start straight. **Amends Spec 0003 story 5.** `.double` is the same construction with a second head on the tail and a shaft of constant width (the width at which the standard shaft meets its head); each head takes at most 40% of a short arrow so the two never meet. The stroked open-head look is gone. The picker's curved/double glyphs stay bowed so the styles read as bendable.
 - **Instant tooltips.** Tool and arrow-style buttons show a short title in a tag hung below the button on `onHover`, replacing the delayed system `.help` tooltip there; the longer description moves to the accessibility hint. The toolbar rows are z-ordered above what follows so the tag isn't covered.
 
+## Follow-up (2026-09-22): tools stay put, bigger defaults, typed font size — [LIG-25](https://linear.app/light-shot/issue/LIG-25)
+
+Three usability fixes reported after using the editor. Same seams, no new ones.
+
+11. As a user, I want the tool I picked to stay active after I draw a mark, so that I can draw several arrows in a row and switch tools myself. The mark I just drew stays selected, and its handles are still grabbable with the drawing tool active.
+12. As a user, I want new marks and labels to start at a weight that reads on a Retina capture, so that I don't enlarge every one.
+13. As a user, I want to type the font size instead of dragging a slider, so that I can hit an exact size.
+
+- **Tool persistence.** Finishing a drag with a drawing tool adds and selects the element but no longer switches back to Select (previously `EditorModel.end` set `tool = .select`). With a drawing tool active, a press within the grab radius of the selection's handles starts the same reshape/resize drag the Select tool would (`beginHandleDrag`); any other press starts a new mark. Text and step placement were already tool-preserving.
+- **Defaults.** `Style.default` is now `strokeWidth: 6, fontSize: 32` (was 3 / 17), in image pixels — 3 pt / 16 pt on a 2× capture. Step markers, whose radius starts at `max(fontSize, 14)`, grow with it. **Amends Spec 0001's implied defaults.**
+- **Font size entry.** The font-size slider is a numeric text field (Return applies, clamped 6…200 and rounded; one edit is one undo step via `commitStyleEdit`). The field mirrors the selection's size like the slider did. Focus: the field yields keyboard focus when Return is pressed, a tool is picked, or the canvas is pressed, and once when the window first becomes key, so ⌫ / ⌘Z keep reaching the editor. The stroke-width control stays a slider.
+
 ## Testing Decisions
 
 - `ArrowGeometryTests`: an unbent curved arrow has every corner of the standard outline and its shaft points lie on the standard arrow's edges; a new bendable arrow's bend is the midpoint; the head's barbs rotate with the tangent; a bent arrow still widens tail → neck → head and leaves the chord; a double arrow has the standard head at the tip and its mirror image at the tail, and a short one keeps each head on its own half.
