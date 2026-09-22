@@ -158,6 +158,9 @@ public struct RecordingOptions: Equatable, Sendable {
     public var showCursor: Bool
     /// Seconds of 3-2-1 before recording starts (story 10); `0` starts immediately.
     public var countdownSeconds: Int
+    /// What happens to the finished take (story 33): the Settings default, or — for a Studio
+    /// Mode take (LIG-42) — the editor regardless of it.
+    public var afterRecording: AfterRecordingAction
 
     public init(
         region: CaptureRegion,
@@ -175,7 +178,8 @@ public struct RecordingOptions: Equatable, Sendable {
         showKeystrokes: Bool = false,
         keystrokeOverlay: KeystrokeOverlaySettings = .standard,
         showCursor: Bool = true,
-        countdownSeconds: Int = 0
+        countdownSeconds: Int = 0,
+        afterRecording: AfterRecordingAction = .showOverlay
     ) {
         self.region = region
         self.output = output
@@ -193,6 +197,7 @@ public struct RecordingOptions: Equatable, Sendable {
         self.keystrokeOverlay = keystrokeOverlay
         self.showCursor = showCursor
         self.countdownSeconds = max(0, countdownSeconds)
+        self.afterRecording = afterRecording
     }
 
     public var hasCountdown: Bool { countdownSeconds > 0 }
@@ -225,7 +230,8 @@ public struct RecordingOptions: Equatable, Sendable {
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
             keystrokeOverlay: defaults.keystrokeOverlay,
             showCursor: defaults.showCursor,
-            countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0
+            countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0,
+            afterRecording: overrides.afterRecording ?? defaults.afterRecording
         )
     }
 }
@@ -440,19 +446,24 @@ public struct RecordingOverrides: Equatable, Sendable {
     public var camera: Bool?
     public var highlightClicks: Bool?
     public var showKeystrokes: Bool?
+    /// Where the take goes when it stops, beating the Settings default for this take only:
+    /// **Record in Studio Mode** (LIG-42) sets `.openEditor`. `nil` is "as in Settings".
+    public var afterRecording: AfterRecordingAction?
 
     public init(
         microphone: Bool? = nil,
         computerAudio: Bool? = nil,
         camera: Bool? = nil,
         highlightClicks: Bool? = nil,
-        showKeystrokes: Bool? = nil
+        showKeystrokes: Bool? = nil,
+        afterRecording: AfterRecordingAction? = nil
     ) {
         self.microphone = microphone
         self.computerAudio = computerAudio
         self.camera = camera
         self.highlightClicks = highlightClicks
         self.showKeystrokes = showKeystrokes
+        self.afterRecording = afterRecording
     }
 
     /// No overrides — every value comes from Settings.

@@ -42,6 +42,10 @@ final class RecordingOverlayModel {
     let openSettings: () -> Void
     /// Whether a toggle may switch on: asks for its grant lazily (story 41); `false` keeps it off.
     let permissionGate: (RecordingToggle) async -> Bool
+    /// A toggle's standing grant, read without prompting — for the warning badges (LIG-42).
+    let permissionStatus: (RecordingToggle) async -> CaptureAuthorizationStatus
+    /// Toggles whose grant is not standing right now; the toolbar badges them.
+    private(set) var missingPermissions: Set<RecordingToggle> = []
 
     /// This take's toggle overrides; `nil` per toggle means "as in Settings".
     private(set) var overrides = RecordingOverrides.none
@@ -55,6 +59,11 @@ final class RecordingOverlayModel {
     private var dragStart: Point?
     private var isDragging = false
 
+    /// What the pointer should look like where it is (LIG-42): a crosshair over empty screen, an
+    /// open hand inside the selection, a closed hand while moving it, the matching resize cursor
+    /// over a handle, the arrow when the pointer has left the canvas (over the toolbar).
+    private(set) var cursor: PointerCursor = .crosshair
+
     init(
         bounds: Rect, pixelScale: Double, displayID: UInt32, windows: [HoverWindow],
         initial: CaptureRegion?, defaults: RecordingDefaults,
@@ -63,6 +72,7 @@ final class RecordingOverlayModel {
         cameraBubble: CameraBubbleController? = nil,
         openSettings: @escaping () -> Void = {},
         permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
+        permissionStatus: @escaping (RecordingToggle) async -> CaptureAuthorizationStatus = { _ in .authorized },
         finish: @escaping (RecordingChoice?) -> Void
     ) {
         self.windows = windows
@@ -78,6 +88,7 @@ final class RecordingOverlayModel {
         self.cameraBubble = cameraBubble
         self.openSettings = openSettings
         self.permissionGate = permissionGate
+        self.permissionStatus = permissionStatus
         self.finish = finish
 
         // Pre-fill the remembered region (story 7) when it still makes sense on this display: a
@@ -97,6 +108,11 @@ final class RecordingOverlayModel {
         case nil:
             selection = EditableSelection(bounds: bounds)
         }
+        // Nothing usable to pre-fill: start from almost the whole display (LIG-42, as CleanShot
+        // does), so the size fields are filled and Record works at once; any drag replaces it.
+        if !selection.hasSelection, snappedWindow == nil {
+            selection = EditableSelection(bounds: bounds, rect: bounds.insetBy(dx: Self.defaultInset, dy: Self.defaultInset))
+        }
         // The camera on by default (Settings) still passes the permission gate first (story 41):
         // an ungranted camera turns the toggle off for this take rather than opening the device.
         if isOn(.camera), cameraBubble != nil {
@@ -104,6 +120,22 @@ final class RecordingOverlayModel {
                 if await permissionGate(.camera) { syncCameraPreview() } else { overrides[.camera] = false }
             }
         }
+        Task { @MainActor in await refreshPermissions() }
+    }
+
+    /// Re-read every gated toggle's grant; called at start and after each ask.
+    private func refreshPermissions() async {
+        var missing = Set<RecordingToggle>()
+        for toggle in RecordingToggle.allCases where toggle.requiredPermission != nil {
+            if await permissionStatus(toggle) != .authorized { missing.insert(toggle) }
+        }
+        missingPermissions = missing
+    }
+
+    /// The badge's message for a toggle whose grant is missing, else `nil`.
+    func permissionWarning(for toggle: RecordingToggle) -> String? {
+        guard missingPermissions.contains(toggle), let kind = toggle.requiredPermission else { return nil }
+        return "\(kind.settingsTitle) permission not granted — click to allow"
     }
 
     // MARK: - Derived state for the view
@@ -133,10 +165,14 @@ final class RecordingOverlayModel {
     func toggle(_ toggle: RecordingToggle) async {
         let turningOn = !isOn(toggle)
         if turningOn {
-            guard await permissionGate(toggle) else { return }
+            guard await permissionGate(toggle) else {
+                await refreshPermissions()
+                return
+            }
         }
         overrides[toggle] = turningOn
         if toggle == .camera { syncCameraPreview() }
+        if turningOn { await refreshPermissions() }
     }
 
     /// Pick a microphone from the mic toggle's menu (story 20) and make sure the toggle is on; a
@@ -194,10 +230,23 @@ final class RecordingOverlayModel {
 
     func hover(at point: Point) {
         hovered = hasSelection ? nil : window(at: point)
+        if !isDragging { cursor = cursor(at: point) }
     }
 
+    /// The pointer left the canvas — for the toolbar or another screen. Mid-drag the drag owns
+    /// the cursor.
     func hoverEnded() {
         hovered = nil
+        if !isDragging { cursor = .arrow }
+    }
+
+    /// The cursor for a pointer at rest at `point`, from what a drag there would do.
+    private func cursor(at point: Point) -> PointerCursor {
+        switch selection.dragKind(at: point) {
+        case .draw: return .crosshair
+        case .move: return .openHand
+        case let .resize(handle): return .resize(handle)
+        }
     }
 
     /// A zero-distance gesture is a click; only movement past a few points becomes a drag, so a
@@ -213,6 +262,11 @@ final class RecordingOverlayModel {
             // Any drag — a fresh rect, a move, or a (hidden) handle — turns a snapped window back
             // into a plain rect, so what is resolved always matches what is shown.
             snappedWindow = nil
+            switch selection.dragKind(at: start) {
+            case .draw: cursor = .crosshair
+            case .move: cursor = .closedHand
+            case let .resize(handle): cursor = .resize(handle)
+            }
             selection.dragBegan(at: start)
         }
         selection.dragChanged(to: point, forceSquare: Self.optionHeld)
@@ -226,6 +280,7 @@ final class RecordingOverlayModel {
         } else {
             click(at: point)
         }
+        cursor = cursor(at: point)
     }
 
     /// Click: snap to the window under the pointer when nothing is selected; a click outside an
@@ -297,10 +352,18 @@ final class RecordingOverlayModel {
     /// Start GIF: recorded as video, converted afterwards (R13).
     func startGIF() { start(.gif) }
 
-    private func start(_ output: RecordingOutputKind) {
+    /// Record in Studio Mode (LIG-42): a video take that opens in the video editor when it stops,
+    /// whatever the After-recording setting says.
+    func startStudio() {
+        var overrides = overrides
+        overrides.afterRecording = .openEditor
+        start(.video, overrides: overrides)
+    }
+
+    private func start(_ output: RecordingOutputKind, overrides: RecordingOverrides? = nil) {
         guard let region else { return }
         finish(RecordingChoice(
-            region: region, output: output, overrides: overrides,
+            region: region, output: output, overrides: overrides ?? self.overrides,
             microphoneDeviceID: microphoneDeviceID, cameraDeviceID: cameraDeviceID
         ))
     }
@@ -319,7 +382,49 @@ final class RecordingOverlayModel {
     }
 
     private static let dragThreshold: Double = 3
+    /// How far the default selection sits inside the display's edges, in points.
+    private static let defaultInset: Double = 40
 
     /// SwiftUI's drag gesture carries no modifiers; read the Option key live instead.
     private static var optionHeld: Bool { NSEvent.modifierFlags.contains(.option) }
+}
+
+/// The cursors the recording overlay shows (LIG-42), resolved to `NSCursor` by the view.
+enum PointerCursor: Equatable {
+    case arrow
+    case crosshair
+    case openHand
+    case closedHand
+    case resize(Handle)
+
+    var nsCursor: NSCursor {
+        switch self {
+        case .arrow: return .arrow
+        case .crosshair: return .crosshair
+        case .openHand: return .openHand
+        case .closedHand: return .closedHand
+        case let .resize(handle): return Self.resizeCursor(for: handle)
+        }
+    }
+
+    /// Edges get the system's two-way arrows on every supported macOS; the diagonal corner
+    /// cursors only exist publicly from macOS 15, so macOS 14 falls back to the crosshair.
+    private static func resizeCursor(for handle: Handle) -> NSCursor {
+        switch handle {
+        case .left, .right: return .resizeLeftRight
+        case .top, .bottom: return .resizeUpDown
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            if #available(macOS 15, *) {
+                let position: NSCursor.FrameResizePosition
+                switch handle {
+                case .topLeft: position = .topLeft
+                case .topRight: position = .topRight
+                case .bottomLeft: position = .bottomLeft
+                default: position = .bottomRight
+                }
+                return .frameResize(position: position, directions: .all)
+            }
+            return .crosshair
+        }
+    }
 }

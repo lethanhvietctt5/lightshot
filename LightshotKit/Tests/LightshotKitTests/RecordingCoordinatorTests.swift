@@ -1075,3 +1075,14 @@ private func materialisedTake() throws -> URL {
     #expect(settings.recordingDestination(kind: .video, at: date).path == "/tmp/movies/Recording 2026.mp4")
     #expect(settings.recordingDestination(kind: .gif, at: date).path == "/tmp/movies/Recording 2026.gif")
 }
+
+@Test @MainActor func aStudioModeTakeOpensTheEditorWhateverTheSettingSays() async {
+    let h = Harness()
+    h.settings.recordingDefaults.afterRecording = .saveSilently
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
+    h.now = 130
+    await h.coordinator.stopRecording()
+    #expect(h.ui.editors.count == 1)
+    #expect(h.ui.overlays.isEmpty && h.ui.finished.isEmpty)
+    #expect(h.settings.recordingDefaults.afterRecording == .saveSilently)   // the setting is untouched
+}

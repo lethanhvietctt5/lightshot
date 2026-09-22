@@ -49,6 +49,8 @@ final class RecordingControlsController {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // Hover highlights and tips need pointer moves even while another app is active.
+        panel.acceptsMouseMovedEvents = true
         panel.contentView = hosting
 
         let screen = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -110,29 +112,33 @@ private struct RecordingControlsView: View {
         _model = State(initialValue: model)
     }
 
+    /// The same chrome as the recorder toolbar (LIG-42): a dark panel, every action in a bordered
+    /// box that lights on hover with its title shown at once.
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             // Ticks once a second; the elapsed value itself freezes while paused (RecordingSession).
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 Text(Self.format(model.elapsed()))
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundStyle(model.isPaused ? .secondary : .primary)
-                    .frame(width: 52)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .foregroundStyle(model.isPaused ? Color.white.opacity(0.5) : Color.white)
+                    .frame(width: 60, height: ToolbarChrome.controlHeight)
             }
+            .toolbarControl(model.isPaused ? "Paused" : "Recording")
             if model.audioLevel != nil || model.systemAudioLevel != nil {
                 levelMeters
             }
-            control(model.isPaused ? "play.fill" : "pause.fill", help: model.isPaused ? "Resume" : "Pause") {
+            control(model.isPaused ? "play.fill" : "pause.fill", title: model.isPaused ? "Resume" : "Pause") {
                 model.actions.pauseResume()
             }
-            control("stop.fill", help: "Stop", tint: .red) { model.actions.stop() }
-            control("arrow.counterclockwise", help: "Restart") { model.actions.restart() }
-            control("trash", help: "Discard") { model.actions.discard() }
+            control("stop.fill", title: "Stop", tint: .red) { model.actions.stop() }
+            control("arrow.counterclockwise", title: "Restart") { model.actions.restart() }
+            control("trash", title: "Discard") { model.actions.discard() }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .padding(8)
+        .padding(10)
+        .toolbarPanel()
+        // Room for the tips above and the panel's shadow around it.
+        .padding(.top, 44)
+        .padding([.horizontal, .bottom], 8)
     }
 
     /// Small bars that follow the microphone and computer-audio levels (stories 23, 25), with the
@@ -142,11 +148,11 @@ private struct RecordingControlsView: View {
             VStack(spacing: 2) {
                 if model.audioLevel != nil {
                     meter("mic.fill", level: model.level, warning: model.showsMutedHint)
-                        .help("Microphone level")
+                        .accessibilityLabel("Microphone level")
                 }
                 if model.systemAudioLevel != nil {
                     meter("speaker.wave.2.fill", level: model.systemLevel, warning: false)
-                        .help("Computer audio level")
+                        .accessibilityLabel("Computer audio level")
                 }
                 if model.showsMutedHint {
                     Text("Your microphone might be muted")
@@ -162,7 +168,7 @@ private struct RecordingControlsView: View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
                 .font(.system(size: 11))
-                .foregroundStyle(warning ? Color.orange : Color.secondary)
+                .foregroundStyle(warning ? Color.orange : Color.white.opacity(0.6))
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.secondary.opacity(0.25))
@@ -175,15 +181,16 @@ private struct RecordingControlsView: View {
         }
     }
 
-    private func control(_ symbol: String, help: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+    private func control(_ symbol: String, title: String, tint: Color = .white, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(tint)
-                .frame(width: 28, height: 28)
+                .frame(width: ToolbarChrome.controlWidth, height: ToolbarChrome.controlHeight)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help)
+        .toolbarControl(title)
     }
 
     private static func format(_ seconds: TimeInterval) -> String {

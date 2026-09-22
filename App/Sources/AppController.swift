@@ -78,6 +78,7 @@ final class AppController: NSObject, CaptureUI {
             overlay: OverlaySelectionController(
                 openSettings: { [weak self] in self?.showSettings() },
                 permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false },
+                permissionStatus: { [weak self] toggle in await self?.permissionStatus(for: toggle) ?? .authorized },
                 audioInputs: { [audioInputService] in await audioInputService.availableInputs() },
                 cameras: { [cameraService] in await cameraService.availableCameras() },
                 cameraBubble: cameraBubble
@@ -368,6 +369,12 @@ final class AppController: NSObject, CaptureUI {
     /// shared `PermissionGate` policy — a standing grant passes, a prompt in progress keeps the
     /// toggle off for now, a decline (now or earlier) shows the recovery for **that** grant.
     /// Returns whether the toggle may go on.
+    /// A toggle's standing grant, read without prompting — the toolbar badges the missing ones.
+    func permissionStatus(for toggle: RecordingToggle) async -> CaptureAuthorizationStatus {
+        guard let kind = toggle.requiredPermission else { return .authorized }
+        return await permissionSource(for: kind).authorizationStatus()
+    }
+
     func ensurePermission(for toggle: RecordingToggle) async -> Bool {
         guard let kind = toggle.requiredPermission else { return true }
         switch await PermissionGate.ensure(permissionSource(for: kind)) {
