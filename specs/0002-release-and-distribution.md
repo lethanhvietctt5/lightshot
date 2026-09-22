@@ -1,6 +1,6 @@
 # Spec 0002 — Release & Distribution (self-signed, direct download)
 
-**Status:** draft — needs maintainer review before `ready-for-agent`
+**Status:** implemented — `scripts/release.sh`, `scripts/release-identity.txt`, `scripts/README.md` (2026-09-22). The permission-persistence check in *Testing Decisions* is still pending before the first non-draft release.
 **Platform:** Native macOS, macOS 14+ · universal binary (arm64 + x86_64)
 **Scope:** Build tooling and docs only. No app or domain code changes. The app stays local-only — nothing here adds networking to Lightshot itself.
 **Depends on:** LIG-22 / PR #22 (`App/Config/Signing.xcconfig` — signing lives in the xcconfig, not `project.yml`).
@@ -72,7 +72,7 @@ Numbering continues from spec 0001 (which ends at 60).
 
 ### The signing identity
 
-- **One self-signed Code Signing certificate, common name `Lightshot Release Signing`**, created once in Keychain Access (Certificate Assistant → Create a Certificate → Identity Type: Self Signed Root, Certificate Type: Code Signing, override defaults to set a **10-year** validity). It lives in the maintainer's login keychain.
+- **One self-signed Code Signing certificate, common name `Lightshot Release Signing`**, created once — either in Keychain Access (Certificate Assistant → Create a Certificate → Identity Type: Self Signed Root, Certificate Type: Code Signing, override defaults to set a **10-year** validity) or with `openssl` + `security import`, as documented in `scripts/README.md`. It lives in the maintainer's login keychain and must be **trusted for code signing** there; `codesign` refuses an untrusted identity (`CSSMERR_TP_NOT_TRUSTED`).
 - **Backed up as a password-protected `.p12`** stored outside the repo (password manager). The private key is never committed. Losing it is recoverable but costly: a new certificate means every user re-grants permissions once, and the pinned requirement below changes in a reviewed commit.
 - **The expected designated requirement is pinned in the repo** at `scripts/release-identity.txt` — a single line, e.g. `identifier "dev.lightshot.app" and certificate leaf = H"…"`. It contains only a public certificate hash, so it is safe to commit. It is the contract that makes story 70 checkable.
 - **Invariants that must never change without a deliberate, announced break:** the bundle identifier `dev.lightshot.app` and this certificate. Either change resets every user's grants.
@@ -91,7 +91,8 @@ Bash, `set -euo pipefail`, no dependencies beyond Xcode command-line tools, Xcod
 6. **Package.** Stage `Lightshot.app` plus an `/Applications` symlink, then `hdiutil create -volname "Lightshot <version>" -srcfolder <stage> -format UDZO Lightshot-<version>.dmg`. Compute `shasum -a 256`. No third-party DMG tooling, no custom background art.
 7. **Publish.** Create and push the annotated tag `v<version>`, then `gh release create v<version> Lightshot-<version>.dmg --draft --generate-notes` with the install-instructions block and the SHA-256 appended to the notes. The script prints the draft URL and stops; **publishing the draft is a manual click** (story 71).
 
-- A `--dry-run` flag runs steps 1–6 and skips step 7, so the pipeline can be exercised without creating a tag or release.
+- A `--dry-run` flag runs steps 1–6 and skips step 7, so the pipeline can be exercised without creating a tag or release. Because a dry run publishes nothing, it may run on any branch (the "on `main` == `origin/main`" check becomes a warning) and, if `scripts/release-identity.txt` is missing, it prints the designated requirement to pin instead of failing preflight — which is how the file is generated the first time.
+- If `docs/releases/<version>.md` exists it is placed at the top of the release notes (above the install block and checksum), so a release can carry hand-written highlights; GitHub's generated notes follow.
 - `build/` is already gitignored; the script writes nowhere else.
 
 ### Why a DMG rather than a zip
@@ -146,7 +147,7 @@ Added to `README.md` as a new **Install** section above *Getting started*, and a
 
 ## Further Notes
 
-- **The repo has no `LICENSE` file.** "Open source" without a license means nobody else legally has the right to use, modify, or redistribute the code. Pick one (MIT and Apache-2.0 are the usual choices for a tool like this) **before** the first public release. Not part of this spec's implementation, but a prerequisite for shipping it.
+- **License.** "Open source" without a license means nobody else legally has the right to use, modify, or redistribute the code, so an MIT `LICENSE` was added alongside the release tooling (2026-09-22) as a prerequisite for the first public release.
 - **`gh` on the maintainer's machine:** `GH_HOST` is currently set to the SSH alias `github.com-viet`, which is not a real API host, so plain `gh` calls fail. The script should pass `--repo lethanhvietctt5/lightshot` and run `gh` with `GH_HOST=github.com`, or the variable should be fixed in the shell profile.
 - **Trust model, stated honestly.** A self-signed certificate proves only that two releases came from the same key holder — not who that is. The SHA-256 in the release notes and the public source are what a cautious user can actually check. The install copy must not imply Apple has vetted the app.
 - **Certificate expiry.** How macOS treats an app whose self-signed certificate has expired (signatures here carry no secure timestamp, since Apple's timestamp service is not used) has **not been verified**. The 10-year validity is chosen so the question does not arise in practice; do not shorten it. Revisit if Developer ID has not replaced this certificate well before then.
