@@ -323,6 +323,11 @@ public final class AppCoordinator {
             // when the take actually records it, so a mic-off take never forgets the preference.
             settings.recordingDefaults.microphoneDeviceID = choice.microphoneDeviceID
         }
+        let cameraOn = choice.overrides.camera ?? settings.recordingDefaults.recordCamera
+        if cameraOn, settings.recordingDefaults.cameraDeviceID != choice.cameraDeviceID {
+            // Same rule for the camera (story 27).
+            settings.recordingDefaults.cameraDeviceID = choice.cameraDeviceID
+        }
         await startRecording(region: choice.region, output: choice.output, overrides: choice.overrides)
     }
 

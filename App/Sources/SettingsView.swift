@@ -209,6 +209,19 @@ struct SettingsView: View {
             Toggle("Blur behind keystrokes", isOn: $model.recordingDefaults.keystrokeOverlay.blurBackground)
                 .disabled(!model.recordingDefaults.showKeystrokes)
                 .help("Blur the recording behind the pill instead of a flat tint. Keys typed into password fields are never shown.")
+            Picker("Camera size", selection: $model.recordingDefaults.cameraBubble.size) {
+                ForEach(CameraBubbleSize.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .help("How big the camera bubble is, relative to the recording area. Switch the camera on in the recorder toolbar.")
+            Picker("Camera shape", selection: $model.recordingDefaults.cameraBubble.shape) {
+                ForEach(CameraBubbleShape.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            Toggle("Mirror the camera", isOn: $model.recordingDefaults.cameraBubble.mirror)
+                .help("Flip the bubble horizontally so it reads like a mirror.")
+            if model.recordingDefaults.cameraBubble.anchor != nil {
+                Button("Reset Camera Position") { model.recordingDefaults.cameraBubble.anchor = nil }
+                    .help("Put the bubble back in the bottom-right corner.")
+            }
             HStack {
                 Text("Microphone volume")
                 Slider(value: $model.recordingDefaults.microphoneVolume, in: 0...2, step: 0.1)

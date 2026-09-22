@@ -37,9 +37,13 @@ final class AppController: NSObject, CaptureUI {
     })
 
     /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2).
-    private let recordingService = SCRecordingService()
+    private let recordingService: SCRecordingService
     /// The microphones the recorder toolbar lists (story 20).
     private let audioInputService = AVAudioInputService()
+    /// The cameras it lists (story 27), and the preview bubble shared between the toolbar, the take
+    /// and the recorder (stories 26–28).
+    private let cameraService = AVCameraService()
+    private let cameraBubble: CameraBubbleController
     /// The 3-2-1 before a take (story 10).
     private let countdown = CountdownOverlayController()
     /// The pause / stop / restart / discard pill and the outside-the-frame dimming (stories 12–16).
@@ -54,13 +58,22 @@ final class AppController: NSObject, CaptureUI {
     var recordingStateObserver: ((RecordingSession) -> Void)?
 
     override init() {
+        let cameraFeed = CameraFeed()
+        recordingService = SCRecordingService(cameraFeed: cameraFeed)
+        cameraBubble = CameraBubbleController(feed: cameraFeed)
         super.init()
+        cameraBubble.onAnchorChanged = { [weak self] anchor in
+            // Where the bubble was dragged becomes the default for next time (story 27).
+            self?.settings.recordingDefaults.cameraBubble.anchor = anchor
+        }
         coordinator = AppCoordinator(
             captureService: captureService,
             overlay: OverlaySelectionController(
                 openSettings: { [weak self] in self?.showSettings() },
                 permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false },
-                audioInputs: { [audioInputService] in await audioInputService.availableInputs() }
+                audioInputs: { [audioInputService] in await audioInputService.availableInputs() },
+                cameras: { [cameraService] in await cameraService.availableCameras() },
+                cameraBubble: cameraBubble
             ),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
@@ -480,6 +493,9 @@ final class AppController: NSObject, CaptureUI {
         default:
             recordingControls.hide()
             recordingDim.hide()
+            // The camera preview outlives the toolbar for the countdown and the take; it goes when
+            // the take does (finished, failed, discarded, or cancelled mid-countdown).
+            if session.state != .countdown { cameraBubble.hide() }
         }
     }
 

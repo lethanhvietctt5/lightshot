@@ -412,6 +412,26 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.settings.recordingDefaults.microphoneDeviceID == "usb-mic")
 }
 
+@Test @MainActor func theToolbarsCameraChoiceBecomesTheDefaultAndReachesTheOptions() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(cameraBubble: CameraBubbleSettings(size: .large), countdownEnabled: false)
+    h.overlay.choice = RecordingChoice(
+        region: display, output: .video, overrides: RecordingOverrides(camera: true), cameraDeviceID: "usb-cam"
+    )
+    await h.coordinator.recordScreen()
+
+    #expect(h.settings.recordingDefaults.cameraDeviceID == "usb-cam")
+    let options = h.service.starts.first?.options
+    #expect(options?.camera == .device(id: "usb-cam"))
+    #expect(options?.cameraBubble.size == .large)
+
+    // A take with the camera off never overwrites the remembered device.
+    await h.coordinator.stopRecording()
+    h.overlay.choice = RecordingChoice(region: display, output: .video, overrides: RecordingOverrides(camera: false), cameraDeviceID: nil)
+    await h.coordinator.recordScreen()
+    #expect(h.settings.recordingDefaults.cameraDeviceID == "usb-cam")
+}
+
 // MARK: - Controls: pause / resume, restart, discard (stories 12–14)
 
 @Test @MainActor func pauseFreezesTheTimerAndResumeContinuesThroughTheService() async {

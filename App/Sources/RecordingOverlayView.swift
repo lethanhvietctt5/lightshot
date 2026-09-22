@@ -71,6 +71,8 @@ struct RecordingOverlayView: View {
                     ForEach(model.toggles, id: \.self) { toggle in
                         if toggle == .microphone {
                             microphoneControl
+                        } else if toggle == .camera {
+                            cameraControl
                         } else {
                             Button {
                                 Task { await model.toggle(toggle) }
@@ -105,9 +107,15 @@ struct RecordingOverlayView: View {
                 }
                 .help("Recording settings")
 
-                Text(model.hasSelection ? "Return to start · Esc to cancel" : "Drag an area or click a window · Esc to cancel")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                if model.cameraWithoutMicrophone {
+                    Label("Camera on, no microphone — the recording will be silent", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(model.hasSelection ? "Return to start · Esc to cancel" : "Drag an area or click a window · Esc to cancel")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             }
             .controlSize(.small)
             .padding(8)
@@ -138,6 +146,30 @@ struct RecordingOverlayView: View {
             Task { await model.toggle(.microphone) }
         }
         .help(model.isOn(.microphone) ? "Microphone on — choose a device" : "Record the microphone")
+    }
+
+    /// The camera toggle doubles as a device menu (story 27), like the microphone's.
+    private var cameraControl: some View {
+        Menu {
+            Picker("Camera", selection: Binding<String?>(
+                get: { model.isOn(.camera) ? model.cameraDeviceID : "off" },
+                set: { id in Task { await model.selectCamera(id) } }
+            )) {
+                Text("System Default").tag(String?.none)
+                ForEach(model.cameras) { device in
+                    Text(device.name).tag(Optional(device.id))
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Do Not Record Camera") { model.turnOffCamera() }
+                .disabled(!model.isOn(.camera))
+        } label: {
+            toggleGlyph(.camera)
+        } primaryAction: {
+            Task { await model.toggle(.camera) }
+        }
+        .help(model.isOn(.camera) ? "Camera on — choose a device; drag the bubble to place it, click it for fullscreen" : "Show your camera in the recording")
     }
 
     private func toggleGlyph(_ toggle: RecordingToggle) -> some View {
