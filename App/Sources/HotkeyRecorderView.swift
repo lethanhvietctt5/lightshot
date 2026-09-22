@@ -136,7 +136,9 @@ final class RecorderControl: NSView {
     private static func label(for event: NSEvent) -> String {
         if let special = specialKeyLabels[Int(event.keyCode)] { return special }
         if let function = functionKeyLabels[Int(event.keyCode)] { return function }
-        let chars = event.charactersIgnoringModifiers ?? ""
+        // `charactersIgnoringModifiers` still applies Shift (⇧4 → "$"), so ask for the key with no
+        // modifiers at all: the chord should read "⇧⌘4", the way the system and CleanShot write it.
+        let chars = event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers ?? ""
         return chars.isEmpty ? "Key \(event.keyCode)" : chars.uppercased()
     }
 

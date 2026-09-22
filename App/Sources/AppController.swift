@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 import LightshotKit
 
 /// A display the fullscreen menu can target (story 8): the window server's id plus a label to show.
-/// `Identifiable` so the SwiftUI menu can `ForEach` over it.
+/// `Identifiable` so the menu can list them.
 struct DisplayInfo: Identifiable {
     let id: UInt32
     let name: String
@@ -99,6 +99,10 @@ final class AppController: NSObject, CaptureUI {
         applyHotkeys(settings.hotkeys)
     }
 
+    /// The persisted hotkey chords, so the menu-bar menu can show each capture row's current
+    /// shortcut (spec 0005) without owning a second copy of the bindings.
+    var hotkeys: HotkeyBindings { settings.hotkeys }
+
     /// Route a fired hotkey to its capture entry point.
     private func perform(_ action: CaptureAction) {
         switch action {
@@ -107,6 +111,13 @@ final class AppController: NSObject, CaptureUI {
         case .fullscreen: captureFullscreen()
         case .repeatLast: repeatLast()
         }
+    }
+
+    /// The standard About panel (spec 0005): name, icon, and version from the bundle. Activated
+    /// first, like every other window, so it doesn't open behind the frontmost app (LIG-23).
+    func showAbout() {
+        WindowPresenter.activateApp()
+        NSApp.orderFrontStandardAboutPanel(nil)
     }
 
     /// Menu / hotkey entry point for the fullscreen capture spine. `displayID` targets a specific
