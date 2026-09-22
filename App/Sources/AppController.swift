@@ -55,7 +55,10 @@ final class AppController: NSObject, CaptureUI {
         super.init()
         coordinator = AppCoordinator(
             captureService: captureService,
-            overlay: OverlaySelectionController(openSettings: { [weak self] in self?.showSettings() }),
+            overlay: OverlaySelectionController(
+                openSettings: { [weak self] in self?.showSettings() },
+                permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false }
+            ),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
             settings: settings,
@@ -319,9 +322,32 @@ final class AppController: NSObject, CaptureUI {
 
     /// Deep-link to the System Settings pane for a permission the user must grant by hand.
     private func openSettings(for kind: PermissionKind) {
+        NSWorkspace.shared.open(kind.systemSettingsURL)
+    }
+
+    /// The OS source for each grant the recording features ask for lazily (story 41).
+    private func permissionSource(for kind: PermissionKind) -> any PermissionAuthorizing {
         switch kind {
-        case .screenRecording:
-            openScreenRecordingSettings()
+        case .screenRecording: return captureService
+        case .microphone: return MicrophonePermission()
+        case .camera: return CameraPermission()
+        case .inputMonitoring: return InputMonitoringPermission()
+        }
+    }
+
+    /// The recorder toolbar's gate: switching a toggle on asks for its grant right then — a
+    /// standing grant passes, a first ask prompts (and passes if the user grants in the prompt), a
+    /// standing denial shows the recovery for **that** grant. Returns whether the toggle may go on.
+    func ensurePermission(for toggle: RecordingToggle) async -> Bool {
+        guard let kind = toggle.requiredPermission else { return true }
+        switch await RecordingPermissionGate.ensure(permissionSource(for: kind)) {
+        case .granted:
+            return true
+        case .prompting:
+            return false
+        case .denied:
+            presentPermissionDenied(kind)
+            return false
         }
     }
 
@@ -377,20 +403,17 @@ final class AppController: NSObject, CaptureUI {
         )
     }
 
-    func presentPermissionDenied() {
+    func presentPermissionDenied(_ kind: PermissionKind) {
         let alert = NSAlert()
-        alert.messageText = "Screen Recording permission needed"
-        alert.informativeText = """
-        Lightshot needs Screen Recording permission to capture your screen. \
-        Open System Settings, enable Lightshot under Screen Recording, then try again.
-        """
+        alert.messageText = "\(kind.settingsTitle) permission needed"
+        alert.informativeText = "\(kind.recoveryReason) Open System Settings, enable Lightshot under \(kind.settingsTitle), then try again."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")
 
         WindowPresenter.activateApp()
         if alert.runModal() == .alertFirstButtonReturn {
-            openScreenRecordingSettings()
+            openSettings(for: kind)
         }
     }
 
@@ -652,14 +675,6 @@ final class AppController: NSObject, CaptureUI {
     /// (no cloud, no accounts).
     private static var historyDirectory: URL {
         supportDirectory.appendingPathComponent("History", isDirectory: true)
-    }
-
-    private func openScreenRecordingSettings() {
-        // Deep link straight to the Screen Recording pane of System Settings.
-        let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
-        )!
-        NSWorkspace.shared.open(url)
     }
 
     private static func message(for error: CaptureError) -> String {

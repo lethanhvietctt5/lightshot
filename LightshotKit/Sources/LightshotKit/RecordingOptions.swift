@@ -293,6 +293,17 @@ public enum RecordingToggle: String, CaseIterable, Codable, Sendable {
         case .showKeystrokes: return "Show Keystrokes"
         }
     }
+
+    /// The grant switching this toggle on needs, requested lazily at that moment (story 41).
+    /// Computer audio rides on Screen Recording and click highlighting needs no grant at all.
+    public var requiredPermission: PermissionKind? {
+        switch self {
+        case .microphone: return .microphone
+        case .camera: return .camera
+        case .showKeystrokes: return .inputMonitoring
+        case .computerAudio, .highlightClicks: return nil
+        }
+    }
 }
 
 /// What the recorder toolbar resolves to (stories 3–9): the region, which Start button was pressed,

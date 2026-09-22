@@ -30,6 +30,8 @@ final class RecordingOverlayModel {
     private let finish: (RecordingChoice?) -> Void
     /// The toolbar's settings shortcut (story 8).
     let openSettings: () -> Void
+    /// Whether a toggle may switch on: asks for its grant lazily (story 41); `false` keeps it off.
+    let permissionGate: (RecordingToggle) async -> Bool
 
     /// This take's toggle overrides; `nil` per toggle means "as in Settings".
     private(set) var overrides = RecordingOverrides.none
@@ -48,6 +50,7 @@ final class RecordingOverlayModel {
         initial: CaptureRegion?, defaults: RecordingDefaults,
         availableToggles: Set<RecordingToggle> = RecordingFeatures.availableToggles,
         openSettings: @escaping () -> Void = {},
+        permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
         finish: @escaping (RecordingChoice?) -> Void
     ) {
         self.windows = windows
@@ -56,6 +59,7 @@ final class RecordingOverlayModel {
         self.defaults = defaults
         self.availableToggles = availableToggles
         self.openSettings = openSettings
+        self.permissionGate = permissionGate
         self.finish = finish
 
         // Pre-fill the remembered region (story 7) when it still makes sense on this display: a
@@ -99,9 +103,14 @@ final class RecordingOverlayModel {
         overrides[toggle] ?? defaults[toggle]
     }
 
-    /// Flip a toggle for this recording only — Settings are never written (story 9).
-    func toggle(_ toggle: RecordingToggle) {
-        overrides[toggle] = !isOn(toggle)
+    /// Flip a toggle for this recording only — Settings are never written (story 9). Switching
+    /// one on first passes the permission gate, which asks for the grant right then (story 41).
+    func toggle(_ toggle: RecordingToggle) async {
+        let turningOn = !isOn(toggle)
+        if turningOn {
+            guard await permissionGate(toggle) else { return }
+        }
+        overrides[toggle] = turningOn
     }
 
     // MARK: - Pointer
