@@ -2,7 +2,8 @@ import Foundation
 
 /// A macOS permission Lightshot must hold for a capability to work.
 ///
-/// Only permissions the shipped code **actually** requires appear here. **Screen Recording** gates
+/// Only permissions a shipped feature requires — or one whose feature is in flight under spec 0006 —
+/// appear here. **Screen Recording** gates
 /// every capture and recording path and is the one first-run onboarding (LIG-21) asks for up
 /// front. The recording features (spec 0006) add three more, each requested **lazily** the first
 /// time its feature is switched on — never at launch — so the app never asks for a grant the user

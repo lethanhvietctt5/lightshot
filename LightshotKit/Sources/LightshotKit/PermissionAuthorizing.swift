@@ -27,4 +27,14 @@ public protocol PermissionAuthorizing: Sendable {
     /// returns without re-prompting.
     @discardableResult
     func requestAuthorization() async -> CaptureAuthorizationStatus
+
+    /// Whether `requestAuthorization()` returns the user's actual decision (AVFoundation's microphone
+    /// and camera prompts wait for the answer) rather than returning at once with the prompt still
+    /// on screen (Screen Recording, Input Monitoring). `PermissionGate` uses it to tell a decline
+    /// from a prompt in progress. Defaults to `false`, the Screen Recording behaviour.
+    var requestWaitsForAnswer: Bool { get }
+}
+
+public extension PermissionAuthorizing {
+    var requestWaitsForAnswer: Bool { false }
 }

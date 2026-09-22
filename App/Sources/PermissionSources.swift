@@ -7,37 +7,30 @@ import LightshotKit
 /// (`ScreenRecordingPermission`, shared with the screenshot path).
 ///
 /// Microphone and camera go through AVFoundation, whose `requestAccess` **waits** for the user's
-/// answer, so a first ask resolves to the real decision. Input Monitoring goes through the
-/// CoreGraphics event-access API; like Screen Recording its request returns immediately with the
-/// prompt still on screen, and its `.notDetermined` is recovered from a persisted "asked once" flag.
-struct MicrophonePermission: PermissionAuthorizing {
+/// answer, so a first ask resolves to the real decision (`requestWaitsForAnswer`). Input Monitoring
+/// goes through the CoreGraphics event-access API; like Screen Recording its request returns
+/// immediately with the prompt still on screen, and its `.notDetermined` is recovered from a
+/// persisted "asked once" flag — a belief `PermissionGate` re-checks by asking again anyway.
+struct AVCapturePermission: PermissionAuthorizing {
+    let mediaType: AVMediaType
+
+    static let microphone = AVCapturePermission(mediaType: .audio)
+    static let camera = AVCapturePermission(mediaType: .video)
+
+    var requestWaitsForAnswer: Bool { true }
+
     func authorizationStatus() async -> CaptureAuthorizationStatus {
-        Self.map(AVCaptureDevice.authorizationStatus(for: .audio))
-    }
-
-    @discardableResult
-    func requestAuthorization() async -> CaptureAuthorizationStatus {
-        await AVCaptureDevice.requestAccess(for: .audio) ? .authorized : .denied
-    }
-
-    static func map(_ status: AVAuthorizationStatus) -> CaptureAuthorizationStatus {
-        switch status {
+        switch AVCaptureDevice.authorizationStatus(for: mediaType) {
         case .authorized: return .authorized
         case .notDetermined: return .notDetermined
         case .denied, .restricted: return .denied
         @unknown default: return .denied
         }
     }
-}
-
-struct CameraPermission: PermissionAuthorizing {
-    func authorizationStatus() async -> CaptureAuthorizationStatus {
-        MicrophonePermission.map(AVCaptureDevice.authorizationStatus(for: .video))
-    }
 
     @discardableResult
     func requestAuthorization() async -> CaptureAuthorizationStatus {
-        await AVCaptureDevice.requestAccess(for: .video) ? .authorized : .denied
+        await AVCaptureDevice.requestAccess(for: mediaType) ? .authorized : .denied
     }
 }
 
@@ -57,7 +50,8 @@ struct InputMonitoringPermission: PermissionAuthorizing {
     }
 }
 
-/// The System Settings pane where each grant is flipped by hand.
+/// The System Settings pane where each grant is flipped by hand, and the words the recovery alert
+/// and onboarding use for it.
 extension PermissionKind {
     var systemSettingsURL: URL {
         let pane: String

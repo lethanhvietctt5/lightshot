@@ -93,7 +93,7 @@ final class AppController: NSObject, CaptureUI {
     lazy var onboardingModel = PermissionOnboardingModel(requirements: [
         PermissionOnboardingModel.Requirement(
             kind: .screenRecording,
-            title: "Screen Recording",
+            title: PermissionKind.screenRecording.settingsTitle,
             rationale: "Required to capture your screen. Without it, screenshots come back black or empty.",
             source: captureService
         )
@@ -219,6 +219,9 @@ final class AppController: NSObject, CaptureUI {
     /// Seconds recorded so far, for the status-item timer.
     var recordingElapsed: TimeInterval { coordinator.recordingElapsed }
 
+    /// Whether the status item shows the elapsed time beside the stop glyph (story 11, Settings).
+    var showsRecordingTimeInMenuBar: Bool { settings.recordingDefaults.showRecordingTimeInMenuBar }
+
     /// Menu / hotkey entry point for re-firing the last capture mode (story 9).
     func repeatLast() {
         Task { await coordinator.repeatLastCapture() }
@@ -329,18 +332,19 @@ final class AppController: NSObject, CaptureUI {
     private func permissionSource(for kind: PermissionKind) -> any PermissionAuthorizing {
         switch kind {
         case .screenRecording: return captureService
-        case .microphone: return MicrophonePermission()
-        case .camera: return CameraPermission()
+        case .microphone: return AVCapturePermission.microphone
+        case .camera: return AVCapturePermission.camera
         case .inputMonitoring: return InputMonitoringPermission()
         }
     }
 
-    /// The recorder toolbar's gate: switching a toggle on asks for its grant right then — a
-    /// standing grant passes, a first ask prompts (and passes if the user grants in the prompt), a
-    /// standing denial shows the recovery for **that** grant. Returns whether the toggle may go on.
+    /// The recorder toolbar's gate: switching a toggle on asks for its grant right then through the
+    /// shared `PermissionGate` policy — a standing grant passes, a prompt in progress keeps the
+    /// toggle off for now, a decline (now or earlier) shows the recovery for **that** grant.
+    /// Returns whether the toggle may go on.
     func ensurePermission(for toggle: RecordingToggle) async -> Bool {
         guard let kind = toggle.requiredPermission else { return true }
-        switch await RecordingPermissionGate.ensure(permissionSource(for: kind)) {
+        switch await PermissionGate.ensure(permissionSource(for: kind)) {
         case .granted:
             return true
         case .prompting:

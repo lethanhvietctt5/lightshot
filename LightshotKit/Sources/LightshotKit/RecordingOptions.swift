@@ -208,6 +208,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     /// Ask before restart / discard throw a take away (story 14); the alerts' "don't ask again"
     /// turns this off.
     public var confirmBeforeDiscard: Bool
+    /// Show the elapsed time next to the stop glyph in the menu bar while recording (story 11).
+    public var showRecordingTimeInMenuBar: Bool
 
     public init(
         video: VideoSettings = .standard,
@@ -226,7 +228,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         showRecordingControls: Bool = true,
         controlsPosition: RecordingControlsPosition = .bottom,
         dimScreenWhileRecording: Bool = false,
-        confirmBeforeDiscard: Bool = true
+        confirmBeforeDiscard: Bool = true,
+        showRecordingTimeInMenuBar: Bool = true
     ) {
         self.video = video
         self.gif = gif
@@ -245,6 +248,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.controlsPosition = controlsPosition
         self.dimScreenWhileRecording = dimScreenWhileRecording
         self.confirmBeforeDiscard = confirmBeforeDiscard
+        self.showRecordingTimeInMenuBar = showRecordingTimeInMenuBar
     }
 
     /// The shipped defaults: a 3-second countdown with sounds, everything else off.
@@ -271,7 +275,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             showRecordingControls: try c.decodeIfPresent(Bool.self, forKey: .showRecordingControls) ?? true,
             controlsPosition: try c.decodeIfPresent(RecordingControlsPosition.self, forKey: .controlsPosition) ?? .bottom,
             dimScreenWhileRecording: try c.decodeIfPresent(Bool.self, forKey: .dimScreenWhileRecording) ?? false,
-            confirmBeforeDiscard: try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeDiscard) ?? true
+            confirmBeforeDiscard: try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeDiscard) ?? true,
+            showRecordingTimeInMenuBar: try c.decodeIfPresent(Bool.self, forKey: .showRecordingTimeInMenuBar) ?? true
         )
     }
 }

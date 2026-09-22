@@ -96,11 +96,12 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
     #expect(older.showRecordingControls && older.controlsPosition == .bottom && !older.dimScreenWhileRecording && older.confirmBeforeDiscard)
+    #expect(older.showRecordingTimeInMenuBar)
 }
 
 @Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {

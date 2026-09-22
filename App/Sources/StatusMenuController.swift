@@ -83,6 +83,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func refreshRecordingTimer() {
+        guard controller.showsRecordingTimeInMenuBar else {
+            statusItem.button?.title = ""
+            return
+        }
         let seconds = Int(controller.recordingElapsed.rounded(.down))
         statusItem.button?.title = String(format: " %02d:%02d", seconds / 60, seconds % 60)
     }

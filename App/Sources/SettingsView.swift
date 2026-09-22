@@ -151,6 +151,7 @@ struct SettingsView: View {
             Picker("Frame rate", selection: $model.recordingDefaults.video.fps) {
                 ForEach(VideoSettings.fpsChoices, id: \.self) { Text("\($0) fps").tag($0) }
             }
+            .help("Higher frame rates are smoother but make larger files; 30 suits most screen recordings.")
             Picker("Maximum resolution", selection: $model.recordingDefaults.video.maxResolution) {
                 Text("Original").tag(MaxResolution.original)
                 Text("1080p").tag(MaxResolution.p1080)
@@ -161,6 +162,7 @@ struct SettingsView: View {
                 Text("H.264 (most compatible)").tag(VideoCodec.h264)
                 Text("HEVC (smaller files)").tag(VideoCodec.hevc)
             }
+            .help("HEVC halves the file size; H.264 plays everywhere.")
             Toggle("Scale Retina recordings to 1x", isOn: $model.recordingDefaults.video.scaleRetinaTo1x)
                 .help("Record at half the pixel size on a Retina display.")
             Toggle("Show the cursor", isOn: $model.recordingDefaults.showCursor)
@@ -183,6 +185,7 @@ struct SettingsView: View {
             .help("Count down before a recording starts, so you can get your hands in position.")
             Toggle("Play sounds", isOn: $model.recordingDefaults.playSounds)
                 .help("Countdown ticks and the start, stop and pause cues.")
+            Toggle("Show recording time in the menu bar", isOn: $model.recordingDefaults.showRecordingTimeInMenuBar)
             Toggle("Show controls while recording", isOn: $model.recordingDefaults.showRecordingControls)
             Picker("Controls position", selection: $model.recordingDefaults.controlsPosition) {
                 Text("Top").tag(RecordingControlsPosition.top)

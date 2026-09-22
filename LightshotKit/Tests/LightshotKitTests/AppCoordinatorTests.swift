@@ -308,6 +308,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(capture.requestAuthorizationCount == 0)   // no re-prompt on a standing denial
     #expect(ui.permissionDeniedCount == 1)            // recovery, driven by the capture result
+    #expect(ui.deniedKinds == [.screenRecording])
     #expect(ui.openedImages.isEmpty)
 }
 
