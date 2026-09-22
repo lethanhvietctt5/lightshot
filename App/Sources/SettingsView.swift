@@ -209,6 +209,18 @@ struct SettingsView: View {
             ClickHighlightPreview(settings: model.recordingDefaults.clickHighlight)
                 .disabled(!model.recordingDefaults.highlightClicks)
                 .opacity(model.recordingDefaults.highlightClicks ? 1 : 0.5)
+            Toggle("Record the microphone", isOn: $model.recordingDefaults.recordMicrophone)
+                .help("Start every recording with narration on. The toolbar can still switch it off for one take.")
+                .onChange(of: model.recordingDefaults.recordMicrophone) { _, on in
+                    if on { model.featureTurnedOn(.microphone) }
+                }
+            Toggle("Record computer audio", isOn: $model.recordingDefaults.recordComputerAudio)
+                .help("Start every recording with the sound other apps play.")
+            Toggle("Record the camera", isOn: $model.recordingDefaults.recordCamera)
+                .help("Start every recording with the camera bubble on. Needs Camera access; asked for the first time you switch it on.")
+                .onChange(of: model.recordingDefaults.recordCamera) { _, on in
+                    if on { model.featureTurnedOn(.camera) }
+                }
             Toggle("Show keystrokes", isOn: $model.recordingDefaults.showKeystrokes)
                 .help("Show the keys you press as a pill in the recording. Needs Input Monitoring; asked for the first time you switch it on.")
                 .onChange(of: model.recordingDefaults.showKeystrokes) { _, on in

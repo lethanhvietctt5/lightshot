@@ -41,8 +41,10 @@ final class AppController: NSObject, CaptureUI {
         UserDefaultsSettingsStore.storedIncludeCursor()
     })
 
-    /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2).
+    /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2) and the one file sink every
+    /// recording path (delivery, recovery, history copy) goes through.
     private let recordingService: SCRecordingService
+    private let mediaSink = SystemMediaSink()
     /// The microphones the recorder toolbar lists (story 20).
     private let audioInputService = AVAudioInputService()
     /// The cameras it lists (story 27), and the preview bubble shared between the toolbar, the take
@@ -85,7 +87,7 @@ final class AppController: NSObject, CaptureUI {
             settings: settings,
             history: history,
             recordingService: recordingService,
-            mediaSink: SystemMediaSink(),
+            mediaSink: mediaSink,
             gifEncoder: ImageIOGIFEncoder(),
             mediaMetadata: AVMediaMetadata(),
             scratchDirectory: Self.supportDirectory,
@@ -206,7 +208,7 @@ final class AppController: NSObject, CaptureUI {
     func recoverOrphanedRecordings() {
         Task {
             let files = await RecordingRecovery.recover(in: coordinator.recordingScratchDirectory)
-            let sink = SystemMediaSink()
+            let sink = mediaSink
             var recovered: [URL] = []
             for file in files {
                 let recording = await coordinator.archiveRecoveredRecording(at: file)
@@ -289,7 +291,7 @@ final class AppController: NSObject, CaptureUI {
                 onReopen: { [weak self] in self?.openEditor(with: $0) },
                 onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) },
                 onReopenRecording: { [weak self] in self?.coordinator.reopenRecording($0) },
-                onCopyFile: { SystemMediaSink().copyFile(at: $0) }
+                onCopyFile: { [mediaSink] in mediaSink.copyFile(at: $0) }
             )
             window.contentViewController = NSHostingController(rootView: HistoryView(model: model))
         }
@@ -563,7 +565,7 @@ final class AppController: NSObject, CaptureUI {
     func presentRecordingFinished(at url: URL) {}
 
     /// The post-recording overlay (story 32): its actions report back to the coordinator, which
-    /// owns the pending take. Open editor and Trim light up with R14.
+    /// owns the pending take; Open Video Editor and Trim save it and open the editor.
     func presentPostRecordingOverlay(_ recording: PendingRecording) {
         postRecordingOverlay.present(recording, actions: PostRecordingOverlayController.Actions(
             copy: { [weak self] name in self?.coordinator.copyPendingRecordingFile(as: name) != nil },

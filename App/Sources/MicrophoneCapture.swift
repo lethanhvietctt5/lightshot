@@ -46,6 +46,11 @@ final class MicrophoneCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDel
         onLevel: @escaping @Sendable (Float) -> Void,
         onLost: @escaping @Sendable () -> Void
     ) throws {
+        // The toggle gate asks for the grant (story 41); a grant revoked since then must surface
+        // as the Microphone recovery, not as a generic failure.
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            throw RecordingError.permissionDenied(.microphone)
+        }
         // A remembered device that is no longer attached falls back to the system default.
         guard let device = deviceID.flatMap({ AVCaptureDevice(uniqueID: $0) }) ?? AVCaptureDevice.default(for: .audio) else {
             throw RecordingError.systemFailure("No microphone is available.")

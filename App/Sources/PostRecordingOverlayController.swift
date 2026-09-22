@@ -336,7 +336,6 @@ private struct PostRecordingOverlayView: View {
         Button("Delete", role: .destructive, action: delete)
     }
 
-    /// A `nil` action is a feature that has not landed (video editor, trim — R14): shown, disabled.
     private func button(_ title: String, systemImage: String, action: (() -> Void)?) -> some View {
         Button(action: action ?? {}) {
             Label(title, systemImage: systemImage)
@@ -346,7 +345,7 @@ private struct PostRecordingOverlayView: View {
         }
         .buttonStyle(.plain)
         .disabled(action == nil)
-        .help(action == nil ? "\(title) — coming with the video editor" : title)
+        .help(title)
     }
 }
 

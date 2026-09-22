@@ -57,9 +57,10 @@ public protocol CaptureUI: AnyObject {
     func presentRecordingFailure(_ error: RecordingError)
 }
 
-/// Thin composition root: sequences a capture through to the editor, and the editor's output back
-/// out through the sink. Holds only protocol references, so the domain core never imports the OS
-/// capture/clipboard APIs.
+/// Composition root and use-case sequencer: captures through to the editor and back out through
+/// the sink, and the whole recording pipeline (session commands, conversion, filing into history,
+/// the pending-take overlay). Holds only protocol references, so the domain core never imports the
+/// OS capture/clipboard APIs. Its recording half is exercised by `RecordingCoordinatorTests`.
 ///
 /// It wires the single fullscreen spine — capture → `openEditor(with:)` → `render` →
 /// clipboard — so what the user copies is always the flattened document.
@@ -372,7 +373,7 @@ public final class AppCoordinator {
         let options = RecordingOptions.resolve(
             region: region, output: output, defaults: settings.recordingDefaults, overrides: overrides
         )
-        let url = scratchURL(for: options.output.kind)
+        let url = scratchURL()
         guard (try? recordingSession.start(options, writingTo: url, at: clock())) != nil else { return }
         ui.presentRecordingState(recordingSession)
 
@@ -761,7 +762,8 @@ public final class AppCoordinator {
 
     /// A fresh file for the writer under the scratch directory. The directory itself is created
     /// here (Foundation, like `HistoryStore`).
-    private func scratchURL(for kind: RecordingOutputKind) -> URL {
+    /// Every take records as MP4 first (a GIF is converted afterwards), so one name rule serves.
+    private func scratchURL() -> URL {
         let directory = recordingScratchDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory

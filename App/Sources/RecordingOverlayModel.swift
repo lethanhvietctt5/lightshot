@@ -27,8 +27,6 @@ final class RecordingOverlayModel {
     let pixelScale: Double
     /// The Settings baseline the toggles start from.
     let defaults: RecordingDefaults
-    /// The toggles whose feature exists — the only ones the toolbar shows.
-    let availableToggles: Set<RecordingToggle>
     /// The microphones the mic toggle's menu lists (story 20).
     let audioInputs: [AudioInputDevice]
     /// The microphone this take narrates through; `nil` is the system default. Seeded from Settings
@@ -60,7 +58,6 @@ final class RecordingOverlayModel {
     init(
         bounds: Rect, pixelScale: Double, displayID: UInt32, windows: [HoverWindow],
         initial: CaptureRegion?, defaults: RecordingDefaults,
-        availableToggles: Set<RecordingToggle> = RecordingFeatures.availableToggles,
         audioInputs: [AudioInputDevice] = [],
         cameras: [CameraDevice] = [],
         cameraBubble: CameraBubbleController? = nil,
@@ -72,7 +69,6 @@ final class RecordingOverlayModel {
         self.displayID = displayID
         self.pixelScale = pixelScale
         self.defaults = defaults
-        self.availableToggles = availableToggles
         self.audioInputs = audioInputs
         // Kept even if that device is not attached right now: the capture falls back to the system
         // default for this take, and the preference survives for when it is plugged back in.
@@ -124,8 +120,8 @@ final class RecordingOverlayModel {
 
     var ratio: AspectRatio { selection.ratio }
 
-    /// The toolbar's toggles in display order, only those whose feature exists.
-    var toggles: [RecordingToggle] { RecordingToggle.allCases.filter { availableToggles.contains($0) } }
+    /// The toolbar's toggles in display order (story 8).
+    var toggles: [RecordingToggle] { RecordingToggle.allCases }
 
     /// A toggle's current state: this take's override, else the Settings default.
     func isOn(_ toggle: RecordingToggle) -> Bool {
