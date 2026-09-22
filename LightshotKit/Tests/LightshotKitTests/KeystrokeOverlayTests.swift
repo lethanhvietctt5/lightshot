@@ -2,8 +2,9 @@ import Testing
 import Foundation
 @testable import LightshotKit
 
-// The keystroke overlay rules (spec 0006, stories 30–31): what a press shows, mode filtering,
-// repeats, hold-then-fade, held modifiers, the secure-input blackout, labels and placement.
+// The keystroke overlay rules (spec 0006, stories 30–31; LIG-45): one pill per burst of typing,
+// how presses join it, mode filtering, repeats, hold-then-fade, held modifiers, the secure-input
+// blackout, labels and placement.
 
 private let cmdZ = KeyPress(label: "Z", modifiers: .command)
 
@@ -30,7 +31,7 @@ private let cmdZ = KeyPress(label: "Z", modifiers: .command)
     #expect(m.items(at: 0).isEmpty)
     m.keyDown(cmdZ, at: 0)
     m.keyDown(KeyPress(label: "→", modifiers: .option), at: 0)
-    #expect(m.items(at: 0).map(\.text) == ["⌘Z", "⌥→"])
+    #expect(m.items(at: 0).map(\.text) == ["⌘Z ⌥→"])
 
     var all = KeystrokeOverlayModel(settings: KeystrokeOverlaySettings(mode: .allKeys))
     all.keyDown(KeyPress(label: "A"), at: 0)
@@ -45,8 +46,9 @@ private let cmdZ = KeyPress(label: "Z", modifiers: .command)
     let items = m.items(at: 0.9)
     #expect(items.map(\.text) == ["⌘Z ×3"])
     #expect(items[0].scale == KeystrokeOverlayModel.bumpScale)   // re-bumped on the third press
-    m.keyDown(cmdZ, at: 2.0)                                       // outside the repeat window
-    #expect(m.items(at: 2.0).map(\.text) == ["⌘Z ×3", "⌘Z"])
+    m.keyDown(KeyPress(label: "A"), at: 1.2)
+    m.keyDown(cmdZ, at: 1.4)                                       // not the last token: a new one
+    #expect(m.items(at: 1.4).map(\.text) == ["⌘Z ×3 A ⌘Z"])
 }
 
 @Test func aHeldKeyAutoRepeatsWithoutCountingOrBumping() {
@@ -62,10 +64,42 @@ private let cmdZ = KeyPress(label: "Z", modifiers: .command)
     #expect(m.items(at: 5).map(\.text) == ["←"])
 }
 
-@Test func onlyTheNewestThreePillsStay() {
+@Test func continuousTypingJoinsOnePillUntilTheTypingStops() {
     var m = KeystrokeOverlayModel(settings: .standard)
-    for (i, key) in ["A", "B", "C", "D"].enumerated() { m.keyDown(KeyPress(label: key), at: Double(i) * 0.1) }
-    #expect(m.items(at: 0.31).map(\.text) == ["B", "C", "D"])
+    m.keyDown(KeyPress(label: "H", modifiers: .shift), at: 0)       // Shift alone is still typing
+    for (i, key) in ["E", "L", "L", "O"].enumerated() { m.keyDown(KeyPress(label: key), at: 0.2 + Double(i) * 0.2) }
+    #expect(m.items(at: 1.0).map(\.text) == ["HELLO"])
+    // A press while the pill is fading still belongs to the burst, and revives it.
+    let fading = 2.4                                                  // 1.6 s after the last key
+    m.keyDown(KeyPress(label: "!"), at: fading)
+    #expect(m.items(at: fading) == [KeystrokeItem(text: "HELLO!", opacity: 1, scale: KeystrokeOverlayModel.bumpScale)])
+    // Once it has faded out, the next key starts a new pill.
+    let gone = fading + KeystrokeOverlayModel.holdDuration + KeystrokeOverlayModel.fadeDuration
+    #expect(m.items(at: gone).isEmpty)
+    m.keyDown(KeyPress(label: "A"), at: gone + 0.1)
+    #expect(m.items(at: gone + 0.1).map(\.text) == ["A"])
+}
+
+@Test func chordsAndNamedKeysAreTheirOwnTokensAndSpaceShowsInsideText() {
+    var m = KeystrokeOverlayModel(settings: .standard)
+    m.keyDown(KeyPress(label: "F", modifiers: [.shift, .command]), at: 0)
+    m.keyDown(KeyPress(label: "S", modifiers: .command), at: 0.3)
+    m.keyDown(KeyPress(label: "H"), at: 0.5)
+    m.keyDown(KeyPress(label: "I"), at: 0.6)
+    m.keyDown(KeyPress(label: "Space"), at: 0.7)
+    m.keyDown(KeyPress(label: "Y"), at: 0.8)
+    m.keyDown(KeyPress(label: "↩"), at: 0.9)
+    m.keyDown(KeyPress(label: "O"), at: 1.0)
+    #expect(m.items(at: 1.0).map(\.text) == ["⇧⌘F ⌘S HI␣Y ↩ O"])
+}
+
+@Test func aLongBurstKeepsItsNewestCharacters() {
+    var m = KeystrokeOverlayModel(settings: .standard)
+    let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMN")
+    for (i, letter) in letters.enumerated() { m.keyDown(KeyPress(label: String(letter)), at: Double(i) * 0.05) }
+    let text = m.items(at: 2)[0].text
+    #expect(text.count == KeystrokeOverlayModel.maxCharacters)
+    #expect(text.hasPrefix("…") && text.hasSuffix("KLMN"))
 }
 
 @Test func heldModifiersShowWhileNothingFreshIsOnScreen() {

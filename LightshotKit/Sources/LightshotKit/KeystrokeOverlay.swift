@@ -104,34 +104,48 @@ public struct KeystrokeItem: Equatable, Sendable {
     }
 }
 
-/// Turns the key-event stream into what the keystroke pill shows (stories 30–31). Pure, so the
-/// display rules — mode filtering, repeat counting, hold-then-fade, held modifiers, and the
-/// secure-input blackout — are tested without a tap; the app's compositor draws `items(at:)`.
+/// Turns the key-event stream into what the keystroke pill shows (stories 30–31; LIG-45). Pure, so
+/// the display rules — one pill per burst of typing, how presses join it, mode filtering, repeat
+/// counting, hold-then-fade, held modifiers, and the secure-input blackout — are tested without a
+/// tap; the app's compositor draws `items(at:)`.
+///
+/// Keys typed continuously share one pill until the typing stops for `holdDuration` (the debounce);
+/// the pill then fades, and the next key starts a new one. A key pressed while it is still fading
+/// joins it and brings it back. Inside the pill, plain typing runs together (`HELLO`) while chords
+/// and named keys stand apart (`⇧⌘F ⌘S`).
 ///
 /// Secure input (story 31) is the safety rule: while it is on, every key is dropped and anything
 /// still on screen is cleared, so a password field's keystrokes cannot reach the file even if the
 /// OS delivered them. It resumes only when the flag turns off again.
 public struct KeystrokeOverlayModel: Equatable, Sendable {
-    /// How long a press stays fully visible before fading.
+    /// How long the pill stays fully visible after the last press — the debounce that ends a burst.
     public static let holdDuration: TimeInterval = 1.5
     public static let fadeDuration: TimeInterval = 0.35
-    /// A same-chord press within this window counts as a repeat (`×n`) instead of a new pill.
-    public static let repeatWindow: TimeInterval = 1.0
     /// How long the press bump lasts.
     public static let bumpDuration: TimeInterval = 0.15
     public static let bumpScale: Double = 1.12
-    /// At most this many pills at once; the oldest goes first.
-    public static let maxEntries = 3
+    /// The longest text a pill shows; a longer burst keeps its newest characters behind a `…`.
+    public static let maxCharacters = 28
 
     public let settings: KeystrokeOverlaySettings
     public private(set) var secureInput = false
     public private(set) var heldModifiers: KeyModifiers = []
-    private var entries: [Entry] = []
+    private var burst: Burst?
 
-    private struct Entry: Equatable, Sendable {
-        let text: String
+    /// The keys of one burst of typing, and when it was last pressed / last bumped.
+    private struct Burst: Equatable, Sendable {
+        var tokens: [Token]
         var lastTime: TimeInterval
-        var count: Int
+        var bumpTime: TimeInterval
+    }
+
+    /// Plain typing (`HELLO`), or one chord / named key, which counts its repeats (`⌘Z ×3`).
+    private struct Token: Equatable, Sendable {
+        var text: String
+        var isTyping: Bool
+        var count = 1
+
+        var display: String { count > 1 ? "\(text) ×\(count)" : text }
     }
 
     public init(settings: KeystrokeOverlaySettings) {
@@ -149,21 +163,36 @@ public struct KeystrokeOverlayModel: Equatable, Sendable {
     public mutating func keyDown(_ press: KeyPress, at time: TimeInterval) {
         guard !secureInput else { return }
         if settings.mode == .commandOnly, !press.modifiers.isCommandChord { return }
-        let text = press.text
-        if let last = entries.indices.last, entries[last].text == text {
-            // A held key auto-repeats: keep its pill alive, but it is one press, not `×n`.
-            if press.isRepeat {
-                entries[last].lastTime = max(entries[last].lastTime, time - Self.bumpDuration)
-                return
-            }
-            if time - entries[last].lastTime < Self.repeatWindow {
-                entries[last].count += 1
-                entries[last].lastTime = time
-                return
-            }
+        if let current = burst, time - current.lastTime >= Self.holdDuration + Self.fadeDuration { burst = nil }
+        // A held key auto-repeats: it keeps the pill alive, but it is one press.
+        if press.isRepeat, burst != nil {
+            burst?.lastTime = time
+            return
         }
-        entries.append(Entry(text: text, lastTime: time, count: 1))
-        if entries.count > Self.maxEntries { entries.removeFirst(entries.count - Self.maxEntries) }
+        var current = burst ?? Burst(tokens: [], lastTime: time, bumpTime: time)
+        if let typed = Self.typedCharacter(press) {
+            if let last = current.tokens.indices.last, current.tokens[last].isTyping {
+                current.tokens[last].text += typed
+            } else {
+                current.tokens.append(Token(text: typed, isTyping: true))
+            }
+        } else if let last = current.tokens.indices.last, !current.tokens[last].isTyping, current.tokens[last].text == press.text {
+            current.tokens[last].count += 1
+        } else {
+            current.tokens.append(Token(text: press.text, isTyping: false))
+        }
+        current.lastTime = time
+        current.bumpTime = time
+        burst = current
+    }
+
+    /// What a press adds to running text, or nil when it is a chord or a named key of its own.
+    /// Shift alone is still typing; Space shows as `␣` so the gap is visible.
+    private static func typedCharacter(_ press: KeyPress) -> String? {
+        guard press.modifiers.isEmpty || press.modifiers == .shift else { return nil }
+        if press.label == "Space" { return "␣" }
+        guard press.label.count == 1, !KeyLabel.isNamed(press.label) else { return nil }
+        return press.label
     }
 
     public mutating func modifiersChanged(_ modifiers: KeyModifiers) {
@@ -174,36 +203,42 @@ public struct KeystrokeOverlayModel: Equatable, Sendable {
     public mutating func setSecureInput(_ on: Bool) {
         secureInput = on
         if on {
-            entries = []
+            burst = nil
             heldModifiers = []
         }
     }
 
-    /// Forget entries that have finished fading by `time`.
+    /// Forget a burst that has finished fading by `time`.
     public mutating func prune(at time: TimeInterval) {
-        entries.removeAll { time - $0.lastTime >= Self.holdDuration + Self.fadeDuration }
+        if let current = burst, time - current.lastTime >= Self.holdDuration + Self.fadeDuration { burst = nil }
     }
 
-    /// The pills to draw at `time`, oldest first; held modifiers trail as their own pill while
-    /// nothing fresh is showing. Empty while secure input is on.
+    /// The pill to draw at `time`, then the held modifiers as their own pill while nothing fresh is
+    /// showing. Empty while secure input is on.
     public func items(at time: TimeInterval) -> [KeystrokeItem] {
         guard !secureInput else { return [] }
         var result: [KeystrokeItem] = []
-        for entry in entries {
-            let age = time - entry.lastTime
-            guard age >= 0 else { continue }
-            let opacity = age < Self.holdDuration
-                ? 1 : max(0, 1 - (age - Self.holdDuration) / Self.fadeDuration)
-            guard opacity > 0 else { continue }
-            let scale = age < Self.bumpDuration ? 1 + (Self.bumpScale - 1) * (1 - age / Self.bumpDuration) : 1
-            let text = entry.count > 1 ? "\(entry.text) ×\(entry.count)" : entry.text
-            result.append(KeystrokeItem(text: text, opacity: opacity, scale: scale))
+        var fresh = false
+        if let burst, time >= burst.lastTime {
+            let age = time - burst.lastTime
+            let opacity = age < Self.holdDuration ? 1 : max(0, 1 - (age - Self.holdDuration) / Self.fadeDuration)
+            if opacity > 0 {
+                let sinceBump = time - burst.bumpTime
+                let scale = sinceBump < Self.bumpDuration ? 1 + (Self.bumpScale - 1) * (1 - sinceBump / Self.bumpDuration) : 1
+                result.append(KeystrokeItem(text: Self.clipped(burst.tokens.map(\.display).joined(separator: " ")), opacity: opacity, scale: scale))
+            }
+            fresh = age < Self.holdDuration
         }
-        let somethingFresh = entries.contains { time - $0.lastTime < Self.holdDuration }
-        if !heldModifiers.isEmpty, !somethingFresh {
+        if !heldModifiers.isEmpty, !fresh {
             result.append(KeystrokeItem(text: heldModifiers.glyphs, opacity: 1, scale: 1))
         }
         return result
+    }
+
+    /// The newest `maxCharacters` of `text`, behind a `…` when it had to be cut.
+    private static func clipped(_ text: String) -> String {
+        guard text.count > maxCharacters else { return text }
+        return "…" + text.suffix(maxCharacters - 1)
     }
 }
 
@@ -218,6 +253,14 @@ public enum KeyLabel {
         101: "F9", 109: "F10", 103: "F11", 111: "F12",
         114: "?⃝",
     ]
+
+    /// Whether `label` is one of the named-key glyphs (`↩`, `⌫`, `←`, `F1` …) rather than a
+    /// character the key types.
+    public static func isNamed(_ label: String) -> Bool {
+        namedLabels.contains(label)
+    }
+
+    private static let namedLabels = Set(named.values)
 
     /// `nil` when the key prints nothing worth showing (a dead key, a bare modifier).
     public static func label(keyCode: Int, characters: String?) -> String? {
