@@ -27,6 +27,11 @@ final class RecordingOverlayModel {
     let defaults: RecordingDefaults
     /// The toggles whose feature exists — the only ones the toolbar shows.
     let availableToggles: Set<RecordingToggle>
+    /// The microphones the mic toggle's menu lists (story 20).
+    let audioInputs: [AudioInputDevice]
+    /// The microphone this take narrates through; `nil` is the system default. Seeded from Settings
+    /// and persisted back by the coordinator when the take starts.
+    private(set) var microphoneDeviceID: String?
     private let finish: (RecordingChoice?) -> Void
     /// The toolbar's settings shortcut (story 8).
     let openSettings: () -> Void
@@ -49,6 +54,7 @@ final class RecordingOverlayModel {
         bounds: Rect, pixelScale: Double, displayID: UInt32, windows: [HoverWindow],
         initial: CaptureRegion?, defaults: RecordingDefaults,
         availableToggles: Set<RecordingToggle> = RecordingFeatures.availableToggles,
+        audioInputs: [AudioInputDevice] = [],
         openSettings: @escaping () -> Void = {},
         permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
         finish: @escaping (RecordingChoice?) -> Void
@@ -58,6 +64,10 @@ final class RecordingOverlayModel {
         self.pixelScale = pixelScale
         self.defaults = defaults
         self.availableToggles = availableToggles
+        self.audioInputs = audioInputs
+        // Kept even if that device is not attached right now: the capture falls back to the system
+        // default for this take, and the preference survives for when it is plugged back in.
+        self.microphoneDeviceID = defaults.microphoneDeviceID
         self.openSettings = openSettings
         self.permissionGate = permissionGate
         self.finish = finish
@@ -111,6 +121,21 @@ final class RecordingOverlayModel {
             guard await permissionGate(toggle) else { return }
         }
         overrides[toggle] = turningOn
+    }
+
+    /// Pick a microphone from the mic toggle's menu (story 20) and make sure the toggle is on; a
+    /// refused permission leaves both the toggle and the choice as they were.
+    func selectMicrophone(_ deviceID: String?) async {
+        if !isOn(.microphone) {
+            await toggle(.microphone)
+            guard isOn(.microphone) else { return }
+        }
+        microphoneDeviceID = deviceID
+    }
+
+    /// The menu's "Do Not Record Microphone".
+    func turnOffMicrophone() {
+        overrides[.microphone] = false
     }
 
     // MARK: - Pointer
@@ -222,7 +247,7 @@ final class RecordingOverlayModel {
 
     private func start(_ output: RecordingOutputKind) {
         guard let region else { return }
-        finish(RecordingChoice(region: region, output: output, overrides: overrides))
+        finish(RecordingChoice(region: region, output: output, overrides: overrides, microphoneDeviceID: microphoneDeviceID))
     }
 
     /// The Fullscreen button (story 6): select the whole display; Start then records it.

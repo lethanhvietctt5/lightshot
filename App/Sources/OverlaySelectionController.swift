@@ -18,11 +18,18 @@ final class OverlaySelectionController: OverlayController {
     private let openSettings: () -> Void
     /// The recorder toolbar's lazy permission gate: whether a toggle may switch on (story 41).
     private let permissionGate: (RecordingToggle) async -> Bool
+    /// The microphones the toolbar's device menu lists (story 20).
+    private let audioInputs: () async -> [AudioInputDevice]
     private var window: OverlayKeyWindow?
 
-    init(openSettings: @escaping () -> Void = {}, permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true }) {
+    init(
+        openSettings: @escaping () -> Void = {},
+        permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
+        audioInputs: @escaping () async -> [AudioInputDevice] = { [] }
+    ) {
         self.openSettings = openSettings
         self.permissionGate = permissionGate
+        self.audioInputs = audioInputs
     }
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
     private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
@@ -49,9 +56,10 @@ final class OverlaySelectionController: OverlayController {
     func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         resolveStaleContinuation()
         let windows = await Self.hoverableWindows()
+        let inputs = await audioInputs()
         return await withCheckedContinuation { continuation in
             self.recordingContinuation = continuation
-            presentRecordingOverlay(windows: windows, initial: initial, defaults: defaults)
+            presentRecordingOverlay(windows: windows, initial: initial, defaults: defaults, audioInputs: inputs)
         }
     }
 
@@ -117,7 +125,8 @@ final class OverlaySelectionController: OverlayController {
     /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
     /// v1 covers the main screen, like the other two modes.
     private func presentRecordingOverlay(
-        windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?, defaults: RecordingDefaults
+        windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?, defaults: RecordingDefaults,
+        audioInputs: [AudioInputDevice]
     ) {
         let geometry = Self.mainScreen()
         let frame = geometry.frame
@@ -129,6 +138,7 @@ final class OverlaySelectionController: OverlayController {
             windows: windows,
             initial: initial,
             defaults: defaults,
+            audioInputs: audioInputs,
             openSettings: { [weak self] in
                 self?.finishRecording(with: nil)
                 self?.openSettings()

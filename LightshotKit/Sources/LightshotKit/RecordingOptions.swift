@@ -114,6 +114,10 @@ public struct RecordingOptions: Equatable, Sendable {
     public var microphone: InputDeviceSelection
     /// Record what other apps play (story 21).
     public var computerAudio: Bool
+    /// Gain applied to the narration, `0...2` (story 25); `1` is unity.
+    public var microphoneVolume: Double
+    /// Write one audio channel instead of two (story 25).
+    public var monoAudio: Bool
     /// The webcam bubble's source (story 26), or off.
     public var camera: InputDeviceSelection
     /// Draw a highlight at the pointer and animate clicks (story 29).
@@ -130,6 +134,8 @@ public struct RecordingOptions: Equatable, Sendable {
         output: RecordingOutput,
         microphone: InputDeviceSelection = .off,
         computerAudio: Bool = false,
+        microphoneVolume: Double = 1,
+        monoAudio: Bool = false,
         camera: InputDeviceSelection = .off,
         highlightClicks: Bool = false,
         showKeystrokes: Bool = false,
@@ -140,6 +146,8 @@ public struct RecordingOptions: Equatable, Sendable {
         self.output = output
         self.microphone = microphone
         self.computerAudio = computerAudio
+        self.microphoneVolume = min(max(microphoneVolume, 0), 2)
+        self.monoAudio = monoAudio
         self.camera = camera
         self.highlightClicks = highlightClicks
         self.showKeystrokes = showKeystrokes
@@ -166,6 +174,8 @@ public struct RecordingOptions: Equatable, Sendable {
             output: output == .video ? .video(defaults.video) : .gif(defaults.gif),
             microphone: microphoneOn ? .device(id: defaults.microphoneDeviceID) : .off,
             computerAudio: overrides.computerAudio ?? defaults.recordComputerAudio,
+            microphoneVolume: defaults.microphoneVolume,
+            monoAudio: defaults.monoAudio,
             camera: cameraOn ? .device(id: defaults.cameraDeviceID) : .off,
             highlightClicks: overrides.highlightClicks ?? defaults.highlightClicks,
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
@@ -189,6 +199,10 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var recordMicrophone: Bool
     /// `nil` means the system default input.
     public var microphoneDeviceID: String?
+    /// Narration gain, `0...2`; `1` is unity (story 25).
+    public var microphoneVolume: Double
+    /// Write mono audio (story 25).
+    public var monoAudio: Bool
     public var recordComputerAudio: Bool
     public var recordCamera: Bool
     /// `nil` means the system default camera.
@@ -216,6 +230,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         gif: GIFSettings = .standard,
         recordMicrophone: Bool = false,
         microphoneDeviceID: String? = nil,
+        microphoneVolume: Double = 1,
+        monoAudio: Bool = false,
         recordComputerAudio: Bool = false,
         recordCamera: Bool = false,
         cameraDeviceID: String? = nil,
@@ -235,6 +251,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.gif = gif
         self.recordMicrophone = recordMicrophone
         self.microphoneDeviceID = microphoneDeviceID
+        self.microphoneVolume = min(max(microphoneVolume, 0), 2)
+        self.monoAudio = monoAudio
         self.recordComputerAudio = recordComputerAudio
         self.recordCamera = recordCamera
         self.cameraDeviceID = cameraDeviceID
@@ -263,6 +281,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             gif: try c.decode(GIFSettings.self, forKey: .gif),
             recordMicrophone: try c.decode(Bool.self, forKey: .recordMicrophone),
             microphoneDeviceID: try c.decodeIfPresent(String.self, forKey: .microphoneDeviceID),
+            microphoneVolume: try c.decodeIfPresent(Double.self, forKey: .microphoneVolume) ?? 1,
+            monoAudio: try c.decodeIfPresent(Bool.self, forKey: .monoAudio) ?? false,
             recordComputerAudio: try c.decode(Bool.self, forKey: .recordComputerAudio),
             recordCamera: try c.decode(Bool.self, forKey: .recordCamera),
             cameraDeviceID: try c.decodeIfPresent(String.self, forKey: .cameraDeviceID),
@@ -317,11 +337,18 @@ public struct RecordingChoice: Equatable, Sendable {
     public var region: CaptureRegion
     public var output: RecordingOutputKind
     public var overrides: RecordingOverrides
+    /// The microphone picked in the toolbar's device menu (story 20); `nil` is the system default.
+    /// Persisted as the Settings default, so the next take starts from it.
+    public var microphoneDeviceID: String?
 
-    public init(region: CaptureRegion, output: RecordingOutputKind, overrides: RecordingOverrides = .none) {
+    public init(
+        region: CaptureRegion, output: RecordingOutputKind, overrides: RecordingOverrides = .none,
+        microphoneDeviceID: String? = nil
+    ) {
         self.region = region
         self.output = output
         self.overrides = overrides
+        self.microphoneDeviceID = microphoneDeviceID
     }
 }
 

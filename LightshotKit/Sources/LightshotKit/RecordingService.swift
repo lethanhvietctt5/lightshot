@@ -17,14 +17,16 @@ public protocol RecordingService: PermissionAuthorizing {
     /// typed failure — never a silently empty file. `permissionDenied` still routes to the
     /// System-Settings recovery for the named kind.
     ///
-    /// `onFailure` is called at most once, from any thread, if the stream dies mid-take (the
-    /// display goes away, permission is revoked, the writer fails): the service has already torn
-    /// itself down, and the coordinator fails the session, deletes the partial file and routes the
-    /// error. It is never called for failures `start` or `stop` return directly.
+    /// `onEvent` is called from any thread for things that happen mid-take: `.failed` at most once
+    /// if the stream dies (the display goes away, permission is revoked, the writer fails) — the
+    /// service has already torn itself down, and the coordinator fails the session and routes the
+    /// error; `.audioInputLost` if the microphone disappears — the service keeps recording video
+    /// and the coordinator asks whether to continue without audio or stop. Neither is sent for
+    /// failures `start` or `stop` return directly.
     func start(
         _ options: RecordingOptions,
         writingTo url: URL,
-        onFailure: @escaping @Sendable (RecordingError) -> Void
+        onEvent: @escaping @Sendable (RecordingEvent) -> Void
     ) async -> Result<Void, RecordingError>
 
     /// Stop feeding frames and audio without ending the file (story 13).
@@ -40,6 +42,14 @@ public protocol RecordingService: PermissionAuthorizing {
     /// its partial files on every path that ends without a finished file (cancel, a failed stop,
     /// a stream death); the coordinator never has to clean up after it.
     func cancel() async
+}
+
+/// Something that happened to a take in progress, reported by `RecordingService`.
+public enum RecordingEvent: Equatable, Sendable {
+    /// The stream died; the service has torn itself down.
+    case failed(RecordingError)
+    /// The microphone was disconnected mid-take (story 24); video continues.
+    case audioInputLost
 }
 
 /// Where a finished recording goes (spec 0006, stories 32–34): the file-level counterpart of

@@ -15,8 +15,9 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     var requestResult: CaptureAuthorizationStatus = .authorized
 
     private(set) var starts: [(options: RecordingOptions, url: URL)] = []
-    /// The failure callback of the most recent `start`, so a test can simulate the stream dying.
-    private(set) var onFailure: (@Sendable (RecordingError) -> Void)?
+    /// The event callback of the most recent `start`, so a test can simulate the stream dying or the
+    /// microphone vanishing.
+    private(set) var onEvent: (@Sendable (RecordingEvent) -> Void)?
     /// When set, `start` suspends here until the test resumes it — for the in-flight-start race.
     var startGate: CheckedContinuation<Void, Never>?
     var holdStart = false
@@ -42,10 +43,10 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     }
     func start(
         _ options: RecordingOptions, writingTo url: URL,
-        onFailure: @escaping @Sendable (RecordingError) -> Void
+        onEvent: @escaping @Sendable (RecordingEvent) -> Void
     ) async -> Result<Void, RecordingError> {
         starts.append((options, url))
-        self.onFailure = onFailure
+        self.onEvent = onEvent
         if holdStart {
             await withCheckedContinuation { startGate = $0 }
         }
@@ -84,6 +85,8 @@ private final class SpyUI: CaptureUI {
     var confirmResult = true
     private(set) var restartConfirmations = 0
     private(set) var discardConfirmations = 0
+    var continueWithoutAudio = true
+    private(set) var microphoneLostPrompts = 0
     private(set) var finished: [URL] = []
     private(set) var recordingFailures: [RecordingError] = []
     private(set) var permissionDeniedCount = 0
@@ -102,6 +105,7 @@ private final class SpyUI: CaptureUI {
     }
     func confirmRecordingRestart() async -> Bool { restartConfirmations += 1; return confirmResult }
     func confirmRecordingDiscard() async -> Bool { discardConfirmations += 1; return confirmResult }
+    func resolveMicrophoneDisconnected() async -> Bool { microphoneLostPrompts += 1; return continueWithoutAudio }
     func presentRecordingFinished(at url: URL) { finished.append(url) }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
 }
@@ -298,7 +302,7 @@ private let display = CaptureRegion.display(id: 7)
 @Test @MainActor func aStreamDyingMidTakeFailsTheSessionDeletesThePartialAndRestoresTheStatusItem() async {
     let h = Harness()
     await h.coordinator.startRecording(region: display)
-    h.service.onFailure?(.systemFailure("display disconnected"))
+    h.service.onEvent?(.failed(.systemFailure("display disconnected")))
     await Task.yield()
     while h.coordinator.isRecording { await Task.yield() }
 
@@ -366,6 +370,46 @@ private let display = CaptureRegion.display(id: 7)
     h.settings.rememberLastRecordingArea = true
     await h.coordinator.recordScreen()
     #expect(h.overlay.initials.last == window)
+}
+
+// MARK: - Microphone (stories 20, 24, 25)
+
+@Test @MainActor func aLostMicrophoneAsksAndContinuesOrStops() async {
+    let h = Harness()
+    await h.coordinator.startRecording(region: display)
+    h.service.onEvent?(.audioInputLost)
+    while h.ui.microphoneLostPrompts == 0 { await Task.yield() }
+    await Task.yield()
+    #expect(h.coordinator.isRecording)                    // "Continue Without Audio"
+    #expect(h.service.stopCount == 0)
+
+    h.ui.continueWithoutAudio = false
+    h.service.onEvent?(.audioInputLost)
+    while h.coordinator.isRecording { await Task.yield() }
+    #expect(h.ui.microphoneLostPrompts == 2)
+    #expect(h.service.stopCount == 1)                     // "Stop": the take is finished and saved
+    #expect(h.sink.saves.count == 1)
+}
+
+@Test @MainActor func theToolbarsMicrophoneChoiceBecomesTheDefaultAndReachesTheOptions() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(microphoneVolume: 1.5, monoAudio: true, countdownEnabled: false)
+    h.overlay.choice = RecordingChoice(
+        region: display, output: .video, overrides: RecordingOverrides(microphone: true), microphoneDeviceID: "usb-mic"
+    )
+    await h.coordinator.recordScreen()
+
+    #expect(h.settings.recordingDefaults.microphoneDeviceID == "usb-mic")
+    let options = h.service.starts.first?.options
+    #expect(options?.microphone == .device(id: "usb-mic"))
+    #expect(options?.microphoneVolume == 1.5)
+    #expect(options?.monoAudio == true)
+
+    // A take with the microphone off never overwrites the remembered device.
+    await h.coordinator.stopRecording()
+    h.overlay.choice = RecordingChoice(region: display, output: .video, overrides: RecordingOverrides(microphone: false), microphoneDeviceID: nil)
+    await h.coordinator.recordScreen()
+    #expect(h.settings.recordingDefaults.microphoneDeviceID == "usb-mic")
 }
 
 // MARK: - Controls: pause / resume, restart, discard (stories 12–14)

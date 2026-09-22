@@ -38,6 +38,8 @@ final class AppController: NSObject, CaptureUI {
 
     /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2).
     private let recordingService = SCRecordingService()
+    /// The microphones the recorder toolbar lists (story 20).
+    private let audioInputService = AVAudioInputService()
     /// The 3-2-1 before a take (story 10).
     private let countdown = CountdownOverlayController()
     /// The pause / stop / restart / discard pill and the outside-the-frame dimming (stories 12–16).
@@ -57,7 +59,8 @@ final class AppController: NSObject, CaptureUI {
             captureService: captureService,
             overlay: OverlaySelectionController(
                 openSettings: { [weak self] in self?.showSettings() },
-                permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false }
+                permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false },
+                audioInputs: { [audioInputService] in await audioInputService.availableInputs() }
             ),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
@@ -454,10 +457,12 @@ final class AppController: NSObject, CaptureUI {
         switch session.state {
         case .recording, .paused:
             if defaults.showRecordingControls {
+                let meter = recordingService.audioMeter
                 recordingControls.show(
                     position: defaults.controlsPosition,
                     isPaused: session.state == .paused,
                     elapsed: { [weak self] in self?.recordingElapsed ?? 0 },
+                    audioLevel: session.options?.microphone.isOn == true ? { meter.level } : nil,
                     actions: RecordingControlsController.Actions(
                         pauseResume: { [weak self] in self?.pauseResumeRecording() },
                         stop: { [weak self] in self?.toggleRecording() },
@@ -473,6 +478,17 @@ final class AppController: NSObject, CaptureUI {
             recordingControls.hide()
             recordingDim.hide()
         }
+    }
+
+    func resolveMicrophoneDisconnected() async -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Microphone disconnected"
+        alert.informativeText = "The microphone stopped delivering audio. Continue recording without it, or stop now?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Continue Without Audio")
+        alert.addButton(withTitle: "Stop Recording")
+        WindowPresenter.activateApp()
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func confirmRecordingRestart() async -> Bool {
