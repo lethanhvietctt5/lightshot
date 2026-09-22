@@ -15,6 +15,8 @@ final class VideoEditorController: NSObject, NSWindowDelegate {
     private var model: VideoEditorModel?
 
     func open(_ url: URL) {
+        // A clip already open gives up its backup and any export before the next takes the window.
+        model?.close()
         let model = VideoEditorModel(url: url)
         self.model = model
         let window = self.window ?? makeWindow()
@@ -23,8 +25,7 @@ final class VideoEditorController: NSObject, NSWindowDelegate {
         window.setContentSize(NSSize(width: 960, height: 600))
         window.center()
         self.window = window
-        NSApp.setActivationPolicy(.regular)
-        WindowPresenter.present(window)
+        WindowPresenter.present(window, asRegularApp: true)
     }
 
     private func makeWindow() -> NSWindow {
@@ -40,7 +41,13 @@ final class VideoEditorController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         model?.close()
         model = nil
-        NSApp.setActivationPolicy(.accessory)
+        WindowPresenter.regularWindowClosed()
+    }
+
+    /// Quitting skips `windowWillClose`: drop the backup and cancel an export here instead.
+    func prepareForTermination() {
+        model?.close()
+        model = nil
     }
 }
 
@@ -91,10 +98,12 @@ final class VideoEditorModel {
     }
 
     private func load() {
+        loadTask?.cancel()
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let source = try await VideoExporter.inspect(url)
+                guard !Task.isCancelled else { return }
                 self.source = source
                 trim = TrimRange(duration: source.duration)
                 player.replaceCurrentItem(with: AVPlayerItem(url: url))
@@ -159,7 +168,11 @@ final class VideoEditorModel {
     func trimOnly() {
         guard let source else { return }
         let range = trim
-        export { output in try await VideoExporter.trimOnly(source.url, range: range, to: output) }
+        export { [weak self] output in
+            try await VideoExporter.trimOnly(source.url, range: range, to: output) { progress in
+                Task { @MainActor in self?.progress = progress }
+            }
+        }
     }
 
     func trimAndConvert() {
@@ -183,7 +196,11 @@ final class VideoEditorModel {
             defer { self?.isExporting = false }
             do {
                 try await run(staging)
-                try self?.commit(staging)
+                guard let self else {
+                    try? FileManager.default.removeItem(at: staging)
+                    return
+                }
+                try commit(staging)
             } catch is CancellationError {
                 try? FileManager.default.removeItem(at: staging)
             } catch {
@@ -201,10 +218,11 @@ final class VideoEditorModel {
         let fileManager = FileManager.default
         switch saveMode {
         case .newFile:
+            // The editor keeps the original as its subject: further edits and Revert are about
+            // the recording, never about a derivative.
             let destination = Self.uniqueSibling(of: url, suffix: " edited")
             try fileManager.moveItem(at: staging, to: destination)
             message = "Saved as \(destination.lastPathComponent)"
-            reload(destination)
         case .replace:
             if backup == nil {
                 let keep = Self.uniqueSibling(of: url, suffix: " original", hidden: true)
@@ -237,6 +255,7 @@ final class VideoEditorModel {
 
     /// The window closed: a backup is no longer needed.
     func close() {
+        loadTask?.cancel()
         exportTask?.cancel()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
@@ -247,16 +266,8 @@ final class VideoEditorModel {
 
     /// `name suffix.ext`, numbered if taken; hidden names get a leading dot.
     private static func uniqueSibling(of url: URL, suffix: String, hidden: Bool = false) -> URL {
-        let folder = url.deletingLastPathComponent()
         let base = (hidden ? "." : "") + url.deletingPathExtension().lastPathComponent + suffix
-        let ext = url.pathExtension
-        var candidate = folder.appendingPathComponent(base).appendingPathExtension(ext)
-        var n = 2
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            candidate = folder.appendingPathComponent("\(base) \(n)").appendingPathExtension(ext)
-            n += 1
-        }
-        return candidate
+        return url.deletingLastPathComponent().appendingPathComponent(base).appendingPathExtension(url.pathExtension).uniqueForFileSystem()
     }
 }
 
@@ -321,7 +332,7 @@ private struct VideoEditorView: View {
                     }
                     HStack {
                         Button("Trim Only") { model.trimOnly() }
-                            .disabled(model.isExporting || model.trim.isWholeClip)
+                            .disabled(model.isExporting)
                             .help("Cut without re-encoding: fast, same codec and quality.")
                         Button("Trim & Convert") { model.trimAndConvert() }
                             .disabled(model.isExporting)
@@ -363,22 +374,25 @@ private struct TrimSlider: View {
             let startX = CGFloat(model.trim.start / duration) * width
             let endX = CGFloat(model.trim.end / duration) * width
             let playX = CGFloat(min(max(model.currentTime, 0), duration) / duration) * width
+            // Drags are read in the slider's own space, not the 12-pt handle's, so a handle can be
+            // dragged the whole width.
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.25)).frame(height: 24)
                 RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.35))
                     .frame(width: max(0, endX - startX), height: 24).offset(x: startX)
                 Rectangle().fill(Color.primary).frame(width: 1, height: 28).offset(x: playX)
                 handle.offset(x: startX - 6)
-                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("trim")).onChanged { value in
                         let t = Double(value.location.x / width) * duration
                         model.setIn(t); model.seek(to: model.trim.start)
                     })
                 handle.offset(x: endX - 6)
-                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("trim")).onChanged { value in
                         let t = Double(value.location.x / width) * duration
                         model.setOut(t); model.seek(to: model.trim.end)
                     })
             }
+            .coordinateSpace(name: "trim")
         }
         .frame(height: 28)
         .help("Drag the handles to set the in and out points")

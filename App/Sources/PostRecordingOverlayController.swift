@@ -23,9 +23,9 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
         let delete: () -> Bool
         /// The overlay went away without a decision: keep the file.
         let dismiss: (String) -> Void
-        /// Save under the name, then open the editor (story 35); `nil` while the editor is unavailable.
-        let openEditor: ((String) -> Bool)?
-        let trim: ((String) -> Bool)?
+        /// Save under the name, then open the video editor (story 35) — both the Editor and the
+        /// Trim buttons lead there; `nil` when the take cannot be edited (a GIF).
+        let editor: ((String) -> Bool)?
     }
 
     /// How long the overlay stays up untouched before it dismisses itself (and the file is kept).
@@ -53,8 +53,7 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
             delete: { [weak self] in self?.deleteAfterConfirming() },
             quickLook: { [weak self] in self?.toggleQuickLook() },
             // A GIF cannot be trimmed or edited in v1 (spec: the overlay hides both for a GIF).
-            openEditor: recording.kind == .gif ? nil : actions.openEditor.map { open in { [weak self] in self?.settle { _ in open(model.name) } } },
-            trim: recording.kind == .gif ? nil : actions.trim.map { trim in { [weak self] in self?.settle { _ in trim(model.name) } } },
+            editor: recording.kind == .gif ? nil : actions.editor.map { open in { [weak self] in self?.settle { _ in open(model.name) } } },
             touched: { [weak self] in self?.restartTimeout() }
         )
         let hosting = NSHostingView(rootView: view)
@@ -264,8 +263,7 @@ private struct PostRecordingOverlayView: View {
     let save: () -> Void
     let delete: () -> Void
     let quickLook: () -> Void
-    let openEditor: (() -> Void)?
-    let trim: (() -> Void)?
+    let editor: (() -> Void)?
     let touched: () -> Void
     @FocusState private var renaming: Bool
 
@@ -303,8 +301,8 @@ private struct PostRecordingOverlayView: View {
                 button("Copy File", systemImage: "doc.on.doc", action: copy)
                 button("Save", systemImage: "square.and.arrow.down", action: save)
                 if showsEditorActions {
-                    button("Open Video Editor", systemImage: "slider.horizontal.3", action: openEditor)
-                    button("Trim", systemImage: "scissors", action: trim)
+                    button("Open Video Editor", systemImage: "slider.horizontal.3", action: editor)
+                    button("Trim", systemImage: "scissors", action: editor)
                 }
                 Spacer(minLength: 0)
                 button("Delete", systemImage: "trash", action: delete)
@@ -330,8 +328,8 @@ private struct PostRecordingOverlayView: View {
         Button("Save", action: save)
         Button("Rename") { renaming = true }
         if showsEditorActions {
-            Button("Open Video Editor", action: openEditor ?? {}).disabled(openEditor == nil)
-            Button("Trim…", action: trim ?? {}).disabled(trim == nil)
+            Button("Open Video Editor", action: editor ?? {}).disabled(editor == nil)
+            Button("Trim…", action: editor ?? {}).disabled(editor == nil)
         }
         Button("Quick Look", action: quickLook)
         Divider()

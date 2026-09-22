@@ -27,4 +27,25 @@ enum WindowPresenter {
     static func activateApp() {
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    /// How many editor-style windows are open. While any is, Lightshot is a regular app — Dock
+    /// icon, ⌘-Tab entry, app menu — so the window can be found and switched to (spec 0004); the
+    /// last one closing returns it to a menu-bar-only accessory. Counted, so closing one editor
+    /// never hides another that is still open.
+    private static var regularWindows = 0
+
+    /// `present`, and while this window is open keep the app regular. Pair with
+    /// `regularWindowClosed()` from the window's close hook.
+    static func present(_ window: NSWindow, asRegularApp: Bool) {
+        if asRegularApp {
+            regularWindows += 1
+            NSApp.setActivationPolicy(.regular)
+        }
+        present(window)
+    }
+
+    static func regularWindowClosed() {
+        regularWindows = max(0, regularWindows - 1)
+        if regularWindows == 0 { NSApp.setActivationPolicy(.accessory) }
+    }
 }

@@ -70,13 +70,16 @@ public enum VideoDimensions {
         return even(Size(width: source.width * scale, height: source.height * scale))
     }
 
-    /// A typed width (or height) keeps the source aspect; both typed use both, clamped to the
-    /// source so nothing is scaled up.
+    /// A typed width (or height) keeps the source aspect; both typed fit the source inside that
+    /// box, still keeping its aspect — the picture is never stretched. Clamped to the source so
+    /// nothing is scaled up.
     public static func size(width: Double?, height: Double?, source: Size) -> Size {
         let aspect = source.height > 0 ? source.width / source.height : 1
         var result: Size
         switch (width, height) {
-        case let (w?, h?): result = Size(width: w, height: h)
+        case let (w?, h?):
+            let scale = min(w / max(source.width, 1), h / max(source.height, 1))
+            result = Size(width: source.width * scale, height: source.height * scale)
         case let (w?, nil): result = Size(width: w, height: w / aspect)
         case let (nil, h?): result = Size(width: h * aspect, height: h)
         case (nil, nil): result = source

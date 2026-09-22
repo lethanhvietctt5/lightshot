@@ -38,7 +38,7 @@ enum VideoExporter {
 
     /// Trim only: a container-level cut through the pass-through preset — no re-encode, so it
     /// keeps the codec and costs about a copy of the kept part.
-    static func trimOnly(_ url: URL, range: TrimRange, to output: URL) async throws {
+    static func trimOnly(_ url: URL, range: TrimRange, to output: URL, progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws {
         let asset = AVURLAsset(url: url)
         guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
             throw RecordingError.systemFailure("The recording could not be prepared for export.")
@@ -47,19 +47,44 @@ enum VideoExporter {
             start: CMTime(seconds: range.start, preferredTimescale: 600),
             end: CMTime(seconds: range.end, preferredTimescale: 600)
         )
-        try await Self.run(session, to: output)
+        try await Self.run(session, to: output, progress: progress)
     }
 
-    private static func run(_ session: AVAssetExportSession, to output: URL) async throws {
+    /// Runs an export session with progress and cancellation: the session's own progress is polled
+    /// while it runs, and cancelling the calling task cancels the export and removes the file.
+    /// `AVAssetExportSession` is thread-safe for progress and cancel but not marked `Sendable`.
+    private struct SessionBox: @unchecked Sendable { let session: AVAssetExportSession }
+
+    private static func run(_ session: AVAssetExportSession, to output: URL, progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws {
         try? FileManager.default.removeItem(at: output)
-        if #available(macOS 15.0, *) {
-            try await session.export(to: output, as: .mp4)
-        } else {
-            session.outputURL = output
-            session.outputFileType = .mp4
-            await withCheckedContinuation { continuation in session.exportAsynchronously { continuation.resume() } }
-            if session.status != .completed { throw session.error ?? RecordingError.systemFailure("The cut could not be written.") }
+        let box = SessionBox(session: session)
+        let poll = Task {
+            while !Task.isCancelled {
+                progress(Double(box.session.progress))
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         }
+        defer { poll.cancel() }
+        do {
+            try await withTaskCancellationHandler {
+                if #available(macOS 15.0, *) {
+                    try await session.export(to: output, as: .mp4)
+                } else {
+                    session.outputURL = output
+                    session.outputFileType = .mp4
+                    await withCheckedContinuation { continuation in session.exportAsynchronously { continuation.resume() } }
+                    if session.status == .cancelled { throw CancellationError() }
+                    if session.status != .completed { throw session.error ?? RecordingError.systemFailure("The cut could not be written.") }
+                }
+            } onCancel: {
+                box.session.cancelExport()
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: output)
+            if Task.isCancelled { throw CancellationError() }
+            throw error
+        }
+        progress(1)
     }
 
     /// Trim & Convert: re-encode the cut as H.264 at `settings.dimensions` and the bit rate the
@@ -114,7 +139,9 @@ enum VideoExporter {
                 input.expectsMediaDataInRealTime = false
                 writer.add(input)
                 audioPair = (out, input)
-            case .mute, .volume, .mono, .remove:
+            case .remove:
+                break   // excluded above; listed so the switch stays exhaustive
+            case .mute, .volume, .mono:
                 let channels = settings.audio == .mono ? 1 : max(1, min(source.audioChannels, 2))
                 let out = AVAssetReaderAudioMixOutput(audioTracks: [audioTrack], audioSettings: [
                     AVFormatIDKey: kAudioFormatLinearPCM,
@@ -157,17 +184,22 @@ enum VideoExporter {
         let trimStart = settings.trim.start
         // Both inputs are pumped at once: the writer interleaves audio and video and stops asking
         // for more of one until the other has caught up, so pumping them in turn would deadlock.
+        // The pump runs on a GCD queue with no task context, so cancellation reaches it by flag.
         let videoJob = Pump.Job(input: videoIn, output: videoOut)
         let audioJob = audioPair.map { Pump.Job(input: $0.1, output: $0.0) }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                await pump.drive(videoJob) { time in
-                    progress(trimLength > 0 ? min(1, max(0, (CMTimeGetSeconds(time) - trimStart) / trimLength)) : 1)
+        await withTaskCancellationHandler {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await pump.drive(videoJob) { time in
+                        progress(trimLength > 0 ? min(1, max(0, (CMTimeGetSeconds(time) - trimStart) / trimLength)) : 1)
+                    }
+                }
+                if let audioJob {
+                    group.addTask { await pump.drive(audioJob, onSample: nil) }
                 }
             }
-            if let audioJob {
-                group.addTask { await pump.drive(audioJob, onSample: nil) }
-            }
+        } onCancel: {
+            pump.cancel()
         }
         try await pump.finish()
         progress(1)
@@ -181,6 +213,19 @@ enum VideoExporter {
         private let output: URL
         private let queue = DispatchQueue(label: "dev.lightshot.export")
         private var failed: Error?
+        private let lock = NSLock()
+        private var cancelled = false
+
+        /// Stop pumping: the reader is cancelled so `copyNextSampleBuffer` returns at once.
+        func cancel() {
+            lock.lock(); cancelled = true; lock.unlock()
+            reader.cancelReading()
+        }
+
+        private var isCancelled: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return cancelled
+        }
 
         init(reader: AVAssetReader, writer: AVAssetWriter, output: URL) {
             self.reader = reader
@@ -204,7 +249,7 @@ enum VideoExporter {
                 job.input.requestMediaDataWhenReady(on: queue) { [self] in
                     guard !job.done else { return }
                     while job.input.isReadyForMoreMediaData {
-                        if Task.isCancelled || failed != nil { break }
+                        if isCancelled || failed != nil { break }
                         guard let sample = job.output.copyNextSampleBuffer() else {
                             job.input.markAsFinished()
                             job.done = true
@@ -217,7 +262,7 @@ enum VideoExporter {
                         }
                         onSample?(CMSampleBufferGetPresentationTimeStamp(sample))
                     }
-                    if Task.isCancelled || failed != nil {
+                    if isCancelled || failed != nil {
                         job.input.markAsFinished()
                         job.done = true
                         continuation.resume()
@@ -227,11 +272,11 @@ enum VideoExporter {
         }
 
         func finish() async throws {
-            if Task.isCancelled || failed != nil || reader.status == .failed {
+            if isCancelled || failed != nil || reader.status == .failed {
                 reader.cancelReading()
                 writer.cancelWriting()
                 try? FileManager.default.removeItem(at: output)
-                if Task.isCancelled { throw CancellationError() }
+                if isCancelled { throw CancellationError() }
                 throw failed ?? reader.error ?? RecordingError.systemFailure("The recording could not be read.")
             }
             await writer.finishWriting()

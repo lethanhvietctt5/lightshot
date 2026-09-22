@@ -41,7 +41,8 @@ import Foundation
     #expect(VideoDimensions.size(width: 800, height: nil, source: source) == Size(width: 800, height: 450))
     #expect(VideoDimensions.size(width: nil, height: 300, source: source) == Size(width: 532, height: 300))   // 533.3 → even, down
     #expect(VideoDimensions.size(width: 4000, height: nil, source: source) == Size(width: 1600, height: 900))
-    #expect(VideoDimensions.size(width: 640, height: 640, source: source) == Size(width: 640, height: 640))
+    #expect(VideoDimensions.size(width: 640, height: 640, source: source) == Size(width: 640, height: 360))   // fits the box, never stretched
+    #expect(VideoDimensions.size(width: 3200, height: 450, source: source) == Size(width: 800, height: 450))
     #expect(VideoDimensions.size(width: nil, height: nil, source: source) == source)
     #expect(VideoDimensions.size(width: 1, height: nil, source: source) == Size(width: 2, height: 2))
 }
