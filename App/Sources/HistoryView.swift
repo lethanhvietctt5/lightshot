@@ -115,7 +115,7 @@ private struct HistoryItemCard: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
         .contextMenu {
             Button(record.openTitle) { model.reopen(record) }
-            Button(record.kind == .screenshot ? "Copy" : "Copy File") { model.copy(record) }
+            Button(record.copyTitle) { model.copy(record) }
             Button("Reveal in Finder") { model.reveal(record) }
             Divider()
             Button("Delete", role: .destructive) { model.delete(record) }
@@ -143,8 +143,8 @@ private struct HistoryItemCard: View {
 
     private var actions: some View {
         HStack(spacing: 4) {
-            actionButton(record.kind == .screenshot ? "square.and.pencil" : "play.rectangle", record.openTitle) { model.reopen(record) }
-            actionButton("doc.on.doc", record.kind == .screenshot ? "Copy" : "Copy File") { model.copy(record) }
+            actionButton(record.openSymbol, record.openTitle) { model.reopen(record) }
+            actionButton("doc.on.doc", record.copyTitle) { model.copy(record) }
             actionButton("folder", "Reveal in Finder") { model.reveal(record) }
             Spacer()
             actionButton("trash", "Delete") { model.delete(record) }
@@ -181,6 +181,9 @@ private extension CaptureRecord {
         case .gif: return "Open"
         }
     }
+
+    var openSymbol: String { kind == .screenshot ? "square.and.pencil" : "play.rectangle" }
+    var copyTitle: String { kind == .screenshot ? "Copy" : "Copy File" }
 }
 
 private extension CaptureSource {

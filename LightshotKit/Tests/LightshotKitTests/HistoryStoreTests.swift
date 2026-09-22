@@ -271,3 +271,24 @@ private func movieFixture(in dir: TempDir, bytes: [UInt8] = [0, 1, 2, 3]) -> URL
     let reloaded = HistoryStore(directory: history).all()
     #expect(reloaded.first?.kind == .screenshot && reloaded.first?.fileURL.lastPathComponent == "a.png")
 }
+
+@Test func addMediaRefusesWhenRetentionIsOffAndRollsBackAFailedIndexWrite() throws {
+    let dir = TempDir()
+    let off = HistoryStore(directory: dir.url.appendingPathComponent("history"), retention: 0)
+    let take = movieFixture(in: dir)
+    #expect(throws: HistoryError.historyOff) {
+        try off.add(mediaAt: take, kind: .video, pixelWidth: 1, pixelHeight: 1, duration: 1, thumbnail: solidImage().data, source: .recording)
+    }
+    #expect(FileManager.default.fileExists(atPath: take.path))              // left where it was
+
+    // The index cannot be written (its path is a directory): the file comes back, no record.
+    let blocked = dir.url.appendingPathComponent("blocked")
+    try FileManager.default.createDirectory(at: blocked.appendingPathComponent("index.json"), withIntermediateDirectories: true)
+    let store = HistoryStore(directory: blocked)
+    #expect(throws: (any Error).self) {
+        try store.add(mediaAt: take, kind: .video, pixelWidth: 1, pixelHeight: 1, duration: 1, thumbnail: solidImage().data, source: .recording)
+    }
+    #expect(FileManager.default.fileExists(atPath: take.path))
+    #expect(store.all().isEmpty)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: blocked.path).filter { $0.hasSuffix("-thumb.png") }.isEmpty)
+}

@@ -183,26 +183,47 @@ public final class HistoryStore {
 
     /// Records a finished recording (spec 0006, story 39): **moves** the media file into the
     /// store (keeping its extension — a long take is never duplicated on disk) and writes the
-    /// caller-supplied thumbnail. The dimensions and duration come from the caller too, because
+    /// caller-supplied thumbnail; the copy at the save location is the user's, this one is history's. The dimensions and duration come from the caller too, because
     /// only the app can read a video's frame size and first frame (AVFoundation); for a GIF use
     /// `addGIF(at:source:at:)`, which reads them itself through ImageIO.
+    ///
+    /// The move is the last irreversible step and is undone if the index cannot be written, so a
+    /// failure never strands the only copy of a take: either the record exists and owns the file,
+    /// or the file is back where it was and the error says so. With retention at 0 the store
+    /// would delete the file the moment it arrived, so it refuses instead (`historyOff`) and the
+    /// caller keeps the take.
     @discardableResult
     public func add(
         mediaAt url: URL, kind: CaptureKind, pixelWidth: Int, pixelHeight: Int, duration: TimeInterval?,
         thumbnail: Data, source: CaptureSource, at date: Date = Date()
     ) throws -> CaptureRecord {
+        guard retention > 0 else { throw HistoryError.historyOff }
         try ensureDirectory()
         let id = UUID()
         let mediaFile = url.pathExtension.isEmpty ? id.uuidString : "\(id.uuidString).\(url.pathExtension)"
         let thumbnailFile = "\(id.uuidString)-thumb.png"
-        try fileManager.moveItem(at: url, to: directory.appendingPathComponent(mediaFile))
-        try thumbnail.write(to: directory.appendingPathComponent(thumbnailFile), options: .atomic)
+        let mediaURL = directory.appendingPathComponent(mediaFile)
+        let thumbnailURL = directory.appendingPathComponent(thumbnailFile)
+        try thumbnail.write(to: thumbnailURL, options: .atomic)
+        do {
+            try fileManager.moveItem(at: url, to: mediaURL)
+        } catch {
+            try? fileManager.removeItem(at: thumbnailURL)
+            throw error
+        }
         let entry = StoredEntry(
             id: id, timestamp: date, source: source, kind: kind,
             pixelWidth: pixelWidth, pixelHeight: pixelHeight, duration: duration,
             imageFile: mediaFile, thumbnailFile: thumbnailFile
         )
-        return try append(entry)
+        do {
+            return try append(entry)
+        } catch {
+            entries.removeAll { $0.id == id }
+            try? fileManager.moveItem(at: mediaURL, to: url)
+            try? fileManager.removeItem(at: thumbnailURL)
+            throw error
+        }
     }
 
     /// Records a GIF (story 39): dimensions from the file's properties, the thumbnail from frame
@@ -353,6 +374,19 @@ private struct StoredEntry: Codable {
 public enum HistoryError: Error, Equatable {
     /// The file is not media the store can read (a GIF ImageIO cannot open).
     case unreadableMedia(URL)
+    /// Retention is 0: history keeps nothing, so it will not take a file it would delete at once.
+    case historyOff
+}
+
+/// One PNG encoder for every thumbnail the store writes.
+public enum PNGEncoder {
+    public static func data(from image: CGImage) -> Data? {
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return out as Data
+    }
 }
 
 /// A GIF's dimensions, first-frame thumbnail and total duration, through ImageIO.
@@ -366,19 +400,18 @@ private func gifMetadata(at url: URL) -> (width: Int, height: Int, duration: Tim
     for index in 0..<CGImageSourceGetCount(source) {
         let frame = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
         let gif = frame?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
-        let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? TimeInterval) ?? (gif?[kCGImagePropertyGIFDelayTime] as? TimeInterval) ?? 0
-        duration += delay
+        let unclamped = gif?[kCGImagePropertyGIFUnclampedDelayTime] as? TimeInterval ?? 0
+        let clamped = gif?[kCGImagePropertyGIFDelayTime] as? TimeInterval ?? 0
+        // A zero delay is shown for 0.1 s by browsers and ImageIO alike; count it as they do.
+        duration += unclamped > 0 ? unclamped : (clamped > 0 ? clamped : 0.1)
     }
     let options: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,
         kCGImageSourceThumbnailMaxPixelSize: 320,
     ]
-    guard let thumbnailImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-    let data = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { return nil }
-    CGImageDestinationAddImage(destination, thumbnailImage, nil)
-    guard CGImageDestinationFinalize(destination) else { return nil }
-    return (width, height, duration, data as Data)
+    guard let thumbnailImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+          let png = PNGEncoder.data(from: thumbnailImage) else { return nil }
+    return (width, height, duration, png)
 }
 
 /// Generates a small PNG preview from full-resolution image bytes, longest edge capped at
@@ -394,11 +427,5 @@ private func makeThumbnail(from data: Data, maxPixelSize: Int) -> Data? {
     guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
         return nil
     }
-    let out = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else {
-        return nil
-    }
-    CGImageDestinationAddImage(destination, thumbnail, nil)
-    guard CGImageDestinationFinalize(destination) else { return nil }
-    return out as Data
+    return PNGEncoder.data(from: thumbnail)
 }

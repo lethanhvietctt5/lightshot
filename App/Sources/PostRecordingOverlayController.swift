@@ -240,7 +240,7 @@ private final class PostRecordingModel {
             player = nil
             looper = nil
         }
-        name = recording.file.deletingPathExtension().lastPathComponent
+        name = recording.suggestedName ?? recording.file.deletingPathExtension().lastPathComponent
         fileSize = (try? FileManager.default.attributesOfItem(atPath: recording.file.path)[.size] as? NSNumber)?.int64Value
     }
 

@@ -361,8 +361,9 @@ public final class AppCoordinator {
     public func startRecording(
         region: CaptureRegion, output: RecordingOutputKind = .video, overrides: RecordingOverrides = .none
     ) async {
-        // A GIF still converting owns the popup and the scratch file; a new take waits for it.
-        guard let recordingService, !isRecording, !isStartingRecording, gifConversion == nil else { return }
+        // A GIF still converting (or a take still being filed into history) owns the popup and
+        // the scratch file; a new take waits for it.
+        guard let recordingService, !isRecording, !isStartingRecording, gifConversion == nil, !isArchiving else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
         // A take still waiting in the overlay is kept (saved under the pattern) before a new one
         // can replace it — the app moving on is a dismissal (story 32).
@@ -509,6 +510,8 @@ public final class AppCoordinator {
 
     /// The GIF conversion in flight, so Cancel can reach it.
     private var gifConversion: Task<Void, Error>?
+    /// True while a finished take is being filed into history (reading its metadata suspends).
+    private var isArchiving = false
 
     /// A take finished. A GIF take is converted first (stories 37–38): the video is what was
     /// recorded, the GIF is what the user asked for; cancelling offers the video instead. Then
@@ -555,10 +558,15 @@ public final class AppCoordinator {
     /// A history failure is best-effort like a screenshot's: the take stays in scratch and is
     /// routed as before.
     private func archiveAndRoute(_ recording: PendingRecording) async {
-        guard let history else {
-            route(recording)
-            return
-        }
+        route(await archive(recording))
+    }
+
+    /// File a finished take into history (story 39); the result is history's copy, or the take
+    /// unchanged when history cannot take it (retention off, unreadable, disk trouble).
+    private func archive(_ recording: PendingRecording) async -> PendingRecording {
+        guard let history else { return recording }
+        isArchiving = true
+        defer { isArchiving = false }
         let record: CaptureRecord?
         switch recording.kind {
         case .gif:
@@ -574,23 +582,47 @@ public final class AppCoordinator {
                 record = nil
             }
         }
-        guard let record else {
-            route(recording)
-            return
-        }
-        route(PendingRecording(file: record.fileURL, kind: recording.kind, duration: recording.duration, historyRecordID: record.id))
+        guard let record else { return recording }
+        return PendingRecording(
+            file: record.fileURL, kind: recording.kind, duration: recording.duration,
+            origin: .freshInHistory(id: record.id), suggestedName: suggestedName(for: recording.file)
+        )
     }
 
-    /// Reopen a history item (story 39): a video goes to the editor, a GIF to the overlay (which
-    /// hides the editor actions for it); a screenshot is the history window's own business.
+    /// History's files are named by id; the overlay should still offer the pattern's name.
+    private func suggestedName(for file: URL) -> String {
+        settings.recordingDestination(pathExtension: file.pathExtension).deletingPathExtension().lastPathComponent
+    }
+
+    /// A take a crashed session left behind (story 18) joins history like any other (story 39)
+    /// and comes back for the app to deliver: history's copy when it could be filed, else the
+    /// file as found.
+    public func archiveRecoveredRecording(at file: URL) async -> PendingRecording {
+        let kind: RecordingOutputKind = file.pathExtension.lowercased() == "gif" ? .gif : .video
+        let duration: TimeInterval
+        if kind == .video, let metadata = await mediaMetadata?.videoMetadata(for: file) {
+            duration = metadata.duration
+        } else {
+            duration = 0
+        }
+        return await archive(PendingRecording(file: file, kind: kind, duration: duration))
+    }
+
+    /// Reopen a history item (story 39). A video is copied out to the save location and the copy
+    /// opens in the editor, so the editor's Replace / Save as new never touch history's directory
+    /// (the same path the overlay's Open Video Editor takes). A GIF opens in the overlay, which
+    /// hides the editor actions for it. A screenshot is the history window's own business. A take
+    /// still waiting in the overlay is kept first.
     public func reopenRecording(_ record: CaptureRecord) {
+        dismissPendingRecording()
+        let recording = PendingRecording(
+            file: record.fileURL, kind: record.kind == .gif ? .gif : .video, duration: record.duration ?? 0,
+            origin: .historyItem(id: record.id), suggestedName: suggestedName(for: record.fileURL)
+        )
         switch record.kind {
         case .video:
-            ui.openVideoEditor(at: record.fileURL)
+            if let copy = deliver(recording, as: nil) { ui.openVideoEditor(at: copy) }
         case .gif:
-            let recording = PendingRecording(
-                file: record.fileURL, kind: .gif, duration: record.duration ?? 0, historyRecordID: record.id, isNew: false
-            )
             pendingRecording = recording
             ui.presentPostRecordingOverlay(recording)
         case .screenshot:
@@ -641,8 +673,8 @@ public final class AppCoordinator {
     // MARK: - Post-recording overlay (stories 32–34)
 
     /// Copy file: the take is saved first (under `name`, or the pattern) and the saved file's
-    /// reference goes on the pasteboard — a reference to the scratch file would dangle once the
-    /// overlay went and moved it. Returns where it landed; `nil` on a failed save (still pending).
+    /// reference goes on the pasteboard — what the user pastes is the file where they keep it,
+    /// never a scratch or history path. Returns where it landed; `nil` on a failed save.
     @discardableResult
     public func copyPendingRecordingFile(as name: String? = nil) -> URL? {
         guard let saved = savePendingRecording(as: name) else { return nil }

@@ -101,21 +101,43 @@ public protocol MediaMetadataSource: Sendable {
 /// A finished take waiting in the post-recording overlay (stories 32–34): still in the scratch
 /// directory until Save, a dismissal (which saves) or Delete decides where it goes.
 public struct PendingRecording: Equatable, Sendable {
+    /// Where the file lives and what a dismissal owes it (story 39).
+    public enum Origin: Equatable, Sendable {
+        /// A take still in the scratch directory: Save moves it, a dismissal keeps it by saving.
+        case scratch
+        /// A take that just finished and is now history's: Save copies it out, a dismissal keeps
+        /// it by saving, Delete removes the record.
+        case freshInHistory(id: UUID)
+        /// A history item reopened in the overlay: already kept, so a dismissal owes nothing.
+        case historyItem(id: UUID)
+    }
+
     public let file: URL
     public let kind: RecordingOutputKind
     public let duration: TimeInterval
-    /// Set once the take is in history (story 39): the file is history's, so Save copies it out
-    /// and Delete removes the record.
-    public let historyRecordID: UUID?
-    /// A take that just finished (`true`) or a history item reopened in the overlay (`false`, so
-    /// a dismissal keeps nothing more than it already has).
-    public let isNew: Bool
+    public let origin: Origin
+    /// What the overlay's Rename field starts with; the file's own stem when `nil`.
+    public let suggestedName: String?
 
-    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval, historyRecordID: UUID? = nil, isNew: Bool = true) {
+    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval, origin: Origin = .scratch, suggestedName: String? = nil) {
         self.file = file
         self.kind = kind
         self.duration = duration
-        self.historyRecordID = historyRecordID
-        self.isNew = isNew
+        self.origin = origin
+        self.suggestedName = suggestedName
+    }
+
+    /// The history record that owns the file, if any.
+    public var historyRecordID: UUID? {
+        switch origin {
+        case .scratch: return nil
+        case let .freshInHistory(id), let .historyItem(id): return id
+        }
+    }
+
+    /// A dismissal saves a take that has not been kept anywhere the user chose yet.
+    public var isNew: Bool {
+        if case .historyItem = origin { return false }
+        return true
     }
 }
