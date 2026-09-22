@@ -142,6 +142,8 @@ private final class SpyUI: CaptureUI {
     func confirmRecordingDiscard() async -> Bool { true }
     func resolveMicrophoneDisconnected() async -> Bool { true }
     func presentRecordingFinished(at url: URL) {}
+    func presentPostRecordingOverlay(_ recording: PendingRecording) {}
+    func openVideoEditor(at url: URL) {}
     func presentRecordingFailure(_ error: RecordingError) {}
 }
 

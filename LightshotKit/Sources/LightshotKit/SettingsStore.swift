@@ -66,9 +66,18 @@ public extension SettingsStore {
     /// The same destination for a file that already has its container's extension — a recovered
     /// take, or a movie the MP4 rewrap could not process.
     func recordingDestination(pathExtension: String, at date: Date = Date()) -> URL {
-        saveLocation
-            .appendingPathComponent(FilenameFormatter(pattern: filenamePattern).filename(at: date))
-            .appendingPathExtension(pathExtension)
+        recordingDestination(named: FilenameFormatter(pattern: filenamePattern).filename(at: date), pathExtension: pathExtension)
+    }
+
+    /// The destination for a recording the user renamed in the post-recording overlay (story 32):
+    /// the save location joined with that name. Path separators and a leading dot are dropped so a
+    /// name can never escape the folder or hide the file; an empty name falls back to the pattern.
+    func recordingDestination(named name: String, pathExtension: String, at date: Date = Date()) -> URL {
+        var cleaned = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while cleaned.hasPrefix(".") { cleaned.removeFirst() }
+        if cleaned.isEmpty { cleaned = FilenameFormatter(pattern: filenamePattern).filename(at: date) }
+        return saveLocation.appendingPathComponent(cleaned).appendingPathExtension(pathExtension)
     }
 }
 

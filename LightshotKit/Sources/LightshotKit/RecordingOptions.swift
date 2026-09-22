@@ -6,6 +6,25 @@ public enum RecordingOutputKind: String, CaseIterable, Codable, Sendable {
     case gif
 }
 
+/// What happens when a take finishes (spec 0006, story 33) — separate from the screenshot
+/// `openInEditor` setting.
+public enum AfterRecordingAction: String, CaseIterable, Codable, Sendable {
+    /// The post-recording overlay: preview, copy / save / delete / rename, drag-out (story 32).
+    case showOverlay
+    /// Save to the default location and do nothing else.
+    case saveSilently
+    /// Save, then open the video editor (R14).
+    case openEditor
+
+    public var title: String {
+        switch self {
+        case .showOverlay: return "Show the overlay"
+        case .saveSilently: return "Save silently"
+        case .openEditor: return "Open the video editor"
+        }
+    }
+}
+
 /// The video encoder a recording is written with (open decision 2: H.264 default, HEVC optional).
 public enum VideoCodec: String, CaseIterable, Codable, Sendable {
     case h264
@@ -259,6 +278,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var confirmBeforeDiscard: Bool
     /// Show the elapsed time next to the stop glyph in the menu bar while recording (story 11).
     public var showRecordingTimeInMenuBar: Bool
+    /// What a finished take leads to (story 33).
+    public var afterRecording: AfterRecordingAction
 
     public init(
         video: VideoSettings = .standard,
@@ -285,7 +306,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         controlsPosition: RecordingControlsPosition = .bottom,
         dimScreenWhileRecording: Bool = false,
         confirmBeforeDiscard: Bool = true,
-        showRecordingTimeInMenuBar: Bool = true
+        showRecordingTimeInMenuBar: Bool = true,
+        afterRecording: AfterRecordingAction = .showOverlay
     ) {
         self.video = video
         self.gif = gif
@@ -312,6 +334,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.dimScreenWhileRecording = dimScreenWhileRecording
         self.confirmBeforeDiscard = confirmBeforeDiscard
         self.showRecordingTimeInMenuBar = showRecordingTimeInMenuBar
+        self.afterRecording = afterRecording
     }
 
     /// The shipped defaults: a 3-second countdown with sounds, everything else off.
@@ -346,7 +369,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             controlsPosition: try c.decodeIfPresent(RecordingControlsPosition.self, forKey: .controlsPosition) ?? .bottom,
             dimScreenWhileRecording: try c.decodeIfPresent(Bool.self, forKey: .dimScreenWhileRecording) ?? false,
             confirmBeforeDiscard: try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeDiscard) ?? true,
-            showRecordingTimeInMenuBar: try c.decodeIfPresent(Bool.self, forKey: .showRecordingTimeInMenuBar) ?? true
+            showRecordingTimeInMenuBar: try c.decodeIfPresent(Bool.self, forKey: .showRecordingTimeInMenuBar) ?? true,
+            afterRecording: try c.decodeIfPresent(AfterRecordingAction.self, forKey: .afterRecording) ?? .showOverlay
         )
     }
 }

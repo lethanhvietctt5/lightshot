@@ -96,7 +96,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight", "keystrokeOverlay", "cameraBubble"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight", "keystrokeOverlay", "cameraBubble", "afterRecording"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
@@ -107,6 +107,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(older.clickHighlight == .standard)
     #expect(older.keystrokeOverlay == .standard)
     #expect(older.cameraBubble == .standard)
+    #expect(older.afterRecording == .showOverlay)
 }
 
 @Test func cameraBubbleSettingsReachTheOptions() {
