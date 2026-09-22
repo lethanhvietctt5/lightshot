@@ -24,80 +24,111 @@ struct EditorView: View {
     }
 
     var body: some View {
-        @Bindable var model = model
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            optionsBar
-            Divider()
-            canvas
-        }
-        .background { editingShortcuts }
-        .frame(minWidth: 760, minHeight: 520)
+        canvas
+            .background { editingShortcuts }
+            .frame(minWidth: 760, minHeight: 520)
+            .toolbar { editorToolbar }
     }
 
     // MARK: - Toolbar
 
-    /// Top row: the tools on the left, the output actions on the right.
-    private var toolbar: some View {
-        HStack(spacing: 12) {
-            toolPalette
-            Spacer()
-            outputActions
+    /// One row in the window's toolbar, beside the traffic lights, as CleanShot lays it out
+    /// (LIG-46): Crop, the drawing tools, the options for the active tool or selection, and the
+    /// output actions at the trailing edge. On macOS 26 each item is a glass group.
+    @ToolbarContentBuilder
+    private var editorToolbar: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            // Spacers split the row into CleanShot's separate glass groups and push the actions to
+            // the trailing edge. `.navigation` items would merge into one group, so these stay
+            // `.automatic`, which keeps their order.
+            ToolbarItem { toolButton(.crop).padding(.horizontal, Self.groupInset) }
+            ToolbarSpacer(.fixed)
+            ToolbarItem { toolPalette }
+            if showsOptions {
+                ToolbarSpacer(.fixed)
+                ToolbarItem { options }
+            }
+            ToolbarSpacer(.flexible)
+            // Save As… and Copy as icons sharing one glass group; Done on its own, prominent.
+            ToolbarItemGroup {
+                saveAsButton.labelStyle(.iconOnly)
+                copyButton.labelStyle(.iconOnly)
+            }
+            ToolbarSpacer(.fixed)
+            ToolbarItem {
+                doneButton
+                    .buttonStyle(.glassProminent)
+                    .tint(.accentColor)
+            }
+        } else {
+            ToolbarItem(placement: .navigation) { toolButton(.crop) }
+            ToolbarItem(placement: .navigation) { toolPalette }
+            if showsOptions {
+                ToolbarItem(placement: .navigation) { options }
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                saveAsButton
+                copyButton
+                doneButton.buttonStyle(.borderedProminent)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
-        // Tooltips hang below their buttons, over the rows that follow.
-        .zIndex(2)
     }
 
-    /// Second row: the style controls for the active tool or selection. Kept off the tool row
-    /// so the larger tool buttons and the contextual pickers both fit at the minimum width.
-    private var optionsBar: some View {
-        HStack(spacing: 12) {
-            styleControls
-            arrowControls
-            redactionControls
+    /// Room between a group's glass edge and the blue pill of a selected tool at either end, so
+    /// the pill never runs into the group's rounded edge.
+    private static let groupInset: CGFloat = 4
+
+    private var toolPalette: some View {
+        HStack(spacing: 2) {
+            ForEach(EditorModel.Tool.allCases.filter { $0 != .crop }) { toolButton($0) }
+        }
+        .padding(.horizontal, Self.groupInset)
+    }
+
+    private func toolButton(_ tool: EditorModel.Tool) -> some View {
+        let selected = model.tool == tool
+        return Button {
+            fontSizeFocused = false
+            model.selectTool(tool)
+        } label: {
+            Image(systemName: tool.symbol)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .frame(width: 32, height: 26)
+                .background(Capsule().fill(selected ? Color.accentColor : .clear))
+                // The whole button is the target, not just the glyph's painted pixels.
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(tool.title)
+        .accessibilityLabel(tool.title)
+        .accessibilityHint(tool.help)
+    }
+
+    private var showsOptions: Bool { !model.styleFields.isEmpty || model.canResetCrop }
+
+    /// Only what applies to the active tool or the selected element (`EditorModel.styleFields`).
+    private var options: some View {
+        let fields = model.styleFields
+        return HStack(spacing: 10) {
+            if fields.contains(.color) { colorControl }
+            if fields.contains(.strokeWidth) { strokeWidthControl }
+            if fields.contains(.arrowStyle) { arrowControls }
+            if fields.contains(.fontSize) { fontSizeControl }
+            if fields.contains(.redaction) { redactionControls }
             if model.canResetCrop {
-                Divider().frame(height: 20)
                 Button("Reset Crop") { model.resetCrop() }
                     .help("Restore the full image (⌘Z also reverses)")
             }
-            Spacer()
         }
-        .padding(.horizontal, 12)
-        .frame(height: 40)
-        .background(.bar)
-        .zIndex(1)
-    }
-
-    private var toolPalette: some View {
-        HStack(spacing: 4) {
-            ForEach(EditorModel.Tool.allCases) { tool in
-                Button {
-                    fontSizeFocused = false
-                    model.selectTool(tool)
-                } label: {
-                    Image(systemName: tool.symbol)
-                        .font(.system(size: 17, weight: .medium))
-                        .frame(width: Self.toolButtonSize.width, height: Self.toolButtonSize.height)
-                        // The whole button is the target, not just the glyph's painted pixels.
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .background(model.tool == tool ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 7))
-                .instantTooltip(tool.title)
-                .accessibilityLabel(tool.title)
-                .accessibilityHint(tool.help)
-            }
-        }
+        .padding(.horizontal, 6)
     }
 
     /// The number typed into the font-size field; applied on Return, clamped to `fontSizeRange`.
     @State private var fontSizeEntry: Double = Style.default.fontSize
     @State private var initialFocusSettled = false
     private static let fontSizeRange: ClosedRange<Double> = 6...200
+    private static let strokeWidths: [Double] = [1, 2, 3, 4, 6, 8, 12, 16, 24]
 
     private func commitFontSizeEntry() {
         let size = min(max(fontSizeEntry.rounded(), Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
@@ -107,32 +138,93 @@ struct EditorView: View {
         fontSizeFocused = false
     }
 
-    @ViewBuilder
-    private var styleControls: some View {
-        ColorPicker("", selection: Binding(
-            get: { model.style.color.color },
-            set: { model.setColor(RGBAColor($0)) }
-        ), supportsOpacity: false)
-        .labelsHidden()
-        .help("Color")
-
-        HStack(spacing: 4) {
-            Image(systemName: "lineweight").foregroundStyle(.secondary)
-            Slider(
-                value: Binding(get: { model.style.strokeWidth }, set: { model.setStrokeWidth($0) }),
-                in: 1...24,
-                onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
-            )
-            .frame(width: 90)
+    /// A small swatch of the current colour; its menu offers CleanShot-like presets and the
+    /// system colour panel for anything else.
+    private var colorControl: some View {
+        Menu {
+            ForEach(Self.palette, id: \.name) { swatch in
+                Button {
+                    model.setColor(swatch.color)
+                    model.commitStyleEdit()
+                } label: {
+                    Label { Text(swatch.name) } icon: { Image(nsImage: Self.swatchImage(swatch.color, diameter: 12)) }
+                }
+            }
+            Divider()
+            Button("Custom…") {
+                colorPanel.show(model.style.color) { model.setColor($0) }
+            }
+        } label: {
+            Label { Text("Color") } icon: { Image(nsImage: Self.swatchImage(model.style.color, diameter: 16)) }
+                .labelStyle(.iconOnly)
         }
-        .help("Stroke width")
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Color")
+    }
 
+    @State private var colorPanel = ColorPanelBridge()
+
+    private static let palette: [(name: String, color: RGBAColor)] = [
+        ("Red", RGBAColor(red: 1, green: 0.23, blue: 0.19)),
+        ("Orange", RGBAColor(red: 1, green: 0.58, blue: 0)),
+        ("Yellow", RGBAColor(red: 1, green: 0.8, blue: 0)),
+        ("Green", RGBAColor(red: 0.2, green: 0.78, blue: 0.35)),
+        ("Blue", RGBAColor(red: 0, green: 0.48, blue: 1)),
+        ("Purple", RGBAColor(red: 0.69, green: 0.32, blue: 0.87)),
+        ("Pink", RGBAColor(red: 1, green: 0.18, blue: 0.33)),
+        ("Black", RGBAColor(red: 0, green: 0, blue: 0)),
+        ("White", RGBAColor(red: 1, green: 1, blue: 1)),
+    ]
+
+    /// A filled circle with a thin edge, drawn as a non-template image so menus and the toolbar
+    /// keep its colour.
+    private static func swatchImage(_ color: RGBAColor, diameter: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: diameter, height: diameter), flipped: false) { rect in
+            let circle = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
+            NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: color.alpha).setFill()
+            circle.fill()
+            NSColor.black.withAlphaComponent(0.25).setStroke()
+            circle.lineWidth = 1
+            circle.stroke()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    /// The stroke width as a compact menu of sizes; the current one is ticked.
+    private var strokeWidthControl: some View {
+        Menu {
+            Picker("Stroke width", selection: Binding(
+                get: { model.style.strokeWidth },
+                set: { model.setStrokeWidth($0); model.commitStyleEdit() }
+            )) {
+                ForEach(Array(Set(Self.strokeWidths + [model.style.strokeWidth])).sorted(), id: \.self) { width in
+                    Text("\(Self.points(width)) pt").tag(width)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("\(Self.points(model.style.strokeWidth)) pt", systemImage: "lineweight")
+                .labelStyle(.titleAndIcon)
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Stroke width")
+    }
+
+    private static func points(_ value: Double) -> String {
+        value == value.rounded() ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private var fontSizeControl: some View {
         HStack(spacing: 4) {
             Image(systemName: "textformat.size").foregroundStyle(.secondary)
             TextField("Size", value: $fontSizeEntry, format: .number.precision(.fractionLength(0)))
                 .textFieldStyle(.roundedBorder)
                 .multilineTextAlignment(.trailing)
-                .frame(width: 48)
+                .frame(width: 44)
                 .focused($fontSizeFocused)
                 .onSubmit { commitFontSizeEntry() }
                 .onChange(of: model.style.fontSize) { _, size in fontSizeEntry = size }
@@ -148,76 +240,68 @@ struct EditorView: View {
         .help("Font size (points in the image)")
     }
 
-    /// The arrow style picker, shown while drawing arrows or with one selected (which it
-    /// restyles in place). Each button draws its style with the same geometry as the canvas.
-    @ViewBuilder
+    /// The arrow styles, drawing arrows or with one selected (which they restyle in place). Each
+    /// button draws its style with the same geometry as the canvas.
     private var arrowControls: some View {
-        if model.showsArrowControls {
-            Divider().frame(height: 20)
-            HStack(spacing: 4) {
-                ForEach(ArrowStyle.allCases, id: \.self) { arrowStyle in
-                    Button {
-                        model.setArrowStyle(arrowStyle)
-                    } label: {
-                        ArrowStyleIcon(style: arrowStyle)
-                            .frame(width: 40, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .background(model.arrowStyle == arrowStyle ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 6))
-                    .instantTooltip(arrowStyle.title)
-                    .accessibilityLabel(arrowStyle.title)
-                    .accessibilityHint(arrowStyle.help)
+        HStack(spacing: 2) {
+            ForEach(ArrowStyle.allCases, id: \.self) { arrowStyle in
+                let selected = model.arrowStyle == arrowStyle
+                Button {
+                    model.setArrowStyle(arrowStyle)
+                } label: {
+                    ArrowStyleIcon(style: arrowStyle, color: selected ? .white : .primary)
+                        .frame(width: 26, height: 18)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(selected ? Color.accentColor : .clear))
+                        .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .help(arrowStyle.title)
+                .accessibilityLabel(arrowStyle.title)
+                .accessibilityHint(arrowStyle.help)
             }
         }
     }
 
-    /// The redaction style picker and strength slider, shown while the redact tool is active
-    /// or a redaction is selected (which they restyle in place). Pixelate is the default, but
-    /// blackout is the only style framed as secure; blur/pixelate carry an explicit "not
-    /// secure" warning so they are never mistaken for secret-safe redaction (story 24).
+    /// The redaction style and strength, drawing a redaction or with one selected (which they
+    /// restyle in place). Pixelate is the default, but blackout is the only style framed as
+    /// secure; blur/pixelate carry an explicit "not secure" warning so they are never mistaken for
+    /// secret-safe redaction (story 24).
     @ViewBuilder
     private var redactionControls: some View {
-        if model.showsRedactionControls {
-            Divider().frame(height: 20)
-            Picker("Redaction style", selection: Binding(
-                get: { model.redactionStyle }, set: { model.setRedactionStyle($0) }
-            )) {
-                Text("Pixelate").tag(RedactionStyle.pixelate)
-                Text("Blur").tag(RedactionStyle.blur)
-                Text("Blackout").tag(RedactionStyle.blackout)
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.large)
-            .labelsHidden()
-            .fixedSize()
-            .help(redactionHelp)
+        Picker("Redaction style", selection: Binding(
+            get: { model.redactionStyle }, set: { model.setRedactionStyle($0) }
+        )) {
+            Text("Pixelate").tag(RedactionStyle.pixelate)
+            Text("Blur").tag(RedactionStyle.blur)
+            Text("Blackout").tag(RedactionStyle.blackout)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help(redactionHelp)
 
-            if model.redactionStyle != .blackout {
-                HStack(spacing: 4) {
-                    Image(systemName: "circle.lefthalf.filled").foregroundStyle(.secondary)
-                    Slider(
-                        value: Binding(get: { model.redactionStrength }, set: { model.setRedactionStrength($0) }),
-                        in: 0...1,
-                        onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
-                    )
-                    .frame(width: 90)
-                }
-                .help("Intensity")
-            }
+        if model.redactionStyle != .blackout {
+            Slider(
+                value: Binding(get: { model.redactionStrength }, set: { model.setRedactionStrength($0) }),
+                in: 0...1,
+                onEditingChanged: { editing in if !editing { model.commitStyleEdit() } }
+            )
+            .frame(width: 80)
+            .help("Intensity")
+        }
 
-            if model.redactionStyle == .blackout {
-                Label("Secure erase", systemImage: "lock.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
-            } else {
-                Label("Not secure — visual only", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .labelStyle(.titleAndIcon)
-            }
+        if model.redactionStyle == .blackout {
+            Label("Secure", systemImage: "lock.fill")
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(.secondary)
+                .help("Blackout is the secure redaction: the covered pixels are replaced on export.")
+        } else {
+            Label("Not secure", systemImage: "exclamationmark.triangle.fill")
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(.orange)
+                .help("Visual only — can be reversed or inferred. Use Blackout to hide secrets.")
         }
     }
 
@@ -232,25 +316,32 @@ struct EditorView: View {
         }
     }
 
-    /// The editor's only visible actions (spec 0004): Save As…, Copy, Done.
-    private var outputActions: some View {
-        HStack(spacing: 8) {
-            Button("Save As…") { model.saveToDiskAs() }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .help("Save As… (⇧⌘S)")
+    // MARK: - Output actions (spec 0004): Save As…, Copy, Done
 
-            Button("Copy") { model.copyToClipboard() }
-                .keyboardShortcut("c", modifiers: .command)
-                .help("Copy to clipboard (⌘C)")
-
-            // ⌘S is the finishing gesture (LIG-23): the image lands on the clipboard and the editor
-            // gets out of the way. It never writes a file — that's Save As….
-            Button("Done") { model.copyAndClose() }
-                .keyboardShortcut("s", modifiers: .command)
-                .buttonStyle(.borderedProminent)
-                .help("Copy to clipboard and close (⌘S)")
+    private var saveAsButton: some View {
+        Button { model.saveToDiskAs() } label: {
+            Label("Save As…", systemImage: "square.and.arrow.down")
         }
-        .controlSize(.large)
+        .keyboardShortcut("s", modifiers: [.command, .shift])
+        .help("Save As… (⇧⌘S)")
+    }
+
+    private var copyButton: some View {
+        Button { model.copyToClipboard() } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+        .keyboardShortcut("c", modifiers: .command)
+        .help("Copy to clipboard (⌘C)")
+    }
+
+    /// ⌘S is the finishing gesture (LIG-23): the image lands on the clipboard and the editor gets
+    /// out of the way. It never writes a file — that's Save As….
+    private var doneButton: some View {
+        Button { model.copyAndClose() } label: {
+            Text("Done").fontWeight(.semibold).padding(.horizontal, 6)
+        }
+        .keyboardShortcut("s", modifiers: .command)
+        .help("Copy to clipboard and close (⌘S)")
     }
 
     /// The editing commands that lost their toolbar buttons (spec 0004) but keep their standard
@@ -298,7 +389,12 @@ struct EditorView: View {
                 }
 
                 Canvas { context, _ in
-                    for (index, element) in model.displayElements.enumerated() {
+                    drawFocusDim(
+                        (model.displayElements + [model.draftElement].compactMap { $0 }).compactMap(\.kind.focusRect),
+                        over: fitted, into: context, projection: projection
+                    )
+                    for (index, element) in model.displayElements.enumerated() where element.id != model.editingTextID {
+                        // The label being typed into is shown by its text field instead.
                         draw(element, redactionPatch: model.redactionPatch(at: index), into: context, projection: projection)
                     }
                     if let draft = model.draftElement {
@@ -306,6 +402,14 @@ struct EditorView: View {
                     }
                     if let box = model.selectionBox {
                         drawSelection(box, into: context, projection: projection)
+                    }
+                    if let box = model.textBox {
+                        drawTextChrome(box, into: context, projection: projection)
+                    }
+                    if let box = model.focusBox {
+                        let radius = focusCornerRadius(for: box) * projection.scale
+                        context.stroke(Path(roundedRect: projection.toView(box).cgRect, cornerRadius: radius), with: .color(.accentColor), lineWidth: 1.5)
+                        drawHandles(on: box, size: 7, stroke: .accentColor, into: context, projection: projection)
                     }
                     if let endpoints = model.selectionEndpoints {
                         drawHandles(at: endpoints, size: 9, round: true, stroke: .accentColor, into: context, projection: projection)
@@ -318,6 +422,14 @@ struct EditorView: View {
                     }
                 }
                 .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case let .active(location):
+                        updateCursor(at: projection.toImage(Point(location)))
+                    case .ended:
+                        NSCursor.arrow.set()
+                    }
+                }
                 .gesture(dragGesture(projection: projection))
                 .simultaneousGesture(doubleClickGesture(projection: projection))
 
@@ -332,12 +444,22 @@ struct EditorView: View {
             .onChanged { value in
                 if fontSizeFocused { fontSizeFocused = false }
                 model.gestureChanged(at: projection.toImage(Point(value.location)))
+                updateCursor(at: projection.toImage(Point(value.location)))
             }
             .onEnded { value in
                 model.gestureEnded(at: projection.toImage(Point(value.location)))
+                // AppKit resets the pointer on mouse-up and no hover follows until the mouse
+                // moves, so the crop's cursor is re-applied a moment later.
+                let point = projection.toImage(Point(value.location))
+                DispatchQueue.main.async { updateCursor(at: point) }
                 model.syncStyleToSelection()
                 if model.editingTextID != nil { textFieldFocused = true }
             }
+    }
+
+    /// The crop's pointer (resize arrows on its border, hands over it), else the arrow.
+    private func updateCursor(at point: Point) {
+        (model.cropCursor(at: point) ?? .arrow).nsCursor.set()
     }
 
     private func doubleClickGesture(projection: CanvasProjection) -> some Gesture {
@@ -349,18 +471,26 @@ struct EditorView: View {
             }
     }
 
+    /// The label being typed into, as a text field laid over its box's padded content, in the
+    /// label's own font so the text doesn't jump when editing ends.
     @ViewBuilder
     private func textEditor(projection: CanvasProjection) -> some View {
         if let id = model.editingTextID,
            let box = model.document.element(id: id)?.kind.boundingBox,
            let style = model.document.element(id: id)?.style {
-            let vr = projection.toView(box).cgRect
-            TextField("Label", text: Bindable(model).editingText, axis: .horizontal)
+            let pad = TextLayout.padding(for: style.fontSize) * projection.scale
+            let content = projection.toView(box).cgRect.insetBy(dx: pad, dy: pad)
+            TextField("", text: Bindable(model).editingText, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: style.fontSize * projection.scale))
+                .font(.custom(TextLayout.fontName, size: style.fontSize * projection.scale))
                 .foregroundStyle(style.color.color)
-                .frame(width: max(vr.width, 80), alignment: .leading)
-                .position(x: vr.minX + max(vr.width, 80) / 2, y: vr.midY)
+                // A caret's width of slack so the field never wraps a line the layout keeps; the
+                // box refits as the text changes, so the frame follows it.
+                .frame(width: content.width + 4, height: content.height, alignment: .topLeading)
+                .position(x: content.midX + 2, y: content.midY)
+                // CoreText sets the first line lower than the field does, by about a quarter of
+                // the type size in Helvetica: match it, so ending the edit doesn't shift the text.
+                .offset(y: style.fontSize * projection.scale * Self.fieldBaselineShift)
                 .focused($textFieldFocused)
                 .onSubmit { model.endTextEditing() }
         }
@@ -368,7 +498,8 @@ struct EditorView: View {
 
     private var nsImage: NSImage? { NSImage(data: model.document.baseImage.data) }
 
-    private static let toolButtonSize = CGSize(width: 36, height: 32)
+    /// How far the edit field sits above CoreText's first line, as a fraction of the type size.
+    private static let fieldBaselineShift = 0.24
     /// Clear space kept between the image and the canvas edges, in points.
     private static let canvasInset: Double = 24
 }
@@ -417,11 +548,19 @@ private func draw(
 
     case let .text(string, box):
         guard !string.isEmpty else { break }
-        let origin = projection.toView(box.standardized.origin).cgPoint
-        context.draw(
-            Text(string).font(.system(size: element.style.fontSize * projection.scale)).foregroundColor(color),
-            at: origin, anchor: .topLeading
-        )
+        // The export's own layout (`TextLayout`), scaled to the view, so wrapping matches.
+        let fontSize = element.style.fontSize * projection.scale
+        let content = projection.toView(box.standardized).cgRect
+            .insetBy(dx: TextLayout.padding(for: element.style.fontSize) * projection.scale,
+                     dy: TextLayout.padding(for: element.style.fontSize) * projection.scale)
+        let cgColor = NSColor(srgbRed: element.style.color.red, green: element.style.color.green,
+                              blue: element.style.color.blue, alpha: element.style.color.alpha).cgColor
+        context.withCGContext { cg in
+            // CoreText draws y-up; flip about the content rect so the text stands upright in it.
+            cg.translateBy(x: 0, y: content.minY + content.maxY)
+            cg.scaleBy(x: 1, y: -1)
+            TextLayout.draw(string, fontSize: fontSize, color: cgColor, in: content, context: cg)
+        }
 
     case let .stepMarker(number, center, radius):
         let c = projection.toView(center).cgPoint
@@ -440,6 +579,15 @@ private func draw(
         wash.alpha = min(element.style.color.alpha, highlightPreviewAlpha)
         context.fill(Path(projection.toView(rect).cgRect), with: .color(wash.color))
 
+    case let .focus(rect):
+        // The dim itself is drawn once for every area (`drawFocusDim`); in the editor the area
+        // also shows a solid, slightly rounded edge so it can be found and grabbed.
+        let radius = focusCornerRadius(for: rect) * projection.scale
+        context.stroke(
+            Path(roundedRect: projection.toView(rect).cgRect, cornerRadius: radius),
+            with: .color(.white.opacity(0.85)), lineWidth: 1.5
+        )
+
     case let .redaction(rect, redactionStyle, _, _):
         switch redactionStyle {
         case .blackout:
@@ -453,6 +601,21 @@ private func draw(
                 Image(decorative: redactionPatch.image, scale: 1),
                 in: projection.toView(redactionPatch.rect).cgRect
             )
+        }
+    }
+}
+
+/// Dims the image outside the union of the focus `areas` (image space), as the export does
+/// (`render`'s `focusDimAlpha`): a dim layer with every area cleared out of it, so overlapping
+/// areas never dim each other. Drawn under the marks.
+private func drawFocusDim(_ areas: [Rect], over image: CGRect, into context: GraphicsContext, projection: CanvasProjection) {
+    guard !areas.isEmpty else { return }
+    context.drawLayer { layer in
+        layer.fill(Path(image), with: .color(.black.opacity(focusDimAlpha)))
+        layer.blendMode = .clear
+        for area in areas {
+            let radius = focusCornerRadius(for: area) * projection.scale
+            layer.fill(Path(roundedRect: projection.toView(area).cgRect, cornerRadius: radius), with: .color(.black))
         }
     }
 }
@@ -479,56 +642,23 @@ private func draw(_ shape: ArrowShape, color: Color, into context: GraphicsConte
     }
 }
 
-/// A name tag shown under a control the instant the pointer is over it — the system `.help`
-/// tooltip waits over a second, too long to learn an icon-only palette by sweeping across it.
-private struct InstantTooltip: ViewModifier {
-    let text: String
-    @State private var isHovered = false
-
-    func body(content: Content) -> some View {
-        content
-            .onHover { isHovered = $0 }
-            .overlay(alignment: .bottom) {
-                if isHovered {
-                    // A zero-size anchor on the control's bottom edge; the tag hangs from it, so
-                    // it sits just below the control instead of covering it.
-                    Color.clear.frame(width: 0, height: 0).overlay(alignment: .top) {
-                        Text(text)
-                            .font(.caption)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
-                            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
-                            .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
-                            .fixedSize()
-                            .padding(.top, 4)
-                            .allowsHitTesting(false)
-                    }
-                }
-            }
-    }
-}
-
-private extension View {
-    func instantTooltip(_ text: String) -> some View { modifier(InstantTooltip(text: text)) }
-}
-
 /// A toolbar glyph for an arrow style, drawn with the canvas's own arrow geometry.
 private struct ArrowStyleIcon: View {
     let style: ArrowStyle
+    var color: Color = .primary
 
     var body: some View {
         Canvas { context, size in
-            let tail = Point(x: 4, y: Double(size.height) - 6)
-            let tip = Point(x: Double(size.width) - 4, y: 6)
+            let tail = Point(x: 3, y: Double(size.height) - 3)
+            let tip = Point(x: Double(size.width) - 3, y: 3)
             // New bendable arrows start straight; the glyph still bows so the style reads as bendable.
             let mid = arrowMidpoint(tail, tip)
             let bow = Point(x: mid.x - (tip.y - tail.y) * 0.18, y: mid.y + (tip.x - tail.x) * 0.18)
             let shape = arrowShape(
                 from: tail, to: tip, bend: style.isBendable ? bow : nil,
-                style: style, lineWidth: 2.4
+                style: style, lineWidth: 1.6
             )
-            draw(shape, color: .primary, into: context)
+            draw(shape, color: color, into: context)
         }
     }
 }
@@ -566,6 +696,20 @@ private func drawSelection(_ box: Rect, into context: GraphicsContext, projectio
     drawHandles(on: box, size: 7, stroke: .accentColor, into: context, projection: projection)
 }
 
+/// A label's chrome, like CleanShot's (LIG-47): a thin rounded border around its padded box,
+/// round handles on the side edges (they set the wrap width) and a small square at the
+/// bottom-right corner (it scales the text).
+private func drawTextChrome(_ box: Rect, into context: GraphicsContext, projection: CanvasProjection) {
+    let rect = projection.toView(box).cgRect
+    context.stroke(Path(roundedRect: rect, cornerRadius: 6), with: .color(.accentColor.opacity(0.85)), lineWidth: 1.25)
+    drawHandles(
+        at: [handlePoint(.left, in: box), handlePoint(.right, in: box)], size: 11, round: true,
+        stroke: .accentColor, into: context, projection: projection
+    )
+    let corner = projection.toView(handlePoint(.bottomRight, in: box)).cgPoint
+    context.fill(Path(roundedRect: CGRect(x: corner.x - 4, y: corner.y - 4, width: 8, height: 8), cornerRadius: 1.5), with: .color(.accentColor))
+}
+
 /// Draws the eight resize handles of `box` (image space) as small white squares. Shared by
 /// the selection outline and the crop overlay so their handles stay visually identical.
 private func drawHandles(
@@ -593,26 +737,36 @@ private func drawHandles(
     }
 }
 
-/// Draws the crop framing: everything outside the crop rect is dimmed so the excluded
-/// area reads at a glance, the crop edge is outlined, and — while the crop tool is active —
-/// eight resize handles are drawn to grab. All geometry is projected from image space, so
-/// the frame stays anchored to the same pixels the export will keep.
+/// Draws the crop framing like CleanShot's (LIG-47): everything outside the crop rect is dimmed
+/// so the excluded area reads at a glance and the crop edge is a thin white line; while the crop
+/// tool is active, a rule-of-thirds grid sits inside and the recorder's corner brackets and
+/// edge bars mark the eight handles. All geometry is projected from image space, so the frame
+/// stays anchored to the same pixels the export will keep.
 private func drawCropOverlay(
     _ frame: Rect, imageBounds: Rect, showHandles: Bool,
     into context: GraphicsContext, projection: CanvasProjection
 ) {
+    var context = context
     let full = projection.toView(imageBounds).cgRect
     let crop = projection.toView(frame).cgRect
 
     // Dim the ring between the image and the crop rect (even-odd fills outside the inner rect).
     var mask = Path(full)
     mask.addRect(crop)
-    context.fill(mask, with: .color(.black.opacity(0.45)), style: FillStyle(eoFill: true))
+    context.fill(mask, with: .color(.black.opacity(0.5)), style: FillStyle(eoFill: true))
 
-    context.stroke(Path(crop), with: .color(.white), style: StrokeStyle(lineWidth: 1))
+    context.stroke(Path(crop), with: .color(.white.opacity(0.9)), style: StrokeStyle(lineWidth: 1))
 
     guard showHandles else { return }
-    drawHandles(on: frame, size: 8, stroke: .black.opacity(0.6), into: context, projection: projection)
+    var thirds = Path()
+    for step in 1...2 {
+        let x = crop.minX + crop.width * CGFloat(step) / 3
+        let y = crop.minY + crop.height * CGFloat(step) / 3
+        thirds.move(to: CGPoint(x: x, y: crop.minY)); thirds.addLine(to: CGPoint(x: x, y: crop.maxY))
+        thirds.move(to: CGPoint(x: crop.minX, y: y)); thirds.addLine(to: CGPoint(x: crop.maxX, y: y))
+    }
+    context.stroke(thirds, with: .color(.white.opacity(0.45)), lineWidth: 0.75)
+    OverlayCanvas.drawSelectionChrome(&context, around: crop)
 }
 
 private func segment(_ a: Point, _ b: Point) -> Path { segment(from: a.cgPoint, to: b.cgPoint) }
@@ -653,4 +807,26 @@ extension RGBAColor {
     }
 
     var color: Color { Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha) }
+}
+
+/// Opens the shared colour panel on a colour and reports every change the user makes in it —
+/// the editor's "Custom…" colour (LIG-46).
+@MainActor
+final class ColorPanelBridge: NSObject {
+    private var onChange: ((RGBAColor) -> Void)?
+
+    func show(_ color: RGBAColor, onChange: @escaping (RGBAColor) -> Void) {
+        self.onChange = onChange
+        let panel = NSColorPanel.shared
+        panel.showsAlpha = false
+        panel.color = NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
+        panel.setTarget(self)
+        panel.setAction(#selector(colorChanged(_:)))
+        panel.orderFront(nil)
+    }
+
+    @objc private func colorChanged(_ panel: NSColorPanel) {
+        guard let rgb = panel.color.usingColorSpace(.sRGB) else { return }
+        onChange?(RGBAColor(red: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent, alpha: rgb.alphaComponent))
+    }
 }

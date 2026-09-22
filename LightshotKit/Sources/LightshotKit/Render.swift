@@ -75,6 +75,9 @@ func flatten(_ document: AnnotationDocument, elements: ArraySlice<AnnotationElem
 
     let flattener = Flattener(context: context, frame: frame, height: height)
     flattener.drawBase(document.baseImage)
+    // Focus areas dim the picture, not the marks: the dim is part of what every mark (and every
+    // redaction's backdrop) sits on, so it takes all of the document's focus areas at once.
+    flattener.drawFocusDim(document.elements.compactMap(\.kind.focusRect))
     for element in elements {
         flattener.draw(element)
     }
@@ -148,8 +151,29 @@ private struct Flattener {
 
         case let .redaction(rect, redaction, strength, seed):
             drawRedaction(rect, redaction, strength: strength, seed: seed)
+
+        case .focus:
+            break   // drawn once for all focus areas, under the marks (`drawFocusDim`)
         }
 
+        context.restoreGState()
+    }
+
+    /// Dims everything outside the union of `areas` (LIG-47). The dim goes into its own layer
+    /// and the areas are cleared out of it, so overlapping areas never dim each other.
+    func drawFocusDim(_ areas: [Rect]) {
+        guard !areas.isEmpty else { return }
+        context.saveGState()
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        context.setFillColor(CGColor(gray: 0, alpha: focusDimAlpha))
+        context.fill(CGRect(x: 0, y: 0, width: context.width, height: context.height))
+        context.setBlendMode(.clear)
+        for area in areas {
+            let radius = focusCornerRadius(for: area)
+            context.addPath(CGPath(roundedRect: contextRect(area), cornerWidth: radius, cornerHeight: radius, transform: nil))
+            context.fillPath()
+        }
+        context.endTransparencyLayer()
         context.restoreGState()
     }
 
@@ -205,15 +229,11 @@ private struct Flattener {
         }
     }
 
+    /// The label wrapped inside its box, `padding` in from each edge (`TextLayout`, LIG-47).
     private func drawText(_ string: String, box: Rect, style: Style) {
-        guard !string.isEmpty else { return }
-        let line = makeLine(string, fontSize: style.fontSize, color: style.color)
-        var ascent: CGFloat = 0
-        CTLineGetTypographicBounds(line, &ascent, nil, nil)
-        // Baseline sits `ascent` below the box's top edge (image-down → context-down).
-        let topLeft = contextPoint(box.standardized.origin)
-        context.textPosition = CGPoint(x: topLeft.x, y: topLeft.y - ascent)
-        CTLineDraw(line, context)
+        let pad = TextLayout.padding(for: style.fontSize)
+        let content = contextRect(box).insetBy(dx: pad, dy: pad)
+        TextLayout.draw(string, fontSize: style.fontSize, color: cgColor(style.color), in: content, context: context)
     }
 
     private func drawStepMarker(number: Int, center: Point, radius: Double, style: Style) {
@@ -325,4 +345,21 @@ private func encodePNG(_ image: CGImage) -> Data {
     CGImageDestinationAddImage(destination, image, nil)
     CGImageDestinationFinalize(destination)
     return data as Data
+}
+
+/// How dark the picture gets outside the focus areas — shared with the editor's preview.
+public let focusDimAlpha: Double = 0.55
+
+/// A focus area's corners are rounded a little (image pixels), less on a small area.
+public func focusCornerRadius(for area: Rect) -> Double {
+    let rect = area.standardized
+    return min(12, rect.width / 4, rect.height / 4)
+}
+
+extension AnnotationElement.Kind {
+    /// The rect of a focus area; `nil` for every other kind.
+    public var focusRect: Rect? {
+        if case let .focus(rect) = self { return rect.standardized }
+        return nil
+    }
 }

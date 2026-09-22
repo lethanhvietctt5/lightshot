@@ -65,6 +65,10 @@ final class AppController: NSObject, CaptureUI {
     var recordingStateObserver: ((RecordingSession) -> Void)?
 
     override init() {
+        // Tool names show the moment the pointer is over a button (spec 0004, story 10). The
+        // editor's tools live in the window toolbar (LIG-46), where a hand-drawn tag would be
+        // clipped, so the system tooltip itself is made near-instant — registered, not persisted.
+        UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 80])
         let cameraFeed = CameraFeed()
         recordingService = SCRecordingService(cameraFeed: cameraFeed)
         cameraBubble = CameraBubbleController(feed: cameraFeed)
@@ -289,9 +293,16 @@ final class AppController: NSObject, CaptureUI {
         if window.contentViewController == nil {
             let model = HistoryModel(
                 store: history,
-                onReopen: { [weak self] in self?.openEditor(with: $0) },
+                // Opening an item hands over to its editor, so History gets out of the way.
+                onReopen: { [weak self] in
+                    self?.openEditor(with: $0)
+                    self?.historyWindow?.close()
+                },
                 onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) },
-                onReopenRecording: { [weak self] in self?.coordinator.reopenRecording($0) },
+                onReopenRecording: { [weak self] in
+                    self?.coordinator.reopenRecording($0)
+                    self?.historyWindow?.close()
+                },
                 onCopyFile: { [mediaSink] in mediaSink.copyFile(at: $0) }
             )
             let hosting = NSHostingController(rootView: HistoryView(model: model))
@@ -421,7 +432,10 @@ final class AppController: NSObject, CaptureUI {
             onSaveAs: { [weak self] in self?.saveAs($0) }
         )
         let window = editorWindow ?? makeEditorWindow()
-        window.contentViewController = NSHostingController(rootView: view)
+        let hosting = NSHostingController(rootView: view)
+        // The tools, options and actions are SwiftUI toolbar items in the window's toolbar.
+        hosting.sceneBridgingOptions = [.toolbars]
+        window.contentViewController = hosting
         window.setContentSize(Self.editorContentSize(on: window.screen ?? NSScreen.main))
         window.center()
         editorWindow = window
@@ -714,6 +728,10 @@ final class AppController: NSObject, CaptureUI {
             defer: false
         )
         window.title = "Lightshot"
+        // One compact row (LIG-46): the toolbar sits beside the traffic lights, the title hidden.
+        window.titleVisibility = .hidden
+        window.toolbar = NSToolbar(identifier: "editor")
+        window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
         NotificationCenter.default.addObserver(
             self, selector: #selector(editorWindowWillClose), name: NSWindow.willCloseNotification, object: window
