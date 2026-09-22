@@ -294,7 +294,12 @@ final class AppController: NSObject, CaptureUI {
                 onReopenRecording: { [weak self] in self?.coordinator.reopenRecording($0) },
                 onCopyFile: { [mediaSink] in mediaSink.copyFile(at: $0) }
             )
-            window.contentViewController = NSHostingController(rootView: HistoryView(model: model))
+            let hosting = NSHostingController(rootView: HistoryView(model: model))
+            // The window keeps the size set here; the grid reflows to fill it.
+            hosting.sizingOptions = []
+            window.contentViewController = hosting
+            window.setContentSize(Self.historyContentSize(on: window.screen ?? NSScreen.main))
+            window.center()
         }
         historyWindow = window
 
@@ -742,6 +747,12 @@ final class AppController: NSObject, CaptureUI {
         window.title = "Lightshot Settings"
         window.isReleasedWhenClosed = false
         return window
+    }
+
+    /// Room for five or six columns of thumbnails: most of the screen, up to 1400 × 900.
+    private static func historyContentSize(on screen: NSScreen?) -> NSSize {
+        let visible = screen?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        return NSSize(width: min(1400, visible.width * 0.7), height: min(900, visible.height * 0.75))
     }
 
     private func makeHistoryWindow() -> NSWindow {
