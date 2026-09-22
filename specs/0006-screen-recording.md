@@ -1,6 +1,6 @@
 # Spec 0006 — Screen Recording (video + GIF)
 
-**Status:** draft — tracked in Linear; children become `Ready for Agent` once the open decisions below are confirmed
+**Status:** accepted — tracked in Linear; the decisions at the end are taken and the sub-issues are being implemented in order
 **Linear:** epic [LIG-26](https://linear.app/light-shot/issue/LIG-26) with sub-issues LIG-27 … LIG-41 (see §Issue breakdown)
 **Platform:** Native macOS (Swift / SwiftUI + AppKit), macOS 14+ (ScreenCaptureKit `SCStream`, AVFoundation)
 **Scope:** Local-only. The biggest follow-up Spec 0001 deferred: record an area, a window or a display as MP4 or GIF, with microphone / computer audio, a webcam bubble, click and keystroke visualisation, and a trim/convert step afterwards. No cloud, no accounts, no network.
@@ -146,7 +146,9 @@ One epic plus fifteen child issues, created 2026-09-22. Each child follows the L
 
 Dependency spine: **R1 → R2 → {R3 → R4 → {R7 → R8, R9, R10 → R11}, R5, R12 → {R13, R14, R15}}**, with R6 alongside R2.
 
-## Open decisions (confirm before `ready-for-agent`)
+## Decisions taken (2026-09-22, at the start of R1)
+
+Each proposal below is adopted as written; the sub-issues are `Ready for Agent` on that basis.
 
 1. **Default hotkey for Record Screen** — proposal: none (rebindable), matching `window` / `repeatLast`. Alternative: ⌘⇧R, the only third-party claim for CleanShot's default.
 2. **Encoders offered** — proposal: H.264 default, HEVC optional; FPS choices 10 / 15 / 30 / 60; max resolution Original / 1080p / 720p.

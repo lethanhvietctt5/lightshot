@@ -65,6 +65,10 @@ final class SCCaptureService: CaptureService {
             // frame is only for toolbar placement, so it's unused here — the live window is the
             // source of truth for what to capture.
             return await captureWindow(id: id)
+        case let .display(id):
+            // A whole display (recording's record mode, spec 0006) is exactly a fullscreen capture
+            // of that display.
+            return await captureFullscreen(displayID: id)
         }
     }
 

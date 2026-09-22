@@ -29,6 +29,10 @@ import Foundation
     #expect(defaults[.area]?.displayString == "⌃⌘4")
     #expect(defaults[.window] == nil)          // window ships unbound
     #expect(defaults[.repeatLast] == nil)      // repeat-last ships unbound (story 9) — user binds it
+    // Recording actions (spec 0006) ship unbound too — no extra global chords are claimed.
+    #expect(defaults[.recordScreen] == nil)
+    #expect(defaults[.pauseResumeRecording] == nil)
+    #expect(defaults[.restartRecording] == nil)
     #expect(defaults.conflicts.isEmpty)        // shipped defaults never clash
 }
 

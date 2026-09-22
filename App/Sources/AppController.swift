@@ -110,6 +110,9 @@ final class AppController: NSObject, CaptureUI {
         case .window: captureWindow()
         case .fullscreen: captureFullscreen()
         case .repeatLast: repeatLast()
+        // Recording actions are rebindable now (LIG-27) but inert until the recorder lands
+        // (LIG-28 wires Record Screen, LIG-31 pause/resume and restart).
+        case .recordScreen, .pauseResumeRecording, .restartRecording: break
         }
     }
 

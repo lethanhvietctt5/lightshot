@@ -20,4 +20,11 @@ public enum CaptureRegion: Equatable, Sendable {
     /// (top-left origin), carried so the post-capture toolbar can position itself at the window
     /// exactly as it does for a dragged rect — the capture itself only needs the `id`.
     case window(id: UInt32, frame: Rect)
+
+    /// A whole display, chosen in the recorder's record mode (spec 0006, story 6). `id` is the
+    /// window server's `CGDirectDisplayID`, modeled as `UInt32` exactly as `captureFullscreen`'s
+    /// `displayID` is. Screenshots never produce this case — fullscreen capture skips the overlay —
+    /// but recording resolves every target through one `CaptureRegion`, so the recorder can hand a
+    /// display to the same `RecordingService.start` as a rect or a window.
+    case display(id: UInt32)
 }
