@@ -350,6 +350,9 @@ public final class AppCoordinator {
     ) async {
         guard let recordingService, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
+        // A take still waiting in the overlay is kept (saved under the pattern) before a new one
+        // can replace it — the app moving on is a dismissal (story 32).
+        dismissPendingRecording()
 
         let options = RecordingOptions.resolve(
             region: region, output: output, defaults: settings.recordingDefaults, overrides: overrides
@@ -528,11 +531,14 @@ public final class AppCoordinator {
 
     // MARK: - Post-recording overlay (stories 32–34)
 
-    /// Copy file: a file reference the user can paste into Finder, Slack, Mail. The take stays
-    /// pending — the overlay is still up.
-    public func copyPendingRecordingFile() {
-        guard let pendingRecording else { return }
-        mediaSink?.copyFile(at: pendingRecording.file)
+    /// Copy file: the take is saved first (under `name`, or the pattern) and the saved file's
+    /// reference goes on the pasteboard — a reference to the scratch file would dangle once the
+    /// overlay went and moved it. Returns where it landed; `nil` on a failed save (still pending).
+    @discardableResult
+    public func copyPendingRecordingFile(as name: String? = nil) -> URL? {
+        guard let saved = savePendingRecording(as: name) else { return nil }
+        mediaSink?.copyFile(at: saved)
+        return saved
     }
 
     /// Save (or a dismissal, which keeps the file): move to the default location under the pattern,
@@ -546,19 +552,24 @@ public final class AppCoordinator {
         return saved
     }
 
-    /// The overlay went away without a decision: the file is kept, under the pattern (story 32).
-    public func dismissPendingRecording() {
-        savePendingRecording(as: nil)
+    /// The overlay went away without a decision (Escape, timeout, the app moving on): the file is
+    /// kept, under the name typed so far or the pattern (story 32).
+    public func dismissPendingRecording(as name: String? = nil) {
+        savePendingRecording(as: name)
     }
 
-    /// Delete: the take is thrown away. A failure to trash it surfaces and leaves it pending.
-    public func deletePendingRecording() {
-        guard let pendingRecording, let mediaSink else { return }
+    /// Delete: the take is thrown away. Returns whether it is gone; a failure to trash it surfaces
+    /// and leaves it pending.
+    @discardableResult
+    public func deletePendingRecording() -> Bool {
+        guard let pendingRecording, let mediaSink else { return false }
         do {
             try mediaSink.trash(pendingRecording.file)
             self.pendingRecording = nil
+            return true
         } catch {
             ui.presentRecordingFailure(.systemFailure(error.localizedDescription))
+            return false
         }
     }
 

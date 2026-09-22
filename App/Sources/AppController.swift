@@ -567,10 +567,10 @@ final class AppController: NSObject, CaptureUI {
     /// owns the pending take. Open editor and Trim light up with R14.
     func presentPostRecordingOverlay(_ recording: PendingRecording) {
         postRecordingOverlay.present(recording, actions: PostRecordingOverlayController.Actions(
-            copy: { [weak self] in self?.coordinator.copyPendingRecordingFile() },
+            copy: { [weak self] name in self?.coordinator.copyPendingRecordingFile(as: name) != nil },
             save: { [weak self] name in self?.coordinator.savePendingRecording(as: name) != nil },
-            delete: { [weak self] in self?.coordinator.deletePendingRecording() },
-            dismiss: { [weak self] in self?.coordinator.dismissPendingRecording() },
+            delete: { [weak self] in self?.coordinator.deletePendingRecording() ?? false },
+            dismiss: { [weak self] name in self?.coordinator.dismissPendingRecording(as: name) },
             openEditor: nil,
             trim: nil
         ))
@@ -580,6 +580,11 @@ final class AppController: NSObject, CaptureUI {
     /// revealed instead of silently landing.
     func openVideoEditor(at url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// Quitting with the overlay up keeps the take (story 32), like any other dismissal.
+    func keepPendingRecordingOnQuit() {
+        coordinator.dismissPendingRecording()
     }
 
     func presentRecordingFailure(_ error: RecordingError) {

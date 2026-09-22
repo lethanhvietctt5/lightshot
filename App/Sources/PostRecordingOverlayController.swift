@@ -1,5 +1,5 @@
 import AppKit
-import AVKit
+import AVFoundation
 import Quartz
 import SwiftUI
 import LightshotKit
@@ -7,19 +7,22 @@ import LightshotKit
 /// The post-recording overlay (spec 0006, stories 32–34; CleanShot's Quick Access Overlay): a
 /// small panel in the screen's bottom-right corner with a looping, muted preview of the take, its
 /// duration and size, a name to edit, and the after-recording actions. The take is still in the
-/// scratch directory while this is up; the `AppCoordinator` decides where it goes from the
-/// action the panel reports (copy / save / delete / dismiss).
+/// scratch directory while this is up; the `AppCoordinator` owns it and decides where it goes
+/// from the action the panel reports.
 ///
-/// A thin OS wrapper (no unit tests): placement, lifetime, key handling (Escape dismisses, Space
-/// opens Quick Look), the timeout, and the drag-out (the preview is a file drag source).
+/// A thin OS wrapper (no unit tests): placement, lifetime, keys (Escape dismisses, Space opens
+/// Quick Look), the timeout, and the drag-out (the preview is a file drag source).
 @MainActor
 final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    /// What the panel can ask of the coordinator. Each takes the name in the Rename field (the
+    /// file's own name when untouched) and reports whether the take is settled — `false` means
+    /// the take is still pending, so the panel stays up.
     struct Actions {
-        let copy: () -> Void
-        /// Save under the (possibly renamed) name; returns whether it succeeded.
+        let copy: (String) -> Bool
         let save: (String) -> Bool
-        let delete: () -> Void
-        let dismiss: () -> Void
+        let delete: () -> Bool
+        /// The overlay went away without a decision: keep the file.
+        let dismiss: (String) -> Void
         let openEditor: (() -> Void)?
         let trim: (() -> Void)?
     }
@@ -27,27 +30,25 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
     /// How long the overlay stays up untouched before it dismisses itself (and the file is kept).
     static let timeout: TimeInterval = 20
 
-    private var panel: OverlayPanel?
+    private var panel: NSPanel?
     private var model: PostRecordingModel?
+    private var actions: Actions?
     private var timeoutTask: Task<Void, Never>?
     private var keyMonitor: Any?
 
     func present(_ recording: PendingRecording, actions: Actions) {
-        dismiss(reportingDismissal: false)
+        // A previous overlay still up means the coordinator already settled that take (a new take
+        // saves a pending one before it starts), so this only takes the old panel down.
+        close()
         let model = PostRecordingModel(recording: recording)
         self.model = model
+        self.actions = actions
 
         let view = PostRecordingOverlayView(
             model: model,
-            copy: { [weak self] in actions.copy(); self?.flash("Copied"); self?.restartTimeout() },
-            save: { [weak self] in
-                guard let self else { return }
-                if actions.save(model.name) { close() }
-            },
-            delete: { [weak self] in
-                guard let self else { return }
-                if confirmDelete() { actions.delete(); close() }
-            },
+            copy: { [weak self] in self?.settle { $0.copy(model.name) } },
+            save: { [weak self] in self?.settle { $0.save(model.name) } },
+            delete: { [weak self] in self?.deleteAfterConfirming() },
             quickLook: { [weak self] in self?.toggleQuickLook() },
             openEditor: actions.openEditor.map { open in { [weak self] in open(); self?.close() } },
             trim: actions.trim.map { trim in { [weak self] in trim(); self?.close() } },
@@ -57,21 +58,19 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
 
-        let panel = OverlayPanel(
+        let panel = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = .screenSaver
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.contentView = hosting
-        panel.onEscape = { [weak self] in self?.dismissNow(actions.dismiss) }
-        panel.onSpace = { [weak self] in self?.toggleQuickLook() }
         panel.previewSource = self
 
         let screen = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -80,57 +79,32 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
             display: true
         )
         self.panel = panel
-        self.dismissAction = actions.dismiss
+        WindowPresenter.activateApp()
         panel.makeKeyAndOrderFront(nil)
+        installKeyMonitor(for: panel)
         restartTimeout()
     }
 
-    private var dismissAction: (() -> Void)?
+    // MARK: - Outcomes
 
-    /// Escape, the timeout, or the app moving on: the overlay goes and the take is kept.
-    private func dismissNow(_ dismiss: () -> Void) {
-        guard panel != nil else { return }
+    /// Run an action that may settle the take; the panel closes only when it did.
+    private func settle(_ action: (Actions) -> Bool) {
+        guard let actions else { return }
+        if action(actions) { close() } else { restartTimeout() }
+    }
+
+    /// Escape, the timeout: the overlay goes and the take is kept under the typed name.
+    private func dismissKeepingFile() {
+        guard let actions, let model else { return }
+        let name = model.name
         close()
-        dismiss()
+        actions.dismiss(name)
     }
 
-    private func close() {
-        dismiss(reportingDismissal: false)
-    }
-
-    /// Take the panel down. With `reportingDismissal` the coordinator is told (the file is kept);
-    /// without, the caller already reported an outcome.
-    func dismiss(reportingDismissal: Bool = true) {
+    private func deleteAfterConfirming() {
+        // The modal must not race the timeout: a fired timeout would save the file the user is
+        // about to delete.
         timeoutTask?.cancel()
-        timeoutTask = nil
-        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().orderOut(nil) }
-        model?.player.pause()
-        panel?.orderOut(nil)
-        panel = nil
-        model = nil
-        let dismiss = dismissAction
-        dismissAction = nil
-        if reportingDismissal { dismiss?() }
-    }
-
-    private func restartTimeout() {
-        timeoutTask?.cancel()
-        timeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.timeout))
-            guard !Task.isCancelled, let self, let dismiss = dismissAction else { return }
-            dismissNow(dismiss)
-        }
-    }
-
-    private func flash(_ text: String) {
-        model?.flash = text
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.2))
-            if self?.model?.flash == text { self?.model?.flash = nil }
-        }
-    }
-
-    private func confirmDelete() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Delete this recording?"
         alert.informativeText = "The recording will be moved to the Trash."
@@ -138,7 +112,55 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Keep")
         WindowPresenter.activateApp()
-        return alert.runModal() == .alertFirstButtonReturn
+        if alert.runModal() == .alertFirstButtonReturn {
+            settle { $0.delete() }
+        } else {
+            restartTimeout()
+        }
+    }
+
+    /// Take the panel down without reporting anything.
+    private func close() {
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().orderOut(nil) }
+        model?.player.pause()
+        panel?.orderOut(nil)
+        panel = nil
+        model = nil
+        actions = nil
+    }
+
+    private func restartTimeout() {
+        timeoutTask?.cancel()
+        timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.timeout))
+            guard !Task.isCancelled else { return }
+            self?.dismissKeepingFile()
+        }
+    }
+
+    // MARK: - Keys
+
+    /// Escape and Space by a local monitor: the Rename field is usually first responder, and a
+    /// field editor keeps both keys to itself (Space types, Escape cancels editing). Space is left
+    /// to the field while it is being edited.
+    private func installKeyMonitor(for panel: NSPanel) {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
+            guard let self, let panel, event.window === panel else { return event }
+            switch event.keyCode {
+            case 53:   // Escape
+                dismissKeepingFile()
+                return nil
+            case 49 where !(panel.firstResponder is NSTextView):   // Space, not while typing
+                toggleQuickLook()
+                return nil
+            default:
+                return event
+            }
+        }
     }
 
     // MARK: - Quick Look (Space)
@@ -165,27 +187,17 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
 
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
         // Space in Quick Look closes it again, as in Finder.
-        guard event.type == .keyDown, event.charactersIgnoringModifiers == " " else { return false }
+        guard event.type == .keyDown, event.keyCode == 49 else { return false }
         MainActor.assumeIsolated { panel.orderOut(nil) }
         return true
     }
 }
 
-/// A borderless panel that can take keys (for Escape and Space) and lends itself to Quick Look.
-private final class OverlayPanel: NSPanel {
-    var onEscape: (() -> Void)?
-    var onSpace: (() -> Void)?
+/// A borderless panel that can take keys and lends itself to Quick Look.
+private final class KeyablePanel: NSPanel {
     weak var previewSource: PostRecordingOverlayController?
 
     override var canBecomeKey: Bool { true }
-
-    override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 53: onEscape?()          // Escape
-        case 49: onSpace?()           // Space
-        default: super.keyDown(with: event)
-        }
-    }
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
@@ -211,15 +223,13 @@ private final class PostRecordingModel {
     let player: AVQueuePlayer
     private let looper: AVPlayerLooper
     var name: String
-    var flash: String?
     let fileSize: Int64?
 
     init(recording: PendingRecording) {
         self.recording = recording
-        let item = AVPlayerItem(url: recording.file)
         let player = AVQueuePlayer()
         player.isMuted = true
-        looper = AVPlayerLooper(player: player, templateItem: item)
+        looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: recording.file))
         self.player = player
         name = recording.file.deletingPathExtension().lastPathComponent
         fileSize = (try? FileManager.default.attributesOfItem(atPath: recording.file.path)[.size] as? NSNumber)?.int64Value
@@ -246,10 +256,11 @@ private struct PostRecordingOverlayView: View {
     let openEditor: (() -> Void)?
     let trim: (() -> Void)?
     let touched: () -> Void
+    @FocusState private var renaming: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            VideoPlayer(player: model.player)
+            LoopingPlayerView(player: model.player)
                 .frame(width: 280, height: 158)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(alignment: .bottomTrailing) {
@@ -260,30 +271,27 @@ private struct PostRecordingOverlayView: View {
                         .foregroundStyle(.white)
                         .padding(6)
                 }
-                .overlay {
-                    if let flash = model.flash {
-                        Text(flash).font(.headline).padding(8)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-                // Story 34: the preview drags out as the file itself.
-                .onDrag { NSItemProvider(contentsOf: model.recording.file) ?? NSItemProvider() }
+                // Story 34: the preview drags out as the file itself (a copy; the original is still
+                // saved when the overlay goes).
+                .onDrag { NSItemProvider(object: model.recording.file as NSURL) }
                 .contextMenu { menuItems }
-                .help("Drag into another app · Space for Quick Look")
+                .help("Drag into another app · Space for Quick Look · Esc to keep and close")
 
             HStack(spacing: 4) {
                 TextField("Name", text: $model.name)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
+                    .focused($renaming)
                     .onSubmit(save)
+                    .onChange(of: model.name) { _, _ in touched() }
                 Text(".\(model.recording.file.pathExtension)")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
 
             HStack(spacing: 4) {
-                button("Copy", systemImage: "doc.on.doc", action: copy)
+                button("Copy File", systemImage: "doc.on.doc", action: copy)
                 button("Save", systemImage: "square.and.arrow.down", action: save)
-                button("Editor", systemImage: "slider.horizontal.3", action: openEditor)
+                button("Open Video Editor", systemImage: "slider.horizontal.3", action: openEditor)
                 button("Trim", systemImage: "scissors", action: trim)
                 Spacer(minLength: 0)
                 button("Delete", systemImage: "trash", action: delete)
@@ -295,11 +303,13 @@ private struct PostRecordingOverlayView: View {
         .onHover { _ in touched() }
     }
 
+    /// The right-click menu mirrors the buttons (story 32), with the same disabled entries.
     @ViewBuilder private var menuItems: some View {
         Button("Copy File", action: copy)
         Button("Save", action: save)
-        if let openEditor { Button("Open Video Editor", action: openEditor) }
-        if let trim { Button("Trim…", action: trim) }
+        Button("Rename") { renaming = true }
+        Button("Open Video Editor", action: openEditor ?? {}).disabled(openEditor == nil)
+        Button("Trim…", action: trim ?? {}).disabled(trim == nil)
         Button("Quick Look", action: quickLook)
         Divider()
         Button("Delete", role: .destructive, action: delete)
@@ -316,5 +326,40 @@ private struct PostRecordingOverlayView: View {
         .buttonStyle(.plain)
         .disabled(action == nil)
         .help(action == nil ? "\(title) — coming with the video editor" : title)
+    }
+}
+
+/// A bare `AVPlayerLayer`: no transport controls to swallow the drag that starts on the preview.
+private struct LoopingPlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> PlayerLayerView {
+        let view = PlayerLayerView()
+        view.playerLayer.player = player
+        return view
+    }
+
+    func updateNSView(_ view: PlayerLayerView, context: Context) {
+        view.playerLayer.player = player
+    }
+
+    final class PlayerLayerView: NSView {
+        let playerLayer = AVPlayerLayer()
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            playerLayer.videoGravity = .resizeAspectFill
+            playerLayer.backgroundColor = NSColor.black.cgColor
+            layer?.addSublayer(playerLayer)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func layout() {
+            super.layout()
+            playerLayer.frame = bounds
+        }
     }
 }

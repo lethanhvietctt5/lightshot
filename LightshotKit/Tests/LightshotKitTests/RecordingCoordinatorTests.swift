@@ -290,40 +290,55 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     let h = Harness()
     await finishedTake(h, after: .showOverlay)
 
-    h.coordinator.copyPendingRecordingFile()
-    #expect(h.sink.copied == [take])
-    #expect(h.coordinator.pendingRecording != nil)                 // copying keeps the overlay up
+    // Copy file saves first and copies the saved file's reference, never the scratch one.
+    let copied = h.coordinator.copyPendingRecordingFile(as: "clip")
+    #expect(copied?.path == "/tmp/movies/clip.mp4")
+    #expect(h.sink.copied == [URL(fileURLWithPath: "/tmp/movies/clip.mp4")])
+    #expect(h.coordinator.pendingRecording == nil)
 
     // Rename then Save: the name replaces the pattern, the extension stays the file's own;
     // separators cannot escape the save folder.
+    await finishedTake(h, after: .showOverlay)
     let saved = h.coordinator.savePendingRecording(as: "../demo:take/1")
     #expect(saved?.path == "/tmp/movies/-demo-take-1.mp4")
-    #expect(h.sink.saves.map(\.from) == [take])
+    #expect(h.sink.saves.map(\.from) == [take, take])
     #expect(h.coordinator.pendingRecording == nil)
 
-    // A dismissal keeps the file, under the pattern.
+    // A dismissal keeps the file — under the pattern, or the name typed so far.
     await finishedTake(h, after: .showOverlay)
     h.coordinator.dismissPendingRecording()
-    #expect(h.sink.saves.count == 2)
     #expect(h.sink.saves.last?.to.lastPathComponent.hasPrefix("Recording ") == true)
+    await finishedTake(h, after: .showOverlay)
+    h.coordinator.dismissPendingRecording(as: "typed")
+    #expect(h.sink.saves.last?.to.lastPathComponent == "typed.mp4")
     #expect(h.coordinator.pendingRecording == nil)
 
     // Nothing pending: the actions are no-ops.
-    h.coordinator.copyPendingRecordingFile()
+    #expect(h.coordinator.copyPendingRecordingFile() == nil)
     h.coordinator.dismissPendingRecording()
-    #expect(h.sink.copied.count == 1 && h.sink.saves.count == 2)
+    #expect(h.sink.copied.count == 1 && h.sink.saves.count == 4)
+}
+
+@Test @MainActor func aNewTakeKeepsThePendingOneBeforeItStarts() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    #expect(h.sink.saves.isEmpty)
+    await h.coordinator.toggleRecording()                          // the app moves on
+    #expect(h.sink.saves.count == 1 && h.sink.saves[0].from == take)
+    #expect(h.coordinator.isRecording)
+    #expect(h.coordinator.pendingRecording == nil)
 }
 
 @Test @MainActor func deleteTrashesTheTakeAndAFailureKeepsItPending() async {
     let h = Harness()
     await finishedTake(h, after: .showOverlay)
     h.sink.trashFails = true
-    h.coordinator.deletePendingRecording()
+    #expect(!h.coordinator.deletePendingRecording())
     #expect(h.sink.trashed.isEmpty && h.coordinator.pendingRecording != nil)
     #expect(h.ui.recordingFailures.count == 1)
 
     h.sink.trashFails = false
-    h.coordinator.deletePendingRecording()
+    #expect(h.coordinator.deletePendingRecording())
     #expect(h.sink.trashed == [take] && h.coordinator.pendingRecording == nil)
     #expect(h.sink.saves.isEmpty)
 }
@@ -344,6 +359,8 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(s.recordingDestination(named: "   ", pathExtension: "mp4").lastPathComponent.hasPrefix("Recording "))
     #expect(s.recordingDestination(named: "...", pathExtension: "mp4").lastPathComponent.hasPrefix("Recording "))
     #expect(s.recordingDestination(named: ".hidden", pathExtension: "mov").lastPathComponent == "hidden.mov")
+    #expect(s.recordingDestination(named: "name.", pathExtension: "mp4").lastPathComponent == "name.mp4")
+    #expect(FilenameFormatter.sanitized("a/b:c") == "a-b-c")
 }
 
 @Test @MainActor func aSecondStartWhileActiveAndAStopWhileIdleAreNoOps() async {

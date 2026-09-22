@@ -39,4 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Surface any take a crashed session left behind (spec 0006, story 18).
         controller.recoverOrphanedRecordings()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        controller.keepPendingRecordingOnQuit()
+    }
 }
