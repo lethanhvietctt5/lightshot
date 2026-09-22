@@ -63,14 +63,18 @@ final class SettingsModel {
     /// In-app chord clashes (two actions on the same shortcut), a pure function of the bindings.
     var conflicts: [HotkeyConflict] { hotkeys.conflicts }
 
+    private let permissionGate: (RecordingToggle) async -> Bool
+
     init(
         store: SettingsStore,
         applyHotkeys: @escaping (HotkeyBindings) -> [CaptureAction],
-        applyRetention: @escaping (Int) -> Void
+        applyRetention: @escaping (Int) -> Void,
+        permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true }
     ) {
         self.store = store
         self.applyHotkeys = applyHotkeys
         self.applyRetention = applyRetention
+        self.permissionGate = permissionGate
 
         // Seed from the store. Assigning in init does not fire `didSet`, so this reads without
         // writing back or re-registering.
@@ -91,6 +95,15 @@ final class SettingsModel {
         self.recordingDefaults = store.recordingDefaults
         self.historyRetention = store.historyRetention
         self.launchAtLogin = store.launchAtLogin
+    }
+
+    /// A recording feature switched on in Settings asks for its grant right then, like the toolbar
+    /// toggle does (story 41); a decline (which shows the recovery alert) switches it back off.
+    func featureTurnedOn(_ toggle: RecordingToggle) {
+        guard toggle.requiredPermission != nil else { return }
+        Task { @MainActor in
+            if await !permissionGate(toggle) { recordingDefaults[toggle] = false }
+        }
     }
 
     /// Assign (or clear) a chord for one action, then persist + re-register through `hotkeys`' setter.

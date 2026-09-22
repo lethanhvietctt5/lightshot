@@ -185,6 +185,30 @@ struct SettingsView: View {
             ClickHighlightPreview(settings: model.recordingDefaults.clickHighlight)
                 .disabled(!model.recordingDefaults.highlightClicks)
                 .opacity(model.recordingDefaults.highlightClicks ? 1 : 0.5)
+            Toggle("Show keystrokes", isOn: $model.recordingDefaults.showKeystrokes)
+                .help("Show the keys you press as a pill in the recording. Needs Input Monitoring; asked for the first time you switch it on.")
+                .onChange(of: model.recordingDefaults.showKeystrokes) { _, on in
+                    if on { model.featureTurnedOn(.showKeystrokes) }
+                }
+            Picker("Keys to show", selection: $model.recordingDefaults.keystrokeOverlay.mode) {
+                ForEach(KeystrokeDisplayMode.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.showKeystrokes)
+            Picker("Keystroke position", selection: $model.recordingDefaults.keystrokeOverlay.position) {
+                ForEach(KeystrokeOverlayPosition.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.showKeystrokes)
+            Picker("Keystroke size", selection: $model.recordingDefaults.keystrokeOverlay.size) {
+                ForEach(KeystrokeOverlaySize.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.showKeystrokes)
+            Picker("Keystroke appearance", selection: $model.recordingDefaults.keystrokeOverlay.appearance) {
+                ForEach(KeystrokeOverlayAppearance.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.showKeystrokes)
+            Toggle("Blur behind keystrokes", isOn: $model.recordingDefaults.keystrokeOverlay.blurBackground)
+                .disabled(!model.recordingDefaults.showKeystrokes)
+                .help("Blur the recording behind the pill instead of a flat tint. Keys typed into password fields are never shown.")
             HStack {
                 Text("Microphone volume")
                 Slider(value: $model.recordingDefaults.microphoneVolume, in: 0...2, step: 0.1)
