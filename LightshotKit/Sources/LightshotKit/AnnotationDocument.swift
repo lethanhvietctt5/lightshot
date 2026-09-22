@@ -78,13 +78,25 @@ public struct AnnotationDocument: Equatable, Sendable {
     /// The topmost element whose geometry contains `point` (image coordinates),
     /// or `nil` when the point misses every element. Pure — no view involvement.
     public func elementID(at point: Point) -> ElementID? {
-        for element in state.elements.reversed() {
-            let tolerance = max(element.style.strokeWidth / 2, Self.minHitTolerance)
-            if element.kind.hitTest(point, tolerance: tolerance) {
-                return element.id
-            }
+        // Topmost first — but a focus area only catches a click no other mark takes, since it
+        // usually frames the very marks the user wants to reach (LIG-47).
+        let hits = state.elements.reversed().filter { element in
+            element.kind.hitTest(point, tolerance: max(element.style.strokeWidth / 2, Self.minHitTolerance))
         }
-        return nil
+        return (hits.first { $0.kind.focusRect == nil } ?? hits.first)?.id
+    }
+
+    /// The mark a drawing tool picks up at `point` instead of starting a new one (LIG-47): like
+    /// `elementID(at:)`, but an unfilled rectangle or ellipse counts only near its outline, so a
+    /// new mark can still be started inside one.
+    public func grabbableElementID(at point: Point) -> ElementID? {
+        let hits = state.elements.reversed().filter { element in
+            let tolerance = max(element.style.strokeWidth / 2, Self.minHitTolerance)
+            guard element.kind.hitTest(point, tolerance: tolerance) else { return false }
+            guard element.style.fill == nil else { return true }
+            return element.kind.isNearOutline(point, tolerance: tolerance) ?? true
+        }
+        return (hits.first { $0.kind.focusRect == nil } ?? hits.first)?.id
     }
 
     /// The step number a new marker would receive: one past the highest existing
@@ -133,7 +145,11 @@ public struct AnnotationDocument: Equatable, Sendable {
             case let .move(dx, dy):
                 element.kind = element.kind.moved(dx: dx, dy: dy)
             case let .resize(handle, dx, dy):
-                element.kind = element.kind.resized(handle: handle, dx: dx, dy: dy)
+                if case .text = element.kind {
+                    Self.resizeText(&element, handle: handle, dx: dx)
+                } else {
+                    element.kind = element.kind.resized(handle: handle, dx: dx, dy: dy)
+                }
             case let .reshape(handle, dx, dy):
                 element.kind = element.kind.reshaped(handle: handle, dx: dx, dy: dy)
             }
@@ -143,7 +159,19 @@ public struct AnnotationDocument: Equatable, Sendable {
     /// Replaces the element's style. No-op if `id` is unknown. Consecutive style edits
     /// on the same element coalesce, so one slider drag is one undo step (story 35).
     public mutating func setStyle(_ id: ElementID, _ style: Style) {
-        withElement(id, coalescing: .style(id)) { $0.style = style }
+        withElement(id, coalescing: .style(id)) { element in
+            let oldSize = element.style.fontSize
+            element.style = style
+            // A label's box follows its type size: a natural-width one regrows, a hand-set one
+            // keeps its width and rewraps.
+            if case let .text(string, box) = element.kind, oldSize != style.fontSize {
+                let natural = TextLayout.hasNaturalWidth(box, string: string, fontSize: oldSize)
+                element.kind = .text(string, box: TextLayout.box(
+                    for: string, fontSize: style.fontSize, origin: box.standardized.origin,
+                    width: natural ? nil : box.standardized.width
+                ))
+            }
+        }
     }
 
     /// Sets a step marker's `radius` — its on-image size. No-op if `id` is not a step
@@ -181,10 +209,52 @@ public struct AnnotationDocument: Equatable, Sendable {
     /// Consecutive edits coalesce, so typing a word is one undo step (story 35).
     public mutating func updateText(_ id: ElementID, to string: String) {
         withElement(id, coalescing: .text(id)) { element in
-            guard case let .text(_, box) = element.kind else { return }
-            element.kind = .text(string, box: box)
+            guard case let .text(old, box) = element.kind else { return }
+            // A label with its natural width grows with its text; one whose width was set by hand
+            // keeps it and wraps (LIG-47). Either way the box is as tall as the text.
+            let fontSize = element.style.fontSize
+            let natural = TextLayout.hasNaturalWidth(box, string: old, fontSize: fontSize)
+            element.kind = .text(string, box: TextLayout.box(
+                for: string, fontSize: fontSize, origin: box.standardized.origin,
+                width: natural ? nil : box.standardized.width
+            ))
         }
     }
+
+    /// The handles a selected label offers (LIG-47): its side edges set the wrap width, its
+    /// bottom-right corner scales the text.
+    public static let textHandles: [Handle] = [.left, .right, .bottomRight]
+
+    /// A side handle sets the label's width (the text rewraps, the opposite side stays put); the
+    /// bottom-right corner scales the text and its box together from the top-left. Any other
+    /// handle leaves a label alone.
+    private static func resizeText(_ element: inout AnnotationElement, handle: Handle, dx: Double) {
+        guard case let .text(string, box) = element.kind else { return }
+        let old = box.standardized
+        let fontSize = element.style.fontSize
+        switch handle {
+        case .left, .right:
+            let width = max(old.width + (handle == .left ? -dx : dx), TextLayout.minimumWidth(for: fontSize))
+            let x = handle == .left ? old.maxX - width : old.minX
+            element.kind = .text(string, box: TextLayout.box(
+                for: string, fontSize: fontSize, origin: Point(x: x, y: old.minY), width: width
+            ))
+        case .bottomRight:
+            let scale = max(old.width + dx, 1) / max(old.width, 1)
+            let size = min(max((fontSize * scale).rounded(), textFontSizes.lowerBound), textFontSizes.upperBound)
+            let ratio = size / fontSize
+            let natural = TextLayout.hasNaturalWidth(old, string: string, fontSize: fontSize)
+            element.style.fontSize = size
+            element.kind = .text(string, box: TextLayout.box(
+                for: string, fontSize: size, origin: old.origin, width: natural ? nil : old.width * ratio
+            ))
+        default:
+            break
+        }
+    }
+
+    /// The type sizes a label can be scaled to.
+    public static let textFontSizes: ClosedRange<Double> = 6...200
 
     /// Closes any open coalescing run so the next edit starts a fresh undo entry. The
     /// editor calls this at interaction boundaries (a slider release, the end of a text

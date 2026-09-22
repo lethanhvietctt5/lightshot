@@ -384,3 +384,48 @@ private func rendered(_ image: CGImage) -> RenderedImage {
         #expect(patch.rect == Rect(x: 100, y: 30, width: 40, height: 60))
     }
 }
+
+// MARK: - Focus (LIG-47)
+
+@Suite struct RenderFocusTests {
+    @Test func everythingOutsideTheFocusAreasIsDimmedAndTheAreasStayClear() {
+        var doc = document() // white base, 100 × 100
+        _ = doc.add(AnnotationElement(kind: .focus(Rect(x: 10, y: 10, width: 30, height: 30))))
+        // Overlapping the first: the overlap must not be dimmed twice, or dimmed at all.
+        _ = doc.add(AnnotationElement(kind: .focus(Rect(x: 30, y: 30, width: 30, height: 30))))
+        let pixels = Pixels(render(doc))
+        for (x, y) in [(20, 20), (35, 35), (50, 50)] {
+            let c = pixels.rgb(x: x, y: y)
+            #expect(c.r > 0.98 && c.g > 0.98 && c.b > 0.98)       // inside: untouched white
+        }
+        let outside = pixels.rgb(x: 85, y: 85)
+        let expected = 1 - focusDimAlpha
+        #expect(abs(outside.r - expected) < 0.03 && abs(outside.g - expected) < 0.03)
+    }
+
+    @Test func marksStayBrightOutsideTheFocusAreas() {
+        var doc = document()
+        // A red box drawn before the focus area still sits above its dim.
+        _ = doc.add(AnnotationElement(kind: .rectangle(Rect(x: 60, y: 60, width: 30, height: 30)),
+                                      style: Style(color: .red, strokeWidth: 6)))
+        _ = doc.add(AnnotationElement(kind: .focus(Rect(x: 10, y: 10, width: 20, height: 20))))
+        let edge = Pixels(render(doc)).rgb(x: 60, y: 75)
+        #expect(edge.r > 0.9 && edge.g < 0.2)                         // undimmed red (dimmed would read ≈ 0.45)
+    }
+
+    @Test func aFocusAreaIsGrabbedAnywhereButTheMarksItFramesWinAClick() {
+        let area = AnnotationElement.Kind.focus(Rect(x: 10, y: 10, width: 80, height: 60))
+        #expect(area.hitTest(Point(x: 10, y: 40), tolerance: 2))       // on the edge
+        #expect(area.hitTest(Point(x: 50, y: 40), tolerance: 2))       // inside: draggable by its body
+        var doc = document()
+        let mark = doc.add(AnnotationElement(kind: .rectangle(Rect(x: 40, y: 30, width: 20, height: 20))))
+        let focus = doc.add(AnnotationElement(kind: area))              // on top in z-order
+        #expect(doc.elementID(at: Point(x: 40, y: 40)) == mark)        // the framed mark wins
+        #expect(doc.elementID(at: Point(x: 80, y: 60)) == focus)       // nothing else there
+        #expect(focusCornerRadius(for: Rect(x: 0, y: 0, width: 200, height: 200)) == 12)
+        #expect(focusCornerRadius(for: Rect(x: 0, y: 0, width: 20, height: 40)) == 5)
+        #expect(area.boundingBox == Rect(x: 10, y: 10, width: 80, height: 60))
+        #expect(area.moved(dx: 5, dy: -5).focusRect == Rect(x: 15, y: 5, width: 80, height: 60))
+        #expect(StyleFields.fields(for: area).isEmpty)
+    }
+}

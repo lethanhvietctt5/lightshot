@@ -123,13 +123,15 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         #expect(doc.element(id: id)?.kind.boundingBox == box)
     }
 
-    @Test func updateTextRewritesStringKeepingBox() {
+    @Test func updateTextRewritesStringKeepingAHandSetWidth() {
         var doc = makeDocument()
+        // 80 wide is not "before"'s natural width, so it counts as set by hand (LIG-47).
         let id = doc.add(AnnotationElement(kind: .text("before", box: rect(0, 0, 80, 20))))
         doc.updateText(id, to: "after")
         guard case let .text(string, box) = doc.element(id: id)?.kind else { Issue.record("kind"); return }
         #expect(string == "after")
-        #expect(box == rect(0, 0, 80, 20))
+        #expect(box.origin == Point(x: 0, y: 0) && box.width == 80)
+        #expect(box.height == TextLayout.box(for: "after", fontSize: Style.default.fontSize, origin: box.origin, width: 80).height)
     }
 
     @Test func updateTextOnNonTextElementIsANoOp() {
@@ -593,4 +595,22 @@ private func rect(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> Rect {
         doc.undo()
         #expect(doc.element(id: id)?.kind == .redaction(rect(10, 10, 80, 40), style: .blur, strength: 0.2, seed: 1))
     }
+}
+
+// A drawing tool picks up a mark pressed on, instead of drawing over it (LIG-47).
+@Test func aDrawingToolGrabsAMarkButCanStillDrawInsideAnOutline() {
+    var doc = AnnotationDocument(baseImage: CapturedImage(pixelWidth: 400, pixelHeight: 300, data: Data()))
+    let box = doc.add(AnnotationElement(kind: .rectangle(Rect(x: 50, y: 50, width: 200, height: 100))))
+    let ring = doc.add(AnnotationElement(kind: .ellipse(Rect(x: 300, y: 50, width: 80, height: 80))))
+    let wash = doc.add(AnnotationElement(kind: .highlight(Rect(x: 50, y: 200, width: 100, height: 50))))
+    #expect(doc.grabbableElementID(at: Point(x: 50, y: 100)) == box)       // on the outline
+    #expect(doc.grabbableElementID(at: Point(x: 150, y: 100)) == nil)      // inside: free to draw
+    #expect(doc.elementID(at: Point(x: 150, y: 100)) == box)               // Select still takes it
+    #expect(doc.grabbableElementID(at: Point(x: 340, y: 50)) == ring)      // top of the ellipse
+    #expect(doc.grabbableElementID(at: Point(x: 340, y: 90)) == nil)       // its middle
+    #expect(doc.grabbableElementID(at: Point(x: 100, y: 225)) == wash)     // an area mark: anywhere on it
+    var filled = Style.default
+    filled.fill = .red
+    let solid = doc.add(AnnotationElement(kind: .rectangle(Rect(x: 20, y: 260, width: 40, height: 30)), style: filled))
+    #expect(doc.grabbableElementID(at: Point(x: 40, y: 275)) == solid)     // a filled shape: anywhere
 }

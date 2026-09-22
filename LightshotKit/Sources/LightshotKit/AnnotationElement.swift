@@ -42,6 +42,9 @@ public struct AnnotationElement: Identifiable, Equatable, Sendable {
         /// An auto-numbered step marker drawn as a circle of `radius` about `center`.
         /// The document assigns `number` on `add`; callers pass any placeholder.
         case stepMarker(number: Int, center: Point, radius: Double)
+        /// A focus area (CleanShot's spotlight, LIG-47): everything outside the union of all
+        /// focus areas is dimmed, under the other marks. It has no style of its own.
+        case focus(Rect)
     }
 }
 
@@ -55,7 +58,7 @@ extension AnnotationElement.Kind {
         case let .line(from, to):
             return Self.boundingBox(of: [from, to])
         case let .rectangle(rect), let .ellipse(rect),
-             let .highlight(rect), let .redaction(rect, _, _, _):
+             let .highlight(rect), let .redaction(rect, _, _, _), let .focus(rect):
             return rect.standardized
         case let .text(_, box):
             return box.standardized
@@ -94,6 +97,7 @@ extension AnnotationElement.Kind {
         case let .rectangle(rect): return .rectangle(shift(rect))
         case let .ellipse(rect): return .ellipse(shift(rect))
         case let .highlight(rect): return .highlight(shift(rect))
+        case let .focus(rect): return .focus(shift(rect))
         case let .redaction(rect, style, strength, seed):
             return .redaction(shift(rect), style: style, strength: strength, seed: seed)
         case let .text(string, box): return .text(string, box: shift(box))
@@ -128,6 +132,7 @@ extension AnnotationElement.Kind {
         case let .rectangle(rect): return .rectangle(remap(rect))
         case let .ellipse(rect): return .ellipse(remap(rect))
         case let .highlight(rect): return .highlight(remap(rect))
+        case let .focus(rect): return .focus(remap(rect))
         case let .redaction(rect, style, strength, seed):
             return .redaction(remap(rect), style: style, strength: strength, seed: seed)
         case let .text(string, box): return .text(string, box: remap(box))
@@ -200,6 +205,30 @@ extension AnnotationElement.Kind {
             return point.distance(to: center) <= radius + tolerance
         case .rectangle, .highlight, .redaction, .text:
             return boundingBox.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+        case .focus:
+            // Anywhere inside, so it can be dragged by its body; `elementID(at:)` still lets the
+            // marks it frames win a click.
+            return boundingBox.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+        }
+    }
+
+    /// For an outlined shape (rectangle, ellipse), whether `point` is within `tolerance` of its
+    /// outline; nil for every other kind, whose `hitTest` already means "on it".
+    func isNearOutline(_ point: Point, tolerance: Double) -> Bool? {
+        switch self {
+        case let .rectangle(rect):
+            let box = rect.standardized
+            return box.insetBy(dx: -tolerance, dy: -tolerance).contains(point)
+                && !box.insetBy(dx: tolerance, dy: tolerance).contains(point)
+        case let .ellipse(rect):
+            let box = rect.standardized
+            guard box.width > 0, box.height > 0 else { return false }
+            let nx = (point.x - box.midX) / (box.width / 2)
+            let ny = (point.y - box.midY) / (box.height / 2)
+            // The distance off the outline, measured along the radius, in image pixels.
+            return abs((nx * nx + ny * ny).squareRoot() - 1) * min(box.width, box.height) / 2 <= tolerance
+        default:
+            return nil
         }
     }
 
@@ -219,5 +248,32 @@ extension AnnotationElement.Kind {
         let fx = old.width == 0 ? 0 : (p.x - old.minX) / old.width
         let fy = old.height == 0 ? 0 : (p.y - old.minY) / old.height
         return Point(x: new.minX + fx * new.width, y: new.minY + fy * new.height)
+    }
+}
+
+/// Which style controls apply to an element kind (LIG-46): the editor's toolbar shows only these
+/// for the active tool or the selected element.
+public struct StyleFields: OptionSet, Sendable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+
+    public static let color = StyleFields(rawValue: 1 << 0)
+    public static let strokeWidth = StyleFields(rawValue: 1 << 1)
+    public static let fontSize = StyleFields(rawValue: 1 << 2)
+    public static let arrowStyle = StyleFields(rawValue: 1 << 3)
+    public static let redaction = StyleFields(rawValue: 1 << 4)
+
+    /// What the renderer reads for `kind`: stroked shapes take colour and width; text and a step
+    /// marker their colour and size (the size control resizes a marker's disc, story 28); a
+    /// highlight only its colour; a redaction only its own style — colour and width never touch it.
+    public static func fields(for kind: AnnotationElement.Kind) -> StyleFields {
+        switch kind {
+        case .arrow: return [.color, .strokeWidth, .arrowStyle]
+        case .line, .rectangle, .ellipse, .freehand: return [.color, .strokeWidth]
+        case .text, .stepMarker: return [.color, .fontSize]
+        case .highlight: return [.color]
+        case .redaction: return [.redaction]
+        case .focus: return []
+        }
     }
 }

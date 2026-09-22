@@ -389,7 +389,8 @@ final class RecordingOverlayModel {
     private static var optionHeld: Bool { NSEvent.modifierFlags.contains(.option) }
 }
 
-/// The cursors the recording overlay shows (LIG-42), resolved to `NSCursor` by the view.
+/// The pointers the recording overlay (LIG-42) and the editor's crop (LIG-47) show, resolved to
+/// `NSCursor` by their views.
 enum PointerCursor: Equatable {
     case arrow
     case crosshair

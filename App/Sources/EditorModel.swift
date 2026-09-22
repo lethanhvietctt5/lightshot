@@ -17,7 +17,7 @@ final class EditorModel {
     /// The annotation tools the palette offers: vector marks + step markers (LIG-9), the
     /// highlighter and region redaction (LIG-12), plus crop (LIG-10).
     enum Tool: String, CaseIterable, Identifiable {
-        case select, arrow, line, rectangle, ellipse, freehand, text, step, highlight, redact, crop
+        case select, arrow, line, rectangle, ellipse, freehand, text, step, highlight, focus, redact, crop
         var id: String { rawValue }
 
         /// SF Symbol for the palette button.
@@ -40,6 +40,7 @@ final class EditorModel {
             case .text: return ("textformat", "Text", "Text")
             case .step: return ("1.circle.fill", "Step Marker", "Step marker")
             case .highlight: return ("highlighter", "Highlighter", "Highlighter — translucent wash, doesn't hide content")
+            case .focus: return ("rectangle.center.inset.filled", "Focus", "Focus — dim everything outside the areas you draw")
             case .redact: return ("eye.slash", "Redact", "Redact a region (pixelate, blur, or blackout)")
             case .crop: return ("crop", "Crop", "Crop")
             }
@@ -178,7 +179,22 @@ final class EditorModel {
     /// arrows are grabbed by their endpoints instead (see `selectionEndpoints`).
     var selectionBox: Rect? {
         guard let kind = selectedKindAtRest, kind.endpointHandles == nil else { return nil }
+        if case .text = kind { return nil }   // a label has its own chrome (`textBox`)
+        if kind.focusRect != nil { return nil }   // so does a focus area (`focusBox`)
         return kind.boundingBox
+    }
+
+    /// The selected focus area, for its solid rounded selection edge and handles (LIG-47).
+    var focusBox: Rect? {
+        selectedKindAtRest?.focusRect
+    }
+
+    /// The box of the selected label (or the one being typed into), for its border and its
+    /// three handles (LIG-47); nil while a gesture reshapes it or when no label is selected.
+    var textBox: Rect? {
+        guard drag == nil, draft == nil, let id = editingTextID ?? document.selectedID,
+              case let .text(_, box)? = document.element(id: id)?.kind else { return nil }
+        return box.standardized
     }
 
     /// The endpoint handles (image space) of a selected line or arrow, or nil.
@@ -192,18 +208,20 @@ final class EditorModel {
         return document.element(id: id)?.kind
     }
 
-    /// Whether the arrow-style picker applies: drawing arrows, or an arrow is selected.
-    var showsArrowControls: Bool {
-        if tool == .arrow { return true }
-        if case .arrow? = selectedKind { return true }
-        return false
-    }
-
-    /// Whether the redaction controls apply: drawing a redaction, or one is selected.
-    var showsRedactionControls: Bool {
-        if tool == .redact { return true }
-        if case .redaction? = selectedKind { return true }
-        return false
+    /// The style controls the toolbar shows (LIG-46): the selected element's, else the active
+    /// drawing tool's; none for Select with nothing selected, or for Crop.
+    var styleFields: StyleFields {
+        // A selected mark shows its own controls, whichever tool picked it up.
+        if tool != .crop, let kind = selectedKind { return StyleFields.fields(for: kind) }
+        switch tool {
+        case .arrow: return [.color, .strokeWidth, .arrowStyle]
+        case .line, .rectangle, .ellipse, .freehand: return [.color, .strokeWidth]
+        case .text, .step: return [.color, .fontSize]
+        case .highlight: return [.color]
+        case .redact: return [.redaction]
+        case .focus, .crop: return []
+        case .select: return selectedKind.map(StyleFields.fields(for:)) ?? []
+        }
     }
 
     private var selectedKind: AnnotationElement.Kind? {
@@ -375,6 +393,10 @@ final class EditorModel {
     func endTextEditing() {
         guard let id = editingTextID else { return }
         editingTextID = nil
+        // A label opened by the Text tool is let go when its typing ends; one the user selected
+        // (then double-clicked, or clicked again) stays selected.
+        if releasesTextWhenDone, document.selectedID == id { document.select(nil) }
+        releasesTextWhenDone = false
         // Close the typing run so re-editing the same label later is a distinct undo step.
         document.endCoalescing()
         if case let .text(string, _)? = document.element(id: id)?.kind,
@@ -408,16 +430,30 @@ final class EditorModel {
             beginSelectGesture(at: point)
         case .crop:
             beginCropGesture(at: point)
-        case .arrow, .line, .rectangle, .ellipse, .freehand, .text, .step, .highlight, .redact:
-            // The tool stays active after a mark is placed (the user switches tools, not
-            // us), so a press on the selection's own handles reshapes it instead of
-            // starting a new mark.
+        case .text:
             if beginHandleDrag(at: point) { return }
-            draft = Draft(
-                tool: tool, start: point, current: point, points: [point], arrowStyle: arrowStyle,
-                redactionStyle: redactionStyle, redactionStrength: redactionStrength,
-                redactionSeed: UInt64.random(in: .min ... .max)
-            )
+            // The Text tool on a finished label reopens it instead of starting a new one.
+            if let hit = document.elementID(at: point), isText(hit) {
+                document.select(hit)
+                syncStyleToSelection()
+                editingTextID = hit
+                releasesTextWhenDone = true
+                return
+            }
+            startDraft(at: point)
+        case .arrow, .line, .rectangle, .ellipse, .freehand, .step, .highlight, .focus, .redact:
+            // The tool stays active after a mark is placed (the user switches tools, not us). A
+            // press on the selection's handles reshapes it; a press on a mark picks it up —
+            // selects it and moves it — so marks can be selected again with any tool (LIG-47);
+            // a press anywhere else starts a new mark.
+            if beginHandleDrag(at: point) { return }
+            if let hit = document.grabbableElementID(at: point) {
+                document.select(hit)
+                syncStyleToSelection()
+                drag = DragSession(id: hit, mode: .move, start: point, current: point)
+                return
+            }
+            startDraft(at: point)
         }
     }
 
@@ -446,6 +482,13 @@ final class EditorModel {
             return
         }
         if let drag {
+            let reopen = reopensText
+            reopensText = false
+            // A click (no drag) on the label that was already selected: edit it again.
+            if reopen, drag.start.distance(to: point) < 2 {
+                editingTextID = drag.id
+                return
+            }
             document.transform(drag.id, by: drag.transform)
             return
         }
@@ -457,9 +500,12 @@ final class EditorModel {
         case .step:
             placeStepMarker(at: draft.start)
         default:
+            // A new mark is not selected: selecting is the user's own act. A click that drew
+            // nothing lets go of whatever was selected.
             if let kind = draft.kind {
-                let id = document.add(AnnotationElement(kind: kind, style: style))
-                document.select(id)
+                document.add(AnnotationElement(kind: kind, style: style))
+            } else {
+                document.select(nil)
             }
         }
     }
@@ -469,6 +515,8 @@ final class EditorModel {
     private func beginSelectGesture(at point: Point) {
         if beginHandleDrag(at: point) { return }
         if let hit = document.elementID(at: point) {
+            // A click on a label that is already selected opens it for editing (see `end`).
+            reopensText = document.selectedID == hit && isText(hit)
             document.select(hit)
             drag = DragSession(id: hit, mode: .move, start: point, current: point)
         } else {
@@ -485,7 +533,10 @@ final class EditorModel {
             guard let hit = endpoints.last(where: { isWithinGrabRadius(point, of: $0.point) }) else { return false }
             drag = DragSession(id: id, mode: .reshape(hit.handle), start: point, current: point)
         } else {
-            guard let handle = handle(at: point, of: kind.boundingBox) else { return false }
+            // A label offers only its side edges and its bottom-right corner (LIG-47).
+            let offered: [Handle]
+            if case .text = kind { offered = AnnotationDocument.textHandles } else { offered = Handle.allCases }
+            guard let handle = handle(at: point, of: kind.boundingBox, among: offered) else { return false }
             drag = DragSession(id: id, mode: .resize(handle), start: point, current: point)
         }
         return true
@@ -496,7 +547,7 @@ final class EditorModel {
     /// rect being adjusted.
     private func beginCropGesture(at point: Point) {
         let rect = cropDraft ?? document.imageBounds
-        if let handle = handle(at: point, of: rect) {
+        if let handle = cropHandle(at: point, of: rect) {
             cropSession = CropSession(mode: .resize(handle), start: point, origin: rect)
         } else if rect.contains(point) {
             cropSession = CropSession(mode: .move, start: point, origin: rect)
@@ -506,8 +557,8 @@ final class EditorModel {
     }
 
     /// The resize handle near `point`, if the point is within a grab radius of one.
-    private func handle(at point: Point, of box: Rect) -> Handle? {
-        Handle.allCases.first { isWithinGrabRadius(point, of: handlePoint($0, in: box)) }
+    private func handle(at point: Point, of box: Rect, among handles: [Handle] = Handle.allCases) -> Handle? {
+        handles.first { isWithinGrabRadius(point, of: handlePoint($0, in: box)) }
     }
 
     private func isWithinGrabRadius(_ point: Point, of handle: Point) -> Bool {
@@ -517,17 +568,75 @@ final class EditorModel {
 
     // MARK: - Placement (stories 20, 25)
 
+    /// Starts drawing a new mark with the active tool at `point`.
+    private func startDraft(at point: Point) {
+        draft = Draft(
+            tool: tool, start: point, current: point, points: [point], arrowStyle: arrowStyle,
+            redactionStyle: redactionStyle, redactionStrength: redactionStrength,
+            redactionSeed: UInt64.random(in: .min ... .max)
+        )
+    }
+
+    /// Whether the label being typed was opened by the Text tool (placed, or clicked with it),
+    /// rather than selected by the user — it is deselected when the typing ends.
+    private var releasesTextWhenDone = false
+
+    /// The crop handle under `point`: a corner near its point, else an edge anywhere along it
+    /// (LIG-47), so the whole border can be grabbed, not only its midpoint.
+    private func cropHandle(at point: Point, of rect: Rect) -> Handle? {
+        let corners: [Handle] = [.topLeft, .topRight, .bottomLeft, .bottomRight]
+        if let corner = handle(at: point, of: rect, among: corners) { return corner }
+        let box = rect.standardized
+        let tolerance = max(Self.handleRadius / max(viewScale, 0.0001), 4)
+        let withinX = point.x >= box.minX - tolerance && point.x <= box.maxX + tolerance
+        let withinY = point.y >= box.minY - tolerance && point.y <= box.maxY + tolerance
+        if withinY, abs(point.x - box.minX) <= tolerance { return .left }
+        if withinY, abs(point.x - box.maxX) <= tolerance { return .right }
+        if withinX, abs(point.y - box.minY) <= tolerance { return .top }
+        if withinX, abs(point.y - box.maxY) <= tolerance { return .bottom }
+        return nil
+    }
+
+    /// The pointer while cropping (LIG-47): a resize arrow over the border, an open hand over
+    /// the crop (a closed one while moving it), a crosshair outside to draw a new one; nil when
+    /// not cropping, so the canvas keeps the ordinary arrow.
+    func cropCursor(at point: Point) -> PointerCursor? {
+        guard isCropping else { return nil }
+        if let cropSession {
+            switch cropSession.mode {
+            case .move: return .closedHand
+            case let .resize(handle): return .resize(handle)
+            case .draw: return .crosshair
+            }
+        }
+        let rect = cropDraft ?? document.imageBounds
+        if let handle = cropHandle(at: point, of: rect) { return .resize(handle) }
+        return rect.contains(point) ? .openHand : .crosshair
+    }
+
+    /// Set when a Select click lands on the label that was already selected: if the press ends
+    /// without a drag, the label opens for editing.
+    private var reopensText = false
+
+    private func isText(_ id: ElementID) -> Bool {
+        if case .text? = document.element(id: id)?.kind { return true }
+        return false
+    }
+
     private func placeText(at point: Point) {
-        let box = Rect(x: point.x, y: point.y, width: max(style.fontSize * 6, 80), height: style.fontSize * 1.4)
+        // A caret-sized box at the click that grows as the label is typed (LIG-47).
+        let box = TextLayout.box(for: "", fontSize: style.fontSize, origin: point)
         let id = document.add(AnnotationElement(kind: .text("", box: box), style: style))
+        // Selected only while it is typed (the style controls apply to it), then let go.
         document.select(id)
         editingTextID = id
+        releasesTextWhenDone = true
     }
 
     private func placeStepMarker(at point: Point) {
         let radius = max(style.fontSize, 14)
-        let id = document.add(AnnotationElement(kind: .stepMarker(number: 0, center: point, radius: radius), style: style))
-        document.select(id)
+        document.add(AnnotationElement(kind: .stepMarker(number: 0, center: point, radius: radius), style: style))
+        document.select(nil)
     }
 
     // MARK: - Selection sync
@@ -584,6 +693,7 @@ private struct Draft {
         case .ellipse: return hasMinimumArea ? .ellipse(rectBetween(start, current)) : nil
         case .freehand: return points.count > 1 ? .freehand(points: points) : nil
         case .highlight: return hasMinimumArea ? .highlight(rectBetween(start, current)) : nil
+        case .focus: return hasMinimumArea ? .focus(rectBetween(start, current)) : nil
         case .redact:
             guard hasMinimumArea else { return nil }
             return .redaction(rectBetween(start, current), style: redactionStyle,

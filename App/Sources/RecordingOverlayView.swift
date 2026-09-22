@@ -371,40 +371,12 @@ struct RecordingOverlayView: View {
         context.stroke(Path(box), with: .color(.white.opacity(model.hasSelection ? 0.8 : 1)), style: StrokeStyle(lineWidth: model.hasSelection ? 1 : 2))
 
         if model.showsHandles, let rect = model.selection.rect {
-            let handles = Self.handleChrome(for: rect.cgRect)
-            context.stroke(handles, with: .color(.black.opacity(0.35)), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-            context.stroke(handles, with: .color(.white), style: StrokeStyle(lineWidth: 3, lineCap: .butt))
+            OverlayCanvas.drawSelectionChrome(&context, around: rect.cgRect)
         }
 
         if let px = model.pixelSize {
             OverlayCanvas.drawReadout(&context, width: px.width, height: px.height, around: box)
         }
-    }
-
-    /// CleanShot's selection chrome: an L-bracket at each corner and a short bar at each edge's
-    /// midpoint, drawn on the eight handle points the model hit-tests.
-    private static func handleChrome(for box: CGRect) -> Path {
-        let arm: CGFloat = 16
-        let half = arm / 2
-        var path = Path()
-        for handle in Handle.allCases {
-            let p = handlePoint(handle, in: Rect(x: box.minX, y: box.minY, width: box.width, height: box.height)).cgPoint
-            switch handle {
-            case .topLeft:
-                path.move(to: CGPoint(x: p.x, y: p.y + arm)); path.addLine(to: p); path.addLine(to: CGPoint(x: p.x + arm, y: p.y))
-            case .topRight:
-                path.move(to: CGPoint(x: p.x - arm, y: p.y)); path.addLine(to: p); path.addLine(to: CGPoint(x: p.x, y: p.y + arm))
-            case .bottomRight:
-                path.move(to: CGPoint(x: p.x, y: p.y - arm)); path.addLine(to: p); path.addLine(to: CGPoint(x: p.x - arm, y: p.y))
-            case .bottomLeft:
-                path.move(to: CGPoint(x: p.x + arm, y: p.y)); path.addLine(to: p); path.addLine(to: CGPoint(x: p.x, y: p.y - arm))
-            case .top, .bottom:
-                path.move(to: CGPoint(x: p.x - half, y: p.y)); path.addLine(to: CGPoint(x: p.x + half, y: p.y))
-            case .left, .right:
-                path.move(to: CGPoint(x: p.x, y: p.y - half)); path.addLine(to: CGPoint(x: p.x, y: p.y + half))
-            }
-        }
-        return path
     }
 }
 
