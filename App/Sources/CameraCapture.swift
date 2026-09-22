@@ -74,6 +74,9 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
 final class CameraFeed: @unchecked Sendable {
     private let lock = NSLock()
     private var capture: CameraCapture?
+    /// Told (on any thread) when a new capture replaces the running one — a restart tears the
+    /// take down and starts afresh — so the on-screen preview can re-attach its layer.
+    var onCaptureReplaced: (@Sendable (CameraCapture) -> Void)?
     private var settings = CameraBubbleSettings.standard
     private var fullscreen = false
 
@@ -93,7 +96,9 @@ final class CameraFeed: @unchecked Sendable {
         capture = fresh
         self.settings = settings
         fullscreen = false
+        let replaced = previous != nil ? onCaptureReplaced : nil
         fresh.start()
+        replaced?(fresh)
         return fresh
     }
 

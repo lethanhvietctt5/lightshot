@@ -244,7 +244,12 @@ actor SCRecordingService: RecordingService {
         }
         do {
             let movie = try await writer.finish(at: stopTime, on: queue)
-            if let streamError = output.failure { return .failure(streamError) }
+            if let streamError = output.failure {
+                // The stream died mid-take: a failure is reported, so the movie must not linger
+                // for recovery to mistake it for a crashed take.
+                try? FileManager.default.removeItem(at: movie)
+                return .failure(streamError)
+            }
             log.info("Recording finished: \(movie.lastPathComponent, privacy: .public), \(writer.frameCount) frames")
             do {
                 try await MP4Remuxer.remux(movie, to: finalURL)
@@ -575,7 +580,9 @@ private final class RecordingWriter: @unchecked Sendable {
 
         // Bit rate scales with pixel throughput: ~0.1 bit per pixel per frame reads as high quality
         // for screen content (≈11 Mb/s for 2560×1440 at 30 fps).
-        let bitRate = max(1_000_000, Int(Double(width * height * max(1, fps)) * 0.1))
+        let bitRate = Int(VideoBitRate.videoBitsPerSecond(
+            size: Size(width: Double(width), height: Double(height)), fps: Double(fps), quality: VideoBitRate.defaultQuality
+        ))
         let settings: [String: Any] = [
             AVVideoCodecKey: codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
             AVVideoWidthKey: width,

@@ -27,6 +27,9 @@ final class CameraBubbleController {
 
     init(feed: CameraFeed) {
         self.feed = feed
+        feed.onCaptureReplaced = { [weak self] capture in
+            Task { @MainActor in self?.bubbleView?.attach(capture.previewLayer) }
+        }
     }
 
     /// Show (or re-target) the bubble over `region` for `deviceID`. A failure to open the camera

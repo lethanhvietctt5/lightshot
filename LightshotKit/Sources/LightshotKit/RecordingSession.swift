@@ -18,8 +18,10 @@ import Foundation
 /// partial file away, resets the timer and goes back to `countdown` — or straight to `recording`
 /// when no countdown is configured; `discard` (from countdown/recording/paused) throws the partial
 /// file away and ends in `idle`. `stop` from `countdown` behaves like `discard`, since nothing has
-/// been written. Both hand back the partial file's URL so the caller deletes it; the session never
-/// touches disk. Only `stopping → finished(URL)` produces a file the rest of the app ever sees.
+/// been written. Both hand back the partial file's URL for the record; the `RecordingService`
+/// owns and deletes its partial files on every path that ends without a finished file, and the
+/// session never touches disk. Only `stopping → finished(URL)` produces a file the rest of the app
+/// ever sees.
 public struct RecordingSession: Equatable, Sendable {
     public enum State: Equatable, Sendable {
         case idle
