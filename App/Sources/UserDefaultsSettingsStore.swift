@@ -25,6 +25,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let includeCursor = "capture.includeCursor"
         static let captureDelay = "capture.delay"   // TimeInterval seconds; 0 == off
         static let historyRetention = "history.retention"
+        static let recordingDefaults = "recording.defaults"   // JSON: RecordingDefaults
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -110,6 +111,23 @@ final class UserDefaultsSettingsStore: SettingsStore {
     var historyRetention: Int {
         get { defaults.object(forKey: Key.historyRetention) as? Int ?? Self.defaultRetention }
         set { defaults.set(max(0, newValue), forKey: Key.historyRetention) }
+    }
+
+    /// The recording baseline (spec 0006), persisted as one JSON blob: it is edited as a unit by the
+    /// Recording settings section and read as a unit at the start of every take. Unreadable or
+    /// missing data falls back to the shipped `.standard` so an old build's file never breaks a new one.
+    var recordingDefaults: RecordingDefaults {
+        get {
+            guard let data = defaults.data(forKey: Key.recordingDefaults),
+                  let stored = try? JSONDecoder().decode(RecordingDefaults.self, from: data)
+            else { return .standard }
+            return stored
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Key.recordingDefaults)
+            }
+        }
     }
 
     /// Backed by the real login-item registration, not a stored flag, so the toggle can't drift from

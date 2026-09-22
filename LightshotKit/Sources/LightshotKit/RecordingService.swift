@@ -16,7 +16,16 @@ public protocol RecordingService: PermissionAuthorizing {
     /// Start streaming `options.region` into a file at `url`. Returns once frames are flowing, or a
     /// typed failure — never a silently empty file. `permissionDenied` still routes to the
     /// System-Settings recovery for the named kind.
-    func start(_ options: RecordingOptions, writingTo url: URL) async -> Result<Void, RecordingError>
+    ///
+    /// `onFailure` is called at most once, from any thread, if the stream dies mid-take (the
+    /// display goes away, permission is revoked, the writer fails): the service has already torn
+    /// itself down, and the coordinator fails the session, deletes the partial file and routes the
+    /// error. It is never called for failures `start` or `stop` return directly.
+    func start(
+        _ options: RecordingOptions,
+        writingTo url: URL,
+        onFailure: @escaping @Sendable (RecordingError) -> Void
+    ) async -> Result<Void, RecordingError>
 
     /// Stop feeding frames and audio without ending the file (story 13).
     func pause() async
@@ -42,4 +51,8 @@ public protocol MediaSink {
     /// Move a finished recording to its final destination (the default save location + filename
     /// pattern, or a Save-As choice), replacing nothing silently — a collision is an error.
     func save(_ url: URL, to destination: URL) throws
+
+    /// Delete a partial file a discarded, restarted or failed take left behind. Best-effort: a
+    /// file that is already gone is not an error.
+    func removeFile(at url: URL)
 }

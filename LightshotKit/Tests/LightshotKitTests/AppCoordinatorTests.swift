@@ -106,6 +106,7 @@ private final class StubSettings: SettingsStore {
     var captureDelay: TimeInterval = 0
     var historyRetention = 50
     var launchAtLogin = false
+    var recordingDefaults = RecordingDefaults(countdownEnabled: false)
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the
@@ -131,6 +132,9 @@ private final class SpyUI: CaptureUI {
     func presentPermissionDenied() { permissionDeniedCount += 1 }
     func presentCaptureFailure(_ error: CaptureError) { failures.append(error) }
     func presentImageLoadFailure(_ error: ImageLoadError) { imageLoadFailures.append(error) }
+    func presentRecordingState(_ session: RecordingSession) {}
+    func presentRecordingFinished(at url: URL) {}
+    func presentRecordingFailure(_ error: RecordingError) {}
 }
 
 private func sampleImage() -> CapturedImage {

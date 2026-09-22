@@ -36,6 +36,13 @@ final class AppController: NSObject, CaptureUI {
         UserDefaultsSettingsStore.storedIncludeCursor()
     })
 
+    /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2).
+    private let recordingService = SCRecordingService()
+
+    /// Told on every recording transition, so the status item can show the stop glyph + timer
+    /// (story 11). Set by `StatusMenuController`, which owns the status item.
+    var recordingStateObserver: ((RecordingSession) -> Void)?
+
     override init() {
         super.init()
         coordinator = AppCoordinator(
@@ -45,6 +52,8 @@ final class AppController: NSObject, CaptureUI {
             imageSink: SystemImageSink(),
             settings: settings,
             history: history,
+            recordingService: recordingService,
+            mediaSink: SystemMediaSink(),
             ui: self
         )
         // Enforce the persisted retention setting on the history store at launch (story 54): the
@@ -110,9 +119,9 @@ final class AppController: NSObject, CaptureUI {
         case .window: captureWindow()
         case .fullscreen: captureFullscreen()
         case .repeatLast: repeatLast()
-        // Recording actions are rebindable now (LIG-27) but inert until the recorder lands
-        // (LIG-28 wires Record Screen, LIG-31 pause/resume and restart).
-        case .recordScreen, .pauseResumeRecording, .restartRecording: break
+        case .recordScreen: toggleRecording()
+        // Rebindable now (LIG-27) but inert until the recording controls land (LIG-31).
+        case .pauseResumeRecording, .restartRecording: break
         }
     }
 
@@ -128,6 +137,19 @@ final class AppController: NSObject, CaptureUI {
     func captureFullscreen(displayID: UInt32? = nil) {
         Task { await coordinator.captureFullscreen(displayID: displayID) }
     }
+
+    /// Menu / hotkey / status-item entry point for Record Screen (spec 0006, stories 1–2): starts a
+    /// recording of the primary display, or stops the one in progress. The record-mode overlay that
+    /// picks a rect or window arrives with LIG-29.
+    func toggleRecording() {
+        Task { await coordinator.toggleRecording(region: .display(id: UInt32(CGMainDisplayID()))) }
+    }
+
+    /// Whether a take is active — the menu row and status item key off this.
+    var isRecording: Bool { coordinator.isRecording }
+
+    /// Seconds recorded so far, for the status-item timer.
+    var recordingElapsed: TimeInterval { coordinator.recordingElapsed }
 
     /// Menu / hotkey entry point for re-firing the last capture mode (story 9).
     func repeatLast() {
@@ -318,6 +340,27 @@ final class AppController: NSObject, CaptureUI {
         alert.runModal()
     }
 
+    func presentRecordingState(_ session: RecordingSession) {
+        recordingStateObserver?(session)
+    }
+
+    /// R2's outcome: reveal the saved file, as the editor's Save does. R12 replaces this with the
+    /// post-recording overlay.
+    func presentRecordingFinished(at url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func presentRecordingFailure(_ error: RecordingError) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn’t record the screen"
+        alert.informativeText = Self.message(for: error)
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+
+        WindowPresenter.activateApp()
+        alert.runModal()
+    }
+
     func presentImageLoadFailure(_ error: ImageLoadError) {
         // The coordinator routes `userCancelled` to a silent no-op, so only the unreadable /
         // unsupported cases reach here — each gets a distinct message, never a blank editor.
@@ -481,6 +524,20 @@ final class AppController: NSObject, CaptureUI {
             return description
         default:
             return "The capture could not be completed."
+        }
+    }
+
+    private static func message(for error: RecordingError) -> String {
+        // `permissionDenied` and `userCancelled` are routed elsewhere by the coordinator.
+        switch error {
+        case .noDisplayAvailable:
+            return "No display was available to record."
+        case .diskFull:
+            return "The disk is full. Free up some space and try again."
+        case let .systemFailure(description):
+            return description
+        default:
+            return "The recording could not be completed."
         }
     }
 

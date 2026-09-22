@@ -16,12 +16,6 @@ import LightshotKit
 /// window paths still target the **primary display** (the main screen's backing scale for the window
 /// path), matching the overlay, which runs on the main screen.
 final class SCCaptureService: CaptureService {
-    /// Persisted "have we ever asked?" flag. macOS's preflight (`CGPreflightScreenCaptureAccess`)
-    /// is only two-state — it can't tell a never-asked first run from a standing denial — so we
-    /// remember whether `requestAuthorization()` has run to recover the `.notDetermined` case that
-    /// drives first-run onboarding (story 57).
-    private let hasRequestedDefaultsKey = "com.lightshot.hasRequestedScreenRecordingAccess"
-
     /// Whether to draw the cursor into the capture (story 12). A closure, not a stored flag, so it
     /// reads the live `SettingsStore` value at capture time rather than a value frozen at launch.
     private let includeCursor: @Sendable () -> Bool
@@ -30,26 +24,16 @@ final class SCCaptureService: CaptureService {
         self.includeCursor = includeCursor
     }
 
-    /// Advisory Screen Recording status. `authorized` when the preflight passes; otherwise
-    /// `notDetermined` until we've prompted once, then `denied`. The capture call stays the
-    /// authority — this only decides whether onboarding prompts.
+    /// Advisory Screen Recording status (see `ScreenRecordingPermission`). The capture call stays
+    /// the authority — this only decides whether onboarding prompts.
     func authorizationStatus() async -> CaptureAuthorizationStatus {
-        if CGPreflightScreenCaptureAccess() {
-            return .authorized
-        }
-        return UserDefaults.standard.bool(forKey: hasRequestedDefaultsKey) ? .denied : .notDetermined
+        ScreenRecordingPermission.status()
     }
 
-    /// Trigger the one-time system prompt and report the status as of the call returning —
-    /// `CGRequestScreenCaptureAccess()` doesn't wait for the user, so a first ask is always
-    /// un-authorized here, with the system prompt still on screen. Recording that we've
-    /// asked lets a later `authorizationStatus()` report `.denied` (recovery) rather than
-    /// `.notDetermined` (re-prompt) — the OS itself only ever prompts once.
+    /// Trigger the one-time system prompt (see `ScreenRecordingPermission.request()`).
     @discardableResult
     func requestAuthorization() async -> CaptureAuthorizationStatus {
-        let granted = CGRequestScreenCaptureAccess()
-        UserDefaults.standard.set(true, forKey: hasRequestedDefaultsKey)
-        return granted ? .authorized : .denied
+        ScreenRecordingPermission.request()
     }
 
     func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> {
@@ -196,7 +180,7 @@ final class SCCaptureService: CaptureService {
 
     /// The backing scale of the specific captured display, found by matching its `displayID`
     /// against the `NSScreen` list. Falls back to 2 (typical Retina) if no match is found.
-    private static func backingScale(for display: SCDisplay) -> CGFloat {
+    static func backingScale(for display: SCDisplay) -> CGFloat {
         let screenNumberKey = NSDeviceDescriptionKey("NSScreenNumber")
         let screen = NSScreen.screens.first {
             ($0.deviceDescription[screenNumberKey] as? CGDirectDisplayID) == display.displayID

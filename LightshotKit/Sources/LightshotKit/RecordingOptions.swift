@@ -177,7 +177,7 @@ public struct RecordingOptions: Equatable, Sendable {
 
 /// The Settings-owned baseline for every recording (story 40). `SettingsStore` persists these;
 /// the recorder toolbar seeds its toggles from them and overrides per recording.
-public struct RecordingDefaults: Equatable, Sendable {
+public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var video: VideoSettings
     public var gif: GIFSettings
     public var recordMicrophone: Bool
@@ -204,7 +204,7 @@ public struct RecordingDefaults: Equatable, Sendable {
         highlightClicks: Bool = false,
         showKeystrokes: Bool = false,
         showCursor: Bool = true,
-        countdownEnabled: Bool = true,
+        countdownEnabled: Bool = false,
         countdownSeconds: Int = 3
     ) {
         self.video = video
@@ -221,6 +221,8 @@ public struct RecordingDefaults: Equatable, Sendable {
         self.countdownSeconds = max(0, countdownSeconds)
     }
 
+    /// The shipped defaults. The countdown is off until its overlay and sound exist (R4) — a
+    /// silent three-second wait would read as the hotkey not working.
     public static let standard = RecordingDefaults()
 }
 

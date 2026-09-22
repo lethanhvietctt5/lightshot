@@ -83,6 +83,7 @@ private let allOnDefaults = RecordingDefaults(
     )
     #expect(defaults == .standard)
     #expect(RecordingOverrides.none == RecordingOverrides())
+    #expect(!RecordingDefaults.standard.countdownEnabled)   // off until the overlay exists (R4)
 }
 
 @Test func countdownOffInDefaultsMeansNoCountdownEvenWithSeconds() {
