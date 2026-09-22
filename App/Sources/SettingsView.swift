@@ -144,10 +144,28 @@ struct SettingsView: View {
 
     // MARK: - Recording (spec 0006)
 
-    /// The Recording section grows with each recording ticket: R3 the remembered-area toggle, R4
-    /// the countdown and sounds.
+    /// The Recording section grows with each recording ticket: R6 the video rows, R3 the
+    /// remembered-area toggle, R4 the countdown and sounds, R5 the controls.
     private var recordingSection: some View {
         Section("Recording") {
+            Picker("Frame rate", selection: $model.recordingDefaults.video.fps) {
+                ForEach(VideoSettings.fpsChoices, id: \.self) { Text("\($0) fps").tag($0) }
+            }
+            .help("Higher frame rates are smoother but make larger files; 30 suits most screen recordings.")
+            Picker("Maximum resolution", selection: $model.recordingDefaults.video.maxResolution) {
+                Text("Original").tag(MaxResolution.original)
+                Text("1080p").tag(MaxResolution.p1080)
+                Text("720p").tag(MaxResolution.p720)
+            }
+            .help("Cap the longest edge to keep files small.")
+            Picker("Encoder", selection: $model.recordingDefaults.video.codec) {
+                Text("H.264 (most compatible)").tag(VideoCodec.h264)
+                Text("HEVC (smaller files)").tag(VideoCodec.hevc)
+            }
+            .help("HEVC halves the file size; H.264 plays everywhere.")
+            Toggle("Scale Retina recordings to 1x", isOn: $model.recordingDefaults.video.scaleRetinaTo1x)
+                .help("Record at half the pixel size on a Retina display.")
+            Toggle("Show the cursor", isOn: $model.recordingDefaults.showCursor)
             Picker("Countdown", selection: Binding(
                 get: {
                     guard model.recordingDefaults.countdownEnabled else { return 0 }
@@ -167,6 +185,7 @@ struct SettingsView: View {
             .help("Count down before a recording starts, so you can get your hands in position.")
             Toggle("Play sounds", isOn: $model.recordingDefaults.playSounds)
                 .help("Countdown ticks and the start, stop and pause cues.")
+            Toggle("Show recording time in the menu bar", isOn: $model.recordingDefaults.showRecordingTimeInMenuBar)
             Toggle("Show controls while recording", isOn: $model.recordingDefaults.showRecordingControls)
             Picker("Controls position", selection: $model.recordingDefaults.controlsPosition) {
                 Text("Top").tag(RecordingControlsPosition.top)

@@ -70,7 +70,7 @@ struct RecordingOverlayView: View {
                     Divider().frame(height: 18)
                     ForEach(model.toggles, id: \.self) { toggle in
                         Button {
-                            model.toggle(toggle)
+                            Task { await model.toggle(toggle) }
                         } label: {
                             Image(systemName: Self.symbol(for: toggle))
                                 .foregroundStyle(model.isOn(toggle) ? Color.accentColor : Color.secondary)

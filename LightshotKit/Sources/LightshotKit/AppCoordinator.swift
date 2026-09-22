@@ -13,8 +13,10 @@ public protocol CaptureUI: AnyObject {
     /// copy, discard — over the freshly captured image. A separate surface shown *after* the image
     /// exists, positioned using `region`; not part of the pre-capture selection overlay.
     func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion)
-    /// Show the permission recovery path: a message plus a deep link to System Settings.
-    func presentPermissionDenied()
+    /// Show the permission recovery path for `kind`: a message naming the grant plus a deep link to
+    /// its System Settings pane. Screenshots always pass `.screenRecording`; recording passes
+    /// whichever grant its feature lacked (spec 0006, story 41).
+    func presentPermissionDenied(_ kind: PermissionKind)
     /// Surface a distinct, non-blank error message for a failure other than permission/cancel.
     func presentCaptureFailure(_ error: CaptureError)
     /// Surface a distinct, non-blank error message for an open-file failure other than cancel
@@ -128,7 +130,7 @@ public final class AppCoordinator {
             record(image, source: .fullscreen)
             ui.openEditor(with: image)
         case .failure(.permissionDenied):
-            ui.presentPermissionDenied()
+            ui.presentPermissionDenied(.screenRecording)
         case .failure(.userCancelled):
             break
         case let .failure(error):
@@ -156,7 +158,7 @@ public final class AppCoordinator {
             record(image, source: .area)
             presentCapture(image, at: region)
         case .failure(.permissionDenied):
-            ui.presentPermissionDenied()
+            ui.presentPermissionDenied(.screenRecording)
         case .failure(.userCancelled):
             break
         case let .failure(error):
@@ -221,7 +223,7 @@ public final class AppCoordinator {
             record(image, source: .window)
             presentCapture(image, at: region)
         case .failure(.permissionDenied):
-            ui.presentPermissionDenied()
+            ui.presentPermissionDenied(.screenRecording)
         case .failure(.userCancelled):
             break
         case let .failure(error):
@@ -480,8 +482,8 @@ public final class AppCoordinator {
         try? recordingSession.fail(error, at: clock())
         ui.presentRecordingState(recordingSession)
         switch error {
-        case .permissionDenied:
-            ui.presentPermissionDenied()
+        case let .permissionDenied(kind):
+            ui.presentPermissionDenied(kind)
         case .userCancelled:
             break
         default:

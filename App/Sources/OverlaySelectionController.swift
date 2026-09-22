@@ -16,10 +16,13 @@ import LightshotKit
 final class OverlaySelectionController: OverlayController {
     /// The recorder toolbar's settings shortcut: cancels the overlay and opens Settings.
     private let openSettings: () -> Void
+    /// The recorder toolbar's lazy permission gate: whether a toggle may switch on (story 41).
+    private let permissionGate: (RecordingToggle) async -> Bool
     private var window: OverlayKeyWindow?
 
-    init(openSettings: @escaping () -> Void = {}) {
+    init(openSettings: @escaping () -> Void = {}, permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true }) {
         self.openSettings = openSettings
+        self.permissionGate = permissionGate
     }
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
     private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
@@ -129,7 +132,8 @@ final class OverlaySelectionController: OverlayController {
             openSettings: { [weak self] in
                 self?.finishRecording(with: nil)
                 self?.openSettings()
-            }
+            },
+            permissionGate: permissionGate
         ) { [weak self] choice in
             self?.finishRecording(with: choice)
         }

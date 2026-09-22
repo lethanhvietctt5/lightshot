@@ -90,7 +90,8 @@ private final class SpyUI: CaptureUI {
 
     func openEditor(with image: CapturedImage) {}
     func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {}
-    func presentPermissionDenied() { permissionDeniedCount += 1 }
+    private(set) var deniedKinds: [PermissionKind] = []
+    func presentPermissionDenied(_ kind: PermissionKind) { permissionDeniedCount += 1; deniedKinds.append(kind) }
     func presentCaptureFailure(_ error: CaptureError) {}
     func presentImageLoadFailure(_ error: ImageLoadError) {}
     func presentRecordingState(_ session: RecordingSession) { states.append(session.state) }
@@ -524,11 +525,20 @@ private let display = CaptureRegion.display(id: 7)
     await h.coordinator.startRecording(region: display)
 
     #expect(h.ui.permissionDeniedCount == 1)
+    #expect(h.ui.deniedKinds == [.screenRecording])
     #expect(h.ui.recordingFailures.isEmpty)
     #expect(h.coordinator.recordingSession.state == .failed(.permissionDenied(.screenRecording)))
     #expect(!h.coordinator.isRecording)
     #expect(h.sink.saves.isEmpty)
     #expect(h.ui.states.last == .failed(.permissionDenied(.screenRecording)))   // status item reverts
+}
+
+@Test @MainActor func aMissingMicrophoneGrantRoutesToTheMicrophoneRecoveryNotScreenRecording() async {
+    let h = Harness()
+    h.service.startResult = .failure(.permissionDenied(.microphone))
+    await h.coordinator.startRecording(region: display)
+    #expect(h.ui.deniedKinds == [.microphone])
+    #expect(h.ui.recordingFailures.isEmpty)
 }
 
 @Test @MainActor func userCancelledIsSilentAndOtherFailuresGetADistinctMessage() async {

@@ -132,7 +132,8 @@ private final class SpyUI: CaptureUI {
     func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {
         toolbars.append((image, region))
     }
-    func presentPermissionDenied() { permissionDeniedCount += 1 }
+    private(set) var deniedKinds: [PermissionKind] = []
+    func presentPermissionDenied(_ kind: PermissionKind) { permissionDeniedCount += 1; deniedKinds.append(kind) }
     func presentCaptureFailure(_ error: CaptureError) { failures.append(error) }
     func presentImageLoadFailure(_ error: ImageLoadError) { imageLoadFailures.append(error) }
     func presentRecordingState(_ session: RecordingSession) {}
@@ -200,6 +201,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureFullscreen()
 
     #expect(ui.permissionDeniedCount == 1)
+    #expect(ui.deniedKinds == [.screenRecording])   // screenshots always name Screen Recording
     #expect(ui.openedImages.isEmpty)          // the editor is never opened blank/black
     #expect(ui.failures.isEmpty)
 }
@@ -306,6 +308,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(capture.requestAuthorizationCount == 0)   // no re-prompt on a standing denial
     #expect(ui.permissionDeniedCount == 1)            // recovery, driven by the capture result
+    #expect(ui.deniedKinds == [.screenRecording])
     #expect(ui.openedImages.isEmpty)
 }
 
