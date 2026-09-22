@@ -1,44 +1,136 @@
 import AppKit
 import AVFoundation
-import AVKit
 import SwiftUI
 import LightshotKit
 
-/// The video editor window (spec 0006, stories 35–36; CleanShot's "Trim & Convert"): a player
-/// with in / out trim handles, and a side panel for dimensions, quality, audio and the estimated
-/// size. **Trim Only** cuts without re-encoding; **Trim & Convert** re-encodes. The result is a
+/// The video editor window (spec 0006, stories 35–36), laid out like CleanShot's studio editor
+/// (LIG-43): a dark window whose toolbar carries the file name, an **Edited** marker and the
+/// **Export** button; an icon rail and its panel (trim, size, quality, audio) on the left; the
+/// preview with a transport row; and a timeline with a ruler, playhead, filmstrip and trim
+/// handles. **Trim Only** cuts without re-encoding; **Trim & Convert** re-encodes. The result is a
 /// new sibling file or replaces the original (kept as a backup beside it until the window closes,
 /// so **Revert to Original** can put it back). Not the annotation editor.
 @MainActor
-final class VideoEditorController: NSObject, NSWindowDelegate {
+final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate, NSToolbarItemValidation {
     private var window: NSWindow?
     private var model: VideoEditorModel?
+    private var exportPopover: NSPopover?
+
+    private static let exportItem = NSToolbarItem.Identifier("videoEditor.export")
 
     func open(_ url: URL) {
         // A clip already open gives up its backup and any export before the next takes the window.
         model?.close()
         let model = VideoEditorModel(url: url)
+        model.presentExport = { [weak self] in self?.toggleExport() }
         self.model = model
+        exportPopover?.close()
+        exportPopover = nil
         let window = self.window ?? makeWindow()
-        window.contentViewController = NSHostingController(rootView: VideoEditorView(model: model))
+        let hosting = NSHostingController(rootView: VideoEditorView(model: model))
+        // The window keeps the size set below; the timeline and panels stretch to fill it.
+        hosting.sizingOptions = []
+        window.contentViewController = hosting
         window.title = url.lastPathComponent
-        window.setContentSize(NSSize(width: 960, height: 600))
+        if window.toolbar == nil { window.toolbar = makeToolbar() }
+        window.setContentSize(Self.defaultContentSize(on: window.screen ?? NSScreen.main))
         window.center()
         self.window = window
-        WindowPresenter.present(window, asRegularApp: true)
+        // Counted once per showing: a clip opened into the open window must not count again, or
+        // closing it would leave the app regular.
+        WindowPresenter.present(window, asRegularApp: !window.isVisible)
     }
 
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false
         )
         window.isReleasedWhenClosed = false
         window.delegate = self
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = NSColor(white: 0.12, alpha: 1)
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        // The content draws the title and its own divider under the transparent toolbar.
+        window.titlebarSeparatorStyle = .none
+        window.toolbarStyle = .unified
+        window.contentMinSize = NSSize(width: 900, height: 600)
         return window
     }
 
+    /// Most of the screen, like CleanShot's editor: up to 1600 × 1000, leaving a margin.
+    private static func defaultContentSize(on screen: NSScreen?) -> NSSize {
+        let visible = screen?.visibleFrame.size ?? NSSize(width: 1440, height: 900)
+        return NSSize(width: min(1600, visible.width * 0.85), height: min(1000, visible.height * 0.85))
+    }
+
+    private func makeToolbar() -> NSToolbar {
+        let toolbar = NSToolbar(identifier: "videoEditor")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.allowsUserCustomization = false
+        return toolbar
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.flexibleSpace, Self.exportItem]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    /// **Export**: the system's prominent toolbar button tinted blue (macOS 26+), a blue push
+    /// button before that — a native item, so it never gets a glass platter around a custom view.
+    func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        guard identifier == Self.exportItem else { return nil }
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = "Export"
+        item.toolTip = "Export the edited video (⌘E)"
+        item.target = self
+        item.action = #selector(exportClicked(_:))
+        if #available(macOS 26.0, *) {
+            item.title = "Export"
+            item.isBordered = true
+            item.style = .prominent
+            item.backgroundTintColor = .systemBlue
+        } else {
+            let button = NSButton(title: "Export", target: self, action: #selector(exportClicked(_:)))
+            button.bezelStyle = .push
+            button.bezelColor = .systemBlue
+            item.view = button
+        }
+        return item
+    }
+
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        model?.source != nil
+    }
+
+    @objc private func exportClicked(_ sender: Any?) {
+        toggleExport()
+    }
+
+    /// The export options in a popover under the Export item.
+    private func toggleExport() {
+        if let exportPopover, exportPopover.isShown {
+            exportPopover.close()
+            return
+        }
+        guard let model, model.source != nil,
+              let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.exportItem }) else { return }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.appearance = NSAppearance(named: .darkAqua)
+        popover.contentViewController = NSHostingController(rootView: VideoEditorExportPanel(model: model))
+        popover.show(relativeTo: item)
+        exportPopover = popover
+    }
+
     func windowWillClose(_ notification: Notification) {
+        exportPopover?.close()
+        exportPopover = nil
         model?.close()
         model = nil
         WindowPresenter.regularWindowClosed()
@@ -56,6 +148,18 @@ final class VideoEditorController: NSObject, NSWindowDelegate {
 @Observable
 final class VideoEditorModel {
     enum SaveMode: String, CaseIterable { case newFile, replace }
+    /// The rail's sections, in rail order.
+    enum Panel: String, CaseIterable {
+        case trim, size, quality, audio
+        var title: String {
+            switch self {
+            case .trim: return "Trim"
+            case .size: return "Size"
+            case .quality: return "Quality"
+            case .audio: return "Audio"
+            }
+        }
+    }
     enum AudioChoice: String, CaseIterable {
         case unchanged, mute, volume, mono, remove
         var title: String {
@@ -78,9 +182,17 @@ final class VideoEditorModel {
     var customWidth = ""
     var customHeight = ""
     var quality = VideoBitRate.defaultQuality
-    var audioChoice: AudioChoice = .unchanged
-    var volume = 1.0
+    var audioChoice: AudioChoice = .unchanged { didSet { applyAudioToPreview() } }
+    var volume = 1.0 { didSet { applyAudioToPreview() } }
     var saveMode: SaveMode = .newFile
+    var panel: Panel = .trim
+    /// Opens (or closes) the Export popover — the controller's, anchored to its toolbar item.
+    @ObservationIgnored var presentExport: (() -> Void)?
+    /// How far the timeline is stretched past the window's width (1 = the whole clip fits).
+    var timelineZoom = 1.0
+    private(set) var isPlaying = false
+    /// Frames taken evenly across the clip for the timeline's filmstrip.
+    private(set) var thumbnails: [CGImage] = []
     var isExporting = false
     var progress = 0.0
     var message: String?
@@ -89,6 +201,7 @@ final class VideoEditorModel {
     private(set) var backup: URL?
     private var loadTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
+    private var thumbnailTask: Task<Void, Never>?
     private var timeObserver: Any?
     private(set) var currentTime: TimeInterval = 0
 
@@ -107,7 +220,9 @@ final class VideoEditorModel {
                 self.source = source
                 trim = TrimRange(duration: source.duration)
                 player.replaceCurrentItem(with: AVPlayerItem(url: url))
+                currentTime = 0
                 installTimeObserver()
+                loadThumbnails(duration: source.duration)
             } catch {
                 self.error = error.localizedDescription
             }
@@ -116,8 +231,43 @@ final class VideoEditorModel {
 
     private func installTimeObserver() {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { [weak self] time in
-            MainActor.assumeIsolated { self?.currentTime = CMTimeGetSeconds(time) }
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
+            MainActor.assumeIsolated { self?.playerMoved(to: CMTimeGetSeconds(time)) }
+        }
+    }
+
+    /// Playback stops at the out point, so the preview plays the cut, not the whole clip.
+    private func playerMoved(to seconds: TimeInterval) {
+        currentTime = seconds
+        isPlaying = player.rate != 0
+        if isPlaying, seconds >= trim.end {
+            player.pause()
+            isPlaying = false
+            seek(to: trim.end)
+        }
+    }
+
+    private static let filmstripFrameCount = 40
+
+    private func loadThumbnails(duration: TimeInterval) {
+        thumbnailTask?.cancel()
+        thumbnails = []
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 320, height: 320)
+        let tolerance = CMTime(seconds: max(duration / Double(Self.filmstripFrameCount) / 2, 0.05), preferredTimescale: 600)
+        generator.requestedTimeToleranceBefore = tolerance
+        generator.requestedTimeToleranceAfter = tolerance
+        let times = (0..<Self.filmstripFrameCount).map {
+            CMTime(seconds: duration * (Double($0) + 0.5) / Double(Self.filmstripFrameCount), preferredTimescale: 600)
+        }
+        thumbnailTask = Task { [weak self] in
+            var images: [CGImage] = []
+            for await result in generator.images(for: times) {
+                guard !Task.isCancelled else { return }
+                if let image = try? result.image { images.append(image) }
+            }
+            self?.thumbnails = images
         }
     }
 
@@ -146,6 +296,20 @@ final class VideoEditorModel {
 
     var hasAudio: Bool { (source?.audioChannels ?? 0) > 0 }
 
+    /// The preview plays with the audio choice applied (mono is not previewed; the player cannot
+    /// go above full volume).
+    private func applyAudioToPreview() {
+        player.isMuted = audioChoice == .mute || audioChoice == .remove
+        player.volume = audioChoice == .volume ? Float(min(max(volume, 0), 1)) : 1
+    }
+
+    /// Any setting moved off the clip as recorded — the toolbar's **Edited** marker.
+    var isEdited: Bool {
+        guard source != nil else { return false }
+        return !trim.isWholeClip || preset != .original || !customWidth.isEmpty || !customHeight.isEmpty
+            || quality != VideoBitRate.defaultQuality || audioChoice != .unchanged
+    }
+
     var estimateText: String {
         guard let source else { return "" }
         let bytes = SizeEstimator.estimatedBytes(settings: settings, fps: source.fps, audioChannels: source.audioChannels)
@@ -160,8 +324,28 @@ final class VideoEditorModel {
     func setIn(_ seconds: TimeInterval) { trim.setStart(seconds) }
     func setOut(_ seconds: TimeInterval) { trim.setEnd(seconds) }
     func seek(to seconds: TimeInterval) {
+        currentTime = seconds
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
+
+    func resetTrim() { trim = TrimRange(duration: trim.duration) }
+
+    // MARK: - Transport
+
+    /// Play the cut from the playhead — from the in point when the playhead is outside it.
+    func togglePlay() {
+        if player.rate != 0 {
+            player.pause()
+            isPlaying = false
+            return
+        }
+        if currentTime < trim.start || currentTime >= trim.end - 0.05 { seek(to: trim.start) }
+        player.play()
+        isPlaying = true
+    }
+
+    func skipToStart() { seek(to: trim.start) }
+    func skipToEnd() { seek(to: trim.end) }
 
     // MARK: - Exports (stories 35–36)
 
@@ -256,6 +440,7 @@ final class VideoEditorModel {
     /// The window closed: a backup is no longer needed.
     func close() {
         loadTask?.cancel()
+        thumbnailTask?.cancel()
         exportTask?.cancel()
         player.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
@@ -268,153 +453,5 @@ final class VideoEditorModel {
     private static func uniqueSibling(of url: URL, suffix: String, hidden: Bool = false) -> URL {
         let base = (hidden ? "." : "") + url.deletingPathExtension().lastPathComponent + suffix
         return url.deletingLastPathComponent().appendingPathComponent(base).appendingPathExtension(url.pathExtension).uniqueForFileSystem()
-    }
-}
-
-private struct VideoEditorView: View {
-    @Bindable var model: VideoEditorModel
-
-    var body: some View {
-        HSplitView {
-            VStack(spacing: 8) {
-                PlayerView(player: model.player)
-                    .frame(minWidth: 480, minHeight: 270)
-                TrimSlider(model: model)
-                    .padding(.horizontal, 8)
-                HStack {
-                    Button("Set In") { model.setIn(model.currentTime) }
-                    Button("Set Out") { model.setOut(model.currentTime) }
-                    Spacer()
-                    Text("\(Self.time(model.trim.start)) – \(Self.time(model.trim.end)) · \(Self.time(model.trim.length))")
-                        .font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
-            }
-            .frame(minWidth: 500)
-
-            Form {
-                Section("Dimensions") {
-                    Picker("Preset", selection: $model.preset) {
-                        ForEach(DimensionPreset.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .onChange(of: model.preset) { _, _ in model.customWidth = ""; model.customHeight = "" }
-                    HStack {
-                        TextField("Width", text: $model.customWidth).frame(width: 70)
-                        Text("×")
-                        TextField("Height", text: $model.customHeight).frame(width: 70)
-                        Text("→ \(Int(model.dimensions.width)) × \(Int(model.dimensions.height)) px")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-                Section("Video quality") {
-                    Slider(value: $model.quality, in: 0...1)
-                }
-                Section("Audio") {
-                    Picker("Audio", selection: $model.audioChoice) {
-                        ForEach(VideoEditorModel.AudioChoice.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .disabled(!model.hasAudio)
-                    if model.audioChoice == .volume {
-                        Slider(value: $model.volume, in: 0...2) { Text("Volume") }
-                    }
-                    if !model.hasAudio { Text("This recording has no audio.").font(.system(size: 11)).foregroundStyle(.secondary) }
-                }
-                Section("Estimated file size") {
-                    LabeledContent("Trim & Convert", value: model.estimateText)
-                    LabeledContent("Trim Only", value: model.trimOnlyEstimateText)
-                }
-                Section {
-                    Picker("Save", selection: $model.saveMode) {
-                        Text("As a new video").tag(VideoEditorModel.SaveMode.newFile)
-                        Text("Replace the original").tag(VideoEditorModel.SaveMode.replace)
-                    }
-                    HStack {
-                        Button("Trim Only") { model.trimOnly() }
-                            .disabled(model.isExporting)
-                            .help("Cut without re-encoding: fast, same codec and quality.")
-                        Button("Trim & Convert") { model.trimAndConvert() }
-                            .disabled(model.isExporting)
-                            .keyboardShortcut(.defaultAction)
-                    }
-                    if model.backup != nil {
-                        Button("Revert to Original") { model.revert() }.disabled(model.isExporting)
-                    }
-                    if model.isExporting {
-                        HStack {
-                            ProgressView(value: model.progress)
-                            Button("Cancel") { model.cancelExport() }
-                        }
-                    }
-                    if let message = model.message { Text(message).font(.system(size: 11)).foregroundStyle(.secondary) }
-                    if let error = model.error { Text(error).font(.system(size: 11)).foregroundStyle(.red) }
-                }
-            }
-            .formStyle(.grouped)
-            .frame(minWidth: 300, idealWidth: 340)
-        }
-    }
-
-    static func time(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds.rounded(.down))
-        let tenths = Int(((seconds - Double(total)) * 10).rounded())
-        return String(format: "%d:%02d.%d", total / 60, total % 60, min(tenths, 9))
-    }
-}
-
-/// Two handles over a bar: drag to set the in / out points; the player follows the handle.
-private struct TrimSlider: View {
-    @Bindable var model: VideoEditorModel
-
-    var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let duration = max(model.trim.duration, 0.001)
-            let startX = CGFloat(model.trim.start / duration) * width
-            let endX = CGFloat(model.trim.end / duration) * width
-            let playX = CGFloat(min(max(model.currentTime, 0), duration) / duration) * width
-            // Drags are read in the slider's own space, not the 12-pt handle's, so a handle can be
-            // dragged the whole width.
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.25)).frame(height: 24)
-                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.35))
-                    .frame(width: max(0, endX - startX), height: 24).offset(x: startX)
-                Rectangle().fill(Color.primary).frame(width: 1, height: 28).offset(x: playX)
-                handle.offset(x: startX - 6)
-                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("trim")).onChanged { value in
-                        let t = Double(value.location.x / width) * duration
-                        model.setIn(t); model.seek(to: model.trim.start)
-                    })
-                handle.offset(x: endX - 6)
-                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("trim")).onChanged { value in
-                        let t = Double(value.location.x / width) * duration
-                        model.setOut(t); model.seek(to: model.trim.end)
-                    })
-            }
-            .coordinateSpace(name: "trim")
-        }
-        .frame(height: 28)
-        .help("Drag the handles to set the in and out points")
-    }
-
-    private var handle: some View {
-        RoundedRectangle(cornerRadius: 3).fill(Color.accentColor).frame(width: 12, height: 28)
-    }
-}
-
-private struct PlayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.player = player
-        view.controlsStyle = .inline
-        view.showsFullScreenToggleButton = false
-        return view
-    }
-
-    func updateNSView(_ view: AVPlayerView, context: Context) {
-        view.player = player
     }
 }
