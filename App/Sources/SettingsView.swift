@@ -174,6 +174,19 @@ struct SettingsView: View {
                     .frame(width: 44, alignment: .trailing)
             }
             .help("Gain applied to your narration; 100% leaves it as the microphone delivers it.")
+            HStack {
+                Text("Computer audio volume")
+                Slider(value: $model.recordingDefaults.computerAudioVolume, in: 0...2, step: 0.1)
+                Text("\(Int((model.recordingDefaults.computerAudioVolume * 100).rounded()))%")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .help("Gain applied to the sound other apps play.")
+            Picker("Audio merging", selection: $model.recordingDefaults.separateAudioTracks) {
+                Text("Record on a single track").tag(false)
+                Text("Record on separate tracks").tag(true)
+            }
+            .help("Separate tracks keep your voice and the computer's sound apart for editing.")
             Toggle("Record audio in mono", isOn: $model.recordingDefaults.monoAudio)
             Picker("Countdown", selection: Binding(
                 get: {

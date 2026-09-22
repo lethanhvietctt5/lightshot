@@ -458,11 +458,13 @@ final class AppController: NSObject, CaptureUI {
         case .recording, .paused:
             if defaults.showRecordingControls {
                 let meter = recordingService.audioMeter
+                let systemMeter = recordingService.systemAudioMeter
                 recordingControls.show(
                     position: defaults.controlsPosition,
                     isPaused: session.state == .paused,
                     elapsed: { [weak self] in self?.recordingElapsed ?? 0 },
                     audioLevel: session.options?.microphone.isOn == true ? { meter.level } : nil,
+                    systemAudioLevel: session.options?.computerAudio == true ? { systemMeter.level } : nil,
                     actions: RecordingControlsController.Actions(
                         pauseResume: { [weak self] in self?.pauseResumeRecording() },
                         stop: { [weak self] in self?.toggleRecording() },

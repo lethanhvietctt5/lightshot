@@ -96,13 +96,14 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
     #expect(older.showRecordingControls && older.controlsPosition == .bottom && !older.dimScreenWhileRecording && older.confirmBeforeDiscard)
     #expect(older.showRecordingTimeInMenuBar)
     #expect(older.microphoneVolume == 1 && !older.monoAudio)
+    #expect(older.computerAudioVolume == 1 && !older.separateAudioTracks)
 }
 
 @Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {
@@ -122,6 +123,13 @@ private let allOnDefaults = RecordingDefaults(
     let o = RecordingOptions.resolve(region: region, output: .video, defaults: defaults)
     #expect(o.countdownSeconds == 0)
     #expect(!o.hasCountdown)
+}
+
+@Test func computerAudioSettingsReachTheOptions() {
+    let defaults = RecordingDefaults(recordComputerAudio: true, computerAudioVolume: 0.5, separateAudioTracks: true)
+    let o = RecordingOptions.resolve(region: region, output: .video, defaults: defaults)
+    #expect(o.computerAudio && o.computerAudioVolume == 0.5 && o.separateAudioTracks)
+    #expect(RecordingDefaults(computerAudioVolume: 9).computerAudioVolume == 2)
 }
 
 @Test func microphoneVolumeIsClampedToTwiceUnity() {

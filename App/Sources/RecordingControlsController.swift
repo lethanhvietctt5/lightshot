@@ -18,16 +18,19 @@ final class RecordingControlsController {
     private var panel: NSPanel?
     private var model: RecordingControlsModel?
 
-    /// `audioLevel` is `nil` when the take has no microphone; otherwise the meter polls it (story 23).
+    /// `audioLevel` is `nil` when the take has no microphone and `systemAudioLevel` when it has no
+    /// computer audio; otherwise the meters poll them (stories 23, 25).
     func show(
         position: RecordingControlsPosition, isPaused: Bool, elapsed: @escaping () -> TimeInterval,
-        audioLevel: (() -> Float)?, actions: Actions
+        audioLevel: (() -> Float)?, systemAudioLevel: (() -> Float)?, actions: Actions
     ) {
         if let model {
             model.isPaused = isPaused
             return
         }
-        let model = RecordingControlsModel(isPaused: isPaused, elapsed: elapsed, audioLevel: audioLevel, actions: actions)
+        let model = RecordingControlsModel(
+            isPaused: isPaused, elapsed: elapsed, audioLevel: audioLevel, systemAudioLevel: systemAudioLevel, actions: actions
+        )
         self.model = model
 
         let hosting = NSHostingView(rootView: RecordingControlsView(model: model))
@@ -69,26 +72,34 @@ private final class RecordingControlsModel {
     var isPaused: Bool
     let elapsed: () -> TimeInterval
     let audioLevel: (() -> Float)?
+    let systemAudioLevel: (() -> Float)?
     let actions: RecordingControlsController.Actions
 
-    /// The meter's latest reading, `0...1`.
+    /// The meters' latest readings, `0...1`.
     var level: Float = 0
+    var systemLevel: Float = 0
     /// "Your microphone might be muted" (story 24), decided by the pure detector from the readings.
     var showsMutedHint: Bool { detector.showsWarning }
     private var detector = MutedMicrophoneDetector()
 
-    init(isPaused: Bool, elapsed: @escaping () -> TimeInterval, audioLevel: (() -> Float)?, actions: RecordingControlsController.Actions) {
+    init(
+        isPaused: Bool, elapsed: @escaping () -> TimeInterval, audioLevel: (() -> Float)?,
+        systemAudioLevel: (() -> Float)?, actions: RecordingControlsController.Actions
+    ) {
         self.isPaused = isPaused
         self.elapsed = elapsed
         self.audioLevel = audioLevel
+        self.systemAudioLevel = systemAudioLevel
         self.actions = actions
     }
 
-    /// Called ten times a second by the meter's timeline.
+    /// Called ten times a second by the meters' timeline.
     func sample() {
-        guard let audioLevel else { return }
-        level = audioLevel()
-        detector.observe(level: level, over: 0.1, paused: isPaused)
+        if let audioLevel {
+            level = audioLevel()
+            detector.observe(level: level, over: 0.1, paused: isPaused)
+        }
+        if let systemAudioLevel { systemLevel = systemAudioLevel() }
     }
 }
 
@@ -108,8 +119,8 @@ private struct RecordingControlsView: View {
                     .foregroundStyle(model.isPaused ? .secondary : .primary)
                     .frame(width: 52)
             }
-            if model.audioLevel != nil {
-                levelMeter
+            if model.audioLevel != nil || model.systemAudioLevel != nil {
+                levelMeters
             }
             control(model.isPaused ? "play.fill" : "pause.fill", help: model.isPaused ? "Resume" : "Pause") {
                 model.actions.pauseResume()
@@ -124,23 +135,18 @@ private struct RecordingControlsView: View {
         .padding(8)
     }
 
-    /// A small bar that follows the microphone level (story 23), with the muted hint beneath it.
-    private var levelMeter: some View {
+    /// Small bars that follow the microphone and computer-audio levels (stories 23, 25), with the
+    /// muted hint beneath.
+    private var levelMeters: some View {
         TimelineView(.periodic(from: .now, by: 0.1)) { context in
             VStack(spacing: 2) {
-                HStack(spacing: 4) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(model.showsMutedHint ? Color.orange : Color.secondary)
-                    GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.25))
-                            Capsule()
-                                .fill(model.level > 0.9 ? Color.red : Color.green)
-                                .frame(width: geometry.size.width * CGFloat(model.level))
-                        }
-                    }
-                    .frame(width: 44, height: 6)
+                if model.audioLevel != nil {
+                    meter("mic.fill", level: model.level, warning: model.showsMutedHint)
+                        .help("Microphone level")
+                }
+                if model.systemAudioLevel != nil {
+                    meter("speaker.wave.2.fill", level: model.systemLevel, warning: false)
+                        .help("Computer audio level")
                 }
                 if model.showsMutedHint {
                     Text("Your microphone might be muted")
@@ -150,7 +156,23 @@ private struct RecordingControlsView: View {
             }
             .onChange(of: context.date) { _, _ in model.sample() }
         }
-        .help("Microphone level")
+    }
+
+    private func meter(_ symbol: String, level: Float, warning: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .foregroundStyle(warning ? Color.orange : Color.secondary)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.25))
+                    Capsule()
+                        .fill(level > 0.9 ? Color.red : Color.green)
+                        .frame(width: geometry.size.width * CGFloat(level))
+                }
+            }
+            .frame(width: 44, height: 6)
+        }
     }
 
     private func control(_ symbol: String, help: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {

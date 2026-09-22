@@ -31,6 +31,8 @@ actor SCRecordingService: RecordingService {
 
     /// The live microphone level for the controls pill's meter (story 23).
     nonisolated let audioMeter = AudioLevelMeter()
+    /// The live computer-audio level (story 25's second meter).
+    nonisolated let systemAudioMeter = AudioLevelMeter()
 
     private var stream: SCStream?
     private var output: StreamOutput?
@@ -79,12 +81,23 @@ actor SCRecordingService: RecordingService {
             configuration.showsCursor = options.showCursor
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
             configuration.queueDepth = 6
+            let channels = options.monoAudio ? 1 : 2
+            if options.computerAudio {
+                // Computer audio (story 21) comes from the same stream, driverless; Lightshot's own
+                // sounds (countdown, start/stop) are excluded by process.
+                configuration.capturesAudio = true
+                configuration.sampleRate = Int(MicrophoneCapture.sampleRate)
+                configuration.channelCount = channels
+                configuration.excludesCurrentProcessAudio = true
+            }
 
-            let recordsMicrophone = options.microphone.isOn
             let writer = try RecordingWriter(
                 url: Self.scratchMovieURL(for: url), width: size.width, height: size.height,
                 codec: video.codec, fps: video.fps,
-                audioChannels: recordsMicrophone ? (options.monoAudio ? 1 : 2) : nil
+                audio: RecordingWriter.AudioLayout(
+                    microphone: options.microphone.isOn, computer: options.computerAudio,
+                    separateTracks: options.separateAudioTracks, channels: channels
+                )
             )
             // Narration (story 20): PCM lands in the writer's audio track on the same queue.
             var microphone: MicrophoneCapture?
@@ -93,7 +106,7 @@ actor SCRecordingService: RecordingService {
                 do {
                     microphone = try MicrophoneCapture(
                         deviceID: deviceID, mono: options.monoAudio, volume: options.microphoneVolume, queue: queue,
-                        onSample: { writer.appendAudio($0) },
+                        onFrames: { writer.appendAudio(.microphone, $0) },
                         onLevel: { meter.level = $0 },
                         onLost: { [weak self] in
                             Task { await self?.microphoneDidVanish(); onEvent(.audioInputLost) }
@@ -104,12 +117,20 @@ actor SCRecordingService: RecordingService {
                     throw error
                 }
             }
-            let output = StreamOutput(writer: writer) { [weak self] error in
+            let systemMeter = systemAudioMeter
+            let output = StreamOutput(
+                writer: writer,
+                computerAudioGain: Float(options.computerAudioVolume),
+                onSystemAudioLevel: { systemMeter.level = $0 }
+            ) { [weak self] error in
                 // The stream died on its own: tear down here, then let the coordinator fail the take.
                 Task { await self?.streamDidFail(); onEvent(.failed(error)) }
             }
             let stream = SCStream(filter: target.filter, configuration: configuration, delegate: output)
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
+            if options.computerAudio {
+                try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: queue)
+            }
             do {
                 try await stream.startCapture()
             } catch {
@@ -119,7 +140,8 @@ actor SCRecordingService: RecordingService {
             }
             microphone?.start()
             audioMeter.level = 0
-            log.info("Recording started: \(size.width)×\(size.height) @ \(video.fps) fps, mic \(microphone == nil ? "off" : "on", privacy: .public) → \(url.lastPathComponent, privacy: .public)")
+            systemAudioMeter.level = 0
+            log.info("Recording started: \(size.width)×\(size.height) @ \(video.fps) fps, mic \(microphone == nil ? "off" : "on", privacy: .public), computer audio \(options.computerAudio ? "on" : "off", privacy: .public) → \(url.lastPathComponent, privacy: .public)")
 
             self.stream = stream
             self.output = output
@@ -201,6 +223,7 @@ actor SCRecordingService: RecordingService {
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0
+        if let writer { queue.async { writer.audioSourceLost(.microphone) } }
     }
 
     /// The stream reported its own death: drop it and the writer (deleting the partial file) so
@@ -215,6 +238,7 @@ actor SCRecordingService: RecordingService {
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0
+        systemAudioMeter.level = 0
         stream = nil
         output = nil
         writer = nil
@@ -329,16 +353,25 @@ actor SCRecordingService: RecordingService {
     }
 }
 
-/// Receives the stream's frames on the service's queue and hands complete ones to the writer;
-/// reports a stream-level failure once, and keeps it so `stop()` can report it too.
+/// Receives the stream's frames — and, when computer audio is on, its audio buffers — on the
+/// service's queue and hands them to the writer; reports a stream-level failure once, and keeps it
+/// so `stop()` can report it too.
 private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let writer: RecordingWriter
+    private let computerAudioGain: Float
+    private let onSystemAudioLevel: @Sendable (Float) -> Void
     private let onFailure: @Sendable (RecordingError) -> Void
     private let lock = NSLock()
     private var storedFailure: RecordingError?
 
-    init(writer: RecordingWriter, onFailure: @escaping @Sendable (RecordingError) -> Void) {
+    init(
+        writer: RecordingWriter, computerAudioGain: Float,
+        onSystemAudioLevel: @escaping @Sendable (Float) -> Void,
+        onFailure: @escaping @Sendable (RecordingError) -> Void
+    ) {
         self.writer = writer
+        self.computerAudioGain = computerAudioGain
+        self.onSystemAudioLevel = onSystemAudioLevel
         self.onFailure = onFailure
     }
 
@@ -349,8 +382,19 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, sampleBuffer.isValid, Self.isComplete(sampleBuffer) else { return }
-        writer.append(sampleBuffer)
+        guard sampleBuffer.isValid else { return }
+        switch type {
+        case .screen:
+            guard Self.isComplete(sampleBuffer) else { return }
+            writer.append(sampleBuffer)
+        case .audio:
+            guard var frames = PCMBuffer.frames(from: sampleBuffer) else { return }
+            onSystemAudioLevel(frames.level)
+            frames.apply(gain: computerAudioGain)
+            writer.appendAudio(.computer, frames)
+        default:
+            break
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -391,8 +435,36 @@ private final class RecordingWriter: @unchecked Sendable {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
-    /// The narration track (story 20), when the take records a microphone.
-    private let audioInput: AVAssetWriterInput?
+    /// Which audio sources the take records and how they are laid out (stories 20–22).
+    struct AudioLayout {
+        var microphone: Bool
+        var computer: Bool
+        /// One AAC track per source, instead of one mixed track.
+        var separateTracks: Bool
+        var channels: Int
+
+        var sources: Set<AudioMixer.Source> {
+            var set: Set<AudioMixer.Source> = []
+            if microphone { set.insert(.microphone) }
+            if computer { set.insert(.computer) }
+            return set
+        }
+    }
+
+    /// An audio track in the file: one per source in separate mode, or the single mix.
+    enum AudioTrack: Hashable {
+        case microphone, computer, mix
+
+        init(_ source: AudioMixer.Source) {
+            self = source == .microphone ? .microphone : .computer
+        }
+    }
+
+    private let layout: AudioLayout
+    private var audioInputs: [AudioTrack: AVAssetWriterInput] = [:]
+    private var lastAudioWritten: [AudioTrack: CMTime] = [:]
+    /// Single-track mode only: the mixer that sums both sources by sample time.
+    private var mixer: AudioMixer?
     private let frameDuration: CMTime
 
     private var started = false
@@ -400,28 +472,35 @@ private final class RecordingWriter: @unchecked Sendable {
     private var paused = false
     private var offset = CMTime.zero
     private var lastWritten: CMTime?
-    private var lastAudioWritten: CMTime?
     private(set) var failure: RecordingError?
     private(set) var frameCount = 0
     private(set) var audioBufferCount = 0
 
-    init(url: URL, width: Int, height: Int, codec: VideoCodec, fps: Int, audioChannels: Int? = nil) throws {
+    init(url: URL, width: Int, height: Int, codec: VideoCodec, fps: Int, audio: AudioLayout) throws {
         self.url = url
+        self.layout = audio
         writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
         frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, fps)))
 
-        if let audioChannels {
-            let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+        func makeAudioInput() -> AVAssetWriterInput {
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: MicrophoneCapture.sampleRate,
-                AVNumberOfChannelsKey: audioChannels,
-                AVEncoderBitRateKey: audioChannels == 1 ? 96_000 : 160_000,
+                AVNumberOfChannelsKey: audio.channels,
+                AVEncoderBitRateKey: audio.channels == 1 ? 96_000 : 160_000,
             ])
-            audio.expectsMediaDataInRealTime = true
-            audioInput = audio
+            input.expectsMediaDataInRealTime = true
+            return input
+        }
+        let sources = audio.sources
+        if sources.isEmpty {
+            // no audio
+        } else if audio.separateTracks || sources.count == 1 {
+            for source in sources { audioInputs[AudioTrack(source)] = makeAudioInput() }
         } else {
-            audioInput = nil
+            audioInputs[.mix] = makeAudioInput()
+            mixer = AudioMixer(channels: audio.channels, sources: sources)
         }
 
         // Bit rate scales with pixel throughput: ~0.1 bit per pixel per frame reads as high quality
@@ -451,7 +530,7 @@ private final class RecordingWriter: @unchecked Sendable {
             throw RecordingError.systemFailure("The video encoder rejected the recording settings.")
         }
         writer.add(input)
-        if let audioInput {
+        for audioInput in audioInputs.values {
             guard writer.canAdd(audioInput) else {
                 throw RecordingError.systemFailure("The audio encoder rejected the recording settings.")
             }
@@ -459,31 +538,52 @@ private final class RecordingWriter: @unchecked Sendable {
         }
     }
 
-    /// Narration buffers (story 20), re-stamped with the same pause offset as the frames. The
-    /// first buffer opens the session if no frame has yet (the two clocks agree, so either may
-    /// come first); buffers are dropped while paused. Each buffer carries one timing entry whose
-    /// duration is *per sample*, so the retimed copy keeps the sample-rate duration.
-    func appendAudio(_ sampleBuffer: CMSampleBuffer) {
-        guard let audioInput, failure == nil, !paused else { return }
-        let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        guard ensureStarted(at: presentation) else { return }
-        let stamped = CMTimeSubtract(presentation, offset)
-        guard CMTimeCompare(stamped, sessionStart) >= 0 else { return }
-        if let lastAudioWritten, CMTimeCompare(stamped, lastAudioWritten) <= 0 { return }
-        guard audioInput.isReadyForMoreMediaData else { return }
+    /// Audio frames from one source (stories 20–22), stamped with the same pause offset as the
+    /// video. The first buffer opens the session if no frame has yet (the clocks agree, so either
+    /// may come first); buffers are dropped while paused. In separate-track mode each source goes
+    /// to its own track; in single-track mode both feed the mixer, and whatever both have delivered
+    /// is written as one stream.
+    func appendAudio(_ source: AudioMixer.Source, _ frames: PCMBuffer.Frames) {
+        guard failure == nil, !paused, !audioInputs.isEmpty, frames.channels == layout.channels else { return }
+        guard ensureStarted(at: frames.presentation) else { return }
+        var stamped = frames
+        stamped.presentation = CMTimeSubtract(frames.presentation, offset)
+        guard CMTimeCompare(stamped.presentation, sessionStart) >= 0 else { return }
 
-        var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: CMTimeScale(MicrophoneCapture.sampleRate)),
-            presentationTimeStamp: stamped, decodeTimeStamp: .invalid
-        )
-        var retimed: CMSampleBuffer?
-        CMSampleBufferCreateCopyWithNewTiming(
-            allocator: kCFAllocatorDefault, sampleBuffer: sampleBuffer,
-            sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleBufferOut: &retimed
-        )
-        guard let retimed else { return }
-        if audioInput.append(retimed) {
-            lastAudioWritten = stamped
+        if mixer != nil {
+            mixer?.push(source, frames: stamped.samples, at: Self.frameIndex(of: stamped.presentation))
+            flushMix()
+        } else {
+            write(stamped, to: AudioTrack(source))
+        }
+    }
+
+    /// A source stopped delivering mid-take (a lost microphone): the mix stops waiting for it.
+    func audioSourceLost(_ source: AudioMixer.Source) {
+        mixer?.setInactive(source)
+        flushMix()
+    }
+
+    /// Write whatever the mixer can hand over to the single mixed track.
+    private func flushMix() {
+        guard var mixer, let mixed = mixer.drain() else { return }
+        self.mixer = mixer
+        let rate = MicrophoneCapture.sampleRate
+        let start = CMTime(value: CMTimeValue(mixed.start), timescale: CMTimeScale(rate))
+        write(PCMBuffer.Frames(samples: mixed.frames, channels: mixer.channels, sampleRate: rate, presentation: start), to: .mix)
+    }
+
+    private static func frameIndex(of time: CMTime) -> Int64 {
+        Int64((CMTimeGetSeconds(time) * MicrophoneCapture.sampleRate).rounded())
+    }
+
+    /// Append `frames` at their (already re-stamped) presentation time to `track`.
+    private func write(_ frames: PCMBuffer.Frames, to track: AudioTrack) {
+        guard let audioInput = audioInputs[track], frames.frameCount > 0 else { return }
+        if let last = lastAudioWritten[track], CMTimeCompare(frames.presentation, last) <= 0 { return }
+        guard audioInput.isReadyForMoreMediaData, let buffer = PCMBuffer.sampleBuffer(frames, at: frames.presentation) else { return }
+        if audioInput.append(buffer) {
+            lastAudioWritten[track] = frames.presentation
             audioBufferCount += 1
         } else if writer.status == .failed {
             failure = Self.map(writer.error)
@@ -531,7 +631,7 @@ private final class RecordingWriter: @unchecked Sendable {
     func resume() {
         guard paused else { return }
         paused = false
-        let last = [lastWritten, lastAudioWritten].compactMap { $0 }.max { CMTimeCompare($0, $1) < 0 }
+        let last = ([lastWritten].compactMap { $0 } + lastAudioWritten.values).max { CMTimeCompare($0, $1) < 0 }
         guard let last else { return }
         let now = CMClockGetTime(CMClockGetHostTimeClock())
         offset = CMTimeSubtract(CMTimeSubtract(now, last), frameDuration)
@@ -562,7 +662,12 @@ private final class RecordingWriter: @unchecked Sendable {
                 let end = CMTimeSubtract(stopTime, offset)
                 if CMTimeCompare(end, lastWritten) > 0 { writer.endSession(atSourceTime: end) }
                 input.markAsFinished()
-                audioInput?.markAsFinished()
+                // Flush whatever the mixer still holds from a source that ran ahead, then close the tracks.
+                if let sources = mixer?.activeSources {
+                    for source in sources { mixer?.setInactive(source) }
+                    flushMix()
+                }
+                audioInputs.values.forEach { $0.markAsFinished() }
                 writer.finishWriting { [self] in
                     if writer.status == .completed {
                         continuation.resume(returning: url)

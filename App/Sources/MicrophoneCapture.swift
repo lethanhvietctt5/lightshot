@@ -17,9 +17,9 @@ final class AudioLevelMeter: @unchecked Sendable {
 }
 
 /// Narration capture for a take (spec 0006, stories 20, 23–25): an `AVCaptureSession` on the chosen
-/// microphone delivering float PCM buffers on the recorder's queue, with the level measured on the
-/// raw input (so a muted mic reads silent whatever the gain), the configured gain applied into a
-/// buffer of our own, and a callback when the device disappears.
+/// microphone delivering float PCM on the recorder's queue as `PCMBuffer.Frames` we own, with the
+/// level measured on the raw input (so a muted mic reads silent whatever the gain), the configured
+/// gain applied, and a callback when the device disappears.
 ///
 /// Mono is asked of the capture output itself (`AVNumberOfChannelsKey`), so the writer's AAC track
 /// simply has one channel. Timing comes from the host clock like the screen frames, so the writer
@@ -30,7 +30,7 @@ final class MicrophoneCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDel
     private let session = AVCaptureSession()
     private let queue: DispatchQueue
     private let gain: Float
-    private let onSample: @Sendable (CMSampleBuffer) -> Void
+    private let onFrames: @Sendable (PCMBuffer.Frames) -> Void
     private let onLevel: @Sendable (Float) -> Void
     private let onLost: @Sendable () -> Void
     private var disconnectObserver: (any NSObjectProtocol)?
@@ -42,7 +42,7 @@ final class MicrophoneCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDel
 
     init(
         deviceID: String?, mono: Bool, volume: Double, queue: DispatchQueue,
-        onSample: @escaping @Sendable (CMSampleBuffer) -> Void,
+        onFrames: @escaping @Sendable (PCMBuffer.Frames) -> Void,
         onLevel: @escaping @Sendable (Float) -> Void,
         onLost: @escaping @Sendable () -> Void
     ) throws {
@@ -53,7 +53,7 @@ final class MicrophoneCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDel
         self.queue = queue
         self.gain = Float(volume)
         self.channels = mono ? 1 : 2
-        self.onSample = onSample
+        self.onFrames = onFrames
         self.onLevel = onLevel
         self.onLost = onLost
         super.init()
@@ -119,78 +119,9 @@ final class MicrophoneCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDel
     // MARK: - AVCaptureAudioDataOutputSampleBufferDelegate (on the recorder's queue)
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard active, let samples = PCMSamples(sampleBuffer) else { return }
-        onLevel(samples.level)
-        if gain == 1 {
-            onSample(sampleBuffer)
-        } else if let scaled = samples.copy(scaledBy: gain, timingFrom: sampleBuffer) {
-            onSample(scaled)
-        }
-    }
-}
-
-/// A read-only view over an interleaved float PCM sample buffer, and a way to produce a scaled
-/// copy in memory we own — the capture output's memory is never written to.
-private struct PCMSamples {
-    private let block: CMBlockBuffer
-    private let base: UnsafeMutablePointer<Float>
-    private let count: Int
-
-    init?(_ sampleBuffer: CMSampleBuffer) {
-        var blockBuffer: CMBlockBuffer?
-        var list = AudioBufferList()
-        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
-            sampleBuffer, bufferListSizeNeededOut: nil, bufferListOut: &list,
-            bufferListSize: MemoryLayout<AudioBufferList>.size, blockBufferAllocator: nil,
-            blockBufferMemoryAllocator: nil, flags: 0, blockBufferOut: &blockBuffer
-        )
-        // Interleaved float: exactly one AudioBuffer, so the single-entry list is the right size.
-        guard status == noErr, let blockBuffer, let data = list.mBuffers.mData else { return nil }
-        self.block = blockBuffer
-        self.base = data.assumingMemoryBound(to: Float.self)
-        self.count = Int(list.mBuffers.mDataByteSize) / MemoryLayout<Float>.size
-    }
-
-    /// RMS mapped over a 50 dB range to `0...1`.
-    var level: Float {
-        guard count > 0 else { return 0 }
-        var sumOfSquares: Float = 0
-        for i in 0..<count { sumOfSquares += base[i] * base[i] }
-        let rms = (sumOfSquares / Float(count)).squareRoot()
-        guard rms > 0 else { return 0 }
-        return max(0, min(1, (20 * log10(rms) + 50) / 50))
-    }
-
-    /// A new sample buffer whose samples are ours, scaled and clipped, carrying the original timing
-    /// and format.
-    func copy(scaledBy gain: Float, timingFrom original: CMSampleBuffer) -> CMSampleBuffer? {
-        let byteCount = count * MemoryLayout<Float>.size
-        var newBlock: CMBlockBuffer?
-        guard CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: byteCount, blockAllocator: nil,
-            customBlockSource: nil, offsetToData: 0, dataLength: byteCount, flags: 0, blockBufferOut: &newBlock
-        ) == noErr, let newBlock, CMBlockBufferAssureBlockMemory(newBlock) == noErr else { return nil }
-
-        var scaled = [Float](repeating: 0, count: count)
-        for i in 0..<count { scaled[i] = max(-1, min(1, base[i] * gain)) }
-        let copied = scaled.withUnsafeBytes { bytes in
-            CMBlockBufferReplaceDataBytes(with: bytes.baseAddress!, blockBuffer: newBlock, offsetIntoDestination: 0, dataLength: byteCount)
-        }
-        guard copied == noErr, let format = CMSampleBufferGetFormatDescription(original) else { return nil }
-
-        var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: CMTimeScale(MicrophoneCapture.sampleRate)),
-            presentationTimeStamp: CMSampleBufferGetPresentationTimeStamp(original),
-            decodeTimeStamp: .invalid
-        )
-        var result: CMSampleBuffer?
-        let frames = CMSampleBufferGetNumSamples(original)
-        guard CMSampleBufferCreateReady(
-            allocator: kCFAllocatorDefault, dataBuffer: newBlock, formatDescription: format,
-            sampleCount: frames, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
-            sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &result
-        ) == noErr else { return nil }
-        _ = block   // the source memory stays alive until we are done reading it
-        return result
+        guard active, var frames = PCMBuffer.frames(from: sampleBuffer) else { return }
+        onLevel(frames.level)
+        frames.apply(gain: gain)
+        onFrames(frames)
     }
 }
