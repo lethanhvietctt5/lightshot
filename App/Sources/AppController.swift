@@ -171,7 +171,12 @@ final class AppController: NSObject, CaptureUI {
     /// recording overlay to pick a rect, window or display and starts the take, or stops the one in
     /// progress.
     func toggleRecording() {
-        Task { await coordinator.toggleRecording() }
+        Task {
+            await coordinator.toggleRecording()
+            // The toolbar chose a take but it never started (onboarding declined, the session
+            // refused): no state was presented, so the preview would otherwise linger.
+            if coordinator.recordingSession.state == .idle { cameraBubble.hide() }
+        }
     }
 
     /// Hotkey / pill entry points for the recording controls (stories 12–14).
@@ -493,9 +498,14 @@ final class AppController: NSObject, CaptureUI {
         default:
             recordingControls.hide()
             recordingDim.hide()
-            // The camera preview outlives the toolbar for the countdown and the take; it goes when
-            // the take does (finished, failed, discarded, or cancelled mid-countdown).
-            if session.state != .countdown { cameraBubble.hide() }
+        }
+        // The camera preview outlives the toolbar for the countdown and the take (the last frames
+        // still composite it while stopping); it goes when the take does — finished, failed,
+        // discarded, or cancelled mid-countdown.
+        switch session.state {
+        case .countdown, .recording, .paused: cameraBubble.setLive(true)
+        case .stopping: break
+        default: cameraBubble.hide()
         }
     }
 

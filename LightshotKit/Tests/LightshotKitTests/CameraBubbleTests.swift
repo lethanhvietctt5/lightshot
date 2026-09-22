@@ -29,6 +29,11 @@ private let region = Size(width: 1200, height: 800)
     #expect(CameraBubbleLayout.anchor(forCenter: Point(x: -50, y: 900), in: region) == Point(x: 0, y: 1))
 }
 
+@Test func fullscreenCoversTheRegionSquareCornered() {
+    #expect(CameraBubbleLayout.frame(.standard, in: region, fullscreen: true) == Rect(x: 0, y: 0, width: 1200, height: 800))
+    #expect(CameraBubbleLayout.cornerRadius(for: .circle, side: 200, fullscreen: true) == 0)
+}
+
 @Test func shapesMapToCornerRadii() {
     #expect(CameraBubbleLayout.cornerRadius(for: .circle, side: 200) == 100)
     #expect(CameraBubbleLayout.cornerRadius(for: .rounded, side: 200) == 36)
@@ -45,15 +50,21 @@ private let region = Size(width: 1200, height: 800)
 }
 
 @Test func previewAndOutputAgreeWithinAPixelAt1xAnd2x() {
-    // The preview lays the bubble out in points; the compositor lays it out in the same points and
-    // scales by the frame's pixels-per-point. Rounding each side independently stays within 1 px.
+    // The preview places a window: region + bubble, flipped into AppKit's bottom-left space and
+    // snapped to whole points by the window server. The compositor maps the same bubble through
+    // `FrameMapping` into frame pixels. Read the window back through the flip and compare.
     let settings = CameraBubbleSettings(size: .small, anchor: Point(x: 0.333, y: 0.777))
-    let points = CameraBubbleLayout.frame(settings, in: region)
+    let regionOrigin = Point(x: 137, y: 91), screenHeight = 1117.0
+    let local = CameraBubbleLayout.frame(settings, in: region)
     for scale in [1.0, 2.0] {
-        let previewPixels = Rect(x: (points.minX * scale).rounded(), y: (points.minY * scale).rounded(),
-                                 width: (points.width * scale).rounded(), height: (points.height * scale).rounded())
-        let outputPixels = Rect(x: points.minX * scale, y: points.minY * scale, width: points.width * scale, height: points.height * scale)
-        #expect(abs(previewPixels.minX - outputPixels.minX) <= 1 && abs(previewPixels.minY - outputPixels.minY) <= 1)
-        #expect(abs(previewPixels.width - outputPixels.width) <= 1)
+        // Preview: AppKit frame (bottom-left, whole points), then back to top-left screen points.
+        let appKitY = (screenHeight - (regionOrigin.y + local.maxY)).rounded()
+        let windowTop = screenHeight - (appKitY + local.height.rounded())
+        let previewPixels = Point(x: ((regionOrigin.x + local.minX).rounded() - regionOrigin.x) * scale,
+                                  y: (windowTop - regionOrigin.y) * scale)
+        // Output: the compositor's frame-pixel rect for the same bubble.
+        let mapping = FrameMapping(regionOrigin: regionOrigin, pixelsPerPointX: scale, pixelsPerPointY: scale)
+        let outputPixels = mapping.pixelPoint(for: Point(x: regionOrigin.x + local.minX, y: regionOrigin.y + local.minY))
+        #expect(abs(previewPixels.x - outputPixels.x) <= scale && abs(previewPixels.y - outputPixels.y) <= scale)
     }
 }

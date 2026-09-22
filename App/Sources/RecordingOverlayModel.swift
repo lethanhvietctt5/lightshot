@@ -101,8 +101,13 @@ final class RecordingOverlayModel {
         case nil:
             selection = EditableSelection(bounds: bounds)
         }
-        // A remembered region with the camera on in Settings shows the preview at once.
-        syncCameraPreview()
+        // The camera on by default (Settings) still passes the permission gate first (story 41):
+        // an ungranted camera turns the toggle off for this take rather than opening the device.
+        if isOn(.camera), cameraBubble != nil {
+            Task { @MainActor in
+                if await permissionGate(.camera) { syncCameraPreview() } else { overrides[.camera] = false }
+            }
+        }
     }
 
     // MARK: - Derived state for the view
@@ -176,12 +181,16 @@ final class RecordingOverlayModel {
     /// selected region while the camera is on, gone otherwise.
     private func syncCameraPreview() {
         guard let cameraBubble else { return }
-        if isOn(.camera), hasSelection, let rect = selection.rect {
+        guard isOn(.camera) else {
+            cameraBubble.hide()
+            return
+        }
+        if hasSelection, let rect = selection.rect {
             // `show` re-targets a running preview (a new device restarts the capture; the same one
             // only moves), so it is safe to call on every change.
             cameraBubble.show(deviceID: cameraDeviceID, region: rect, settings: defaults.cameraBubble)
         } else {
-            cameraBubble.hide()
+            cameraBubble.conceal()
         }
     }
 

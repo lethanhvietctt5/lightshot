@@ -16,6 +16,11 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private var latest: CVPixelBuffer?
 
     init(deviceID: String?) throws {
+        // The toggle gate asks for the grant (story 41); by here it must already exist, or the
+        // device input would raise the system prompt from inside a take.
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+            throw RecordingError.permissionDenied(.camera)
+        }
         // A remembered camera that is unplugged falls back to the system default.
         guard let device = deviceID.flatMap({ AVCaptureDevice(uniqueID: $0) }) ?? AVCaptureDevice.default(for: .video) else {
             throw RecordingError.systemFailure("No camera is available.")
@@ -45,8 +50,11 @@ final class CameraCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     }
 
     func stop() {
-        queue.async { if self.session.isRunning { self.session.stopRunning() } }
-        lock.lock(); latest = nil; lock.unlock()
+        // Clear the frame after the session stops, so an in-flight frame cannot re-set it.
+        queue.async {
+            if self.session.isRunning { self.session.stopRunning() }
+            self.lock.lock(); self.latest = nil; self.lock.unlock()
+        }
     }
 
     var latestFrame: CVPixelBuffer? {
@@ -74,20 +82,17 @@ final class CameraFeed: @unchecked Sendable {
     /// position the user dragged it to meanwhile.
     @discardableResult
     func start(deviceID: String?, settings: CameraBubbleSettings) throws -> CameraCapture {
+        // Held across the swap so two starts (preview on the main actor, take on the recorder's)
+        // cannot both create a capture and orphan one running.
         lock.lock()
-        if let capture, capture.requestedDeviceID == deviceID {
-            lock.unlock()
-            return capture
-        }
+        defer { lock.unlock() }
+        if let capture, capture.requestedDeviceID == deviceID { return capture }
         let previous = capture
-        lock.unlock()
-        previous?.stop()
         let fresh = try CameraCapture(deviceID: deviceID)
-        lock.lock()
+        previous?.stop()
         capture = fresh
         self.settings = settings
         fullscreen = false
-        lock.unlock()
         fresh.start()
         return fresh
     }
@@ -108,6 +113,12 @@ final class CameraFeed: @unchecked Sendable {
 
     var isRunning: Bool { current != nil }
 
+    /// Settings, fullscreen flag and the newest frame together.
+    func frameSnapshot() -> (settings: CameraBubbleSettings, isFullscreen: Bool, frame: CVPixelBuffer?) {
+        lock.lock(); defer { lock.unlock() }
+        return (settings, fullscreen, capture?.latestFrame)
+    }
+
     /// Settings and fullscreen flag together, consistent.
     func snapshot() -> (settings: CameraBubbleSettings, isFullscreen: Bool) {
         lock.lock(); defer { lock.unlock() }
@@ -125,4 +136,11 @@ final class CameraFeed: @unchecked Sendable {
         fullscreen.toggle()
         return fullscreen
     }
+}
+
+/// What the compositor needs to draw the bubble (stories 26–28): the feed, and the region's size
+/// in points so the layout matches the on-screen preview's.
+struct CameraOverlay: @unchecked Sendable {
+    let feed: CameraFeed
+    let regionSize: Size
 }

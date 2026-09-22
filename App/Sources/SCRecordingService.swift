@@ -134,11 +134,11 @@ actor SCRecordingService: RecordingService {
             }
             // The camera (story 26): usually already running for the toolbar's preview bubble; a
             // camera that cannot open costs the bubble, not the take.
-            var camera: (feed: CameraFeed, regionSize: Size)?
+            var camera: CameraOverlay?
             if case let .device(deviceID) = options.camera {
                 do {
                     try cameraFeed.start(deviceID: deviceID, settings: options.cameraBubble)
-                    camera = (cameraFeed, Size(width: target.pointSize.width, height: target.pointSize.height))
+                    camera = CameraOverlay(feed: cameraFeed, regionSize: Size(width: target.pointSize.width, height: target.pointSize.height))
                 } catch {
                     log.error("Camera unavailable for this take: \(error.localizedDescription, privacy: .public)")
                 }
@@ -293,6 +293,8 @@ actor SCRecordingService: RecordingService {
     private func tearDown() {
         pointerEvents.stop()
         keyEvents.stop()
+        // The camera is the take's while it runs; the preview panel (app side) goes with the session.
+        cameraFeed.stop()
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0

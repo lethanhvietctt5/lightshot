@@ -80,6 +80,7 @@ final class OverlaySelectionController: OverlayController {
         }
         if let stale = recordingContinuation {
             recordingContinuation = nil
+            cameraBubble?.hide()
             stale.resume(returning: nil)
         }
     }
@@ -225,6 +226,9 @@ final class OverlaySelectionController: OverlayController {
         self.recordingContinuation = nil
         window?.orderOut(nil)
         window = nil
+        // No take (Escape, the Settings shortcut, a stale overlay): the preview goes with the
+        // toolbar. With a take, it stays through the countdown and the recording (story 26).
+        if choice == nil { cameraBubble?.hide() }
         recordingContinuation.resume(returning: choice)
     }
 }

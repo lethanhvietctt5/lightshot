@@ -17,6 +17,13 @@ final class CameraBubbleController {
     private var bubbleView: CameraBubbleView?
     /// The recording region in top-left screen points.
     private var region: Rect?
+    /// The settings as last shown, with the anchor the user dragged to — so a re-show in the same
+    /// session (a re-selected region, a switched device) keeps the position (story 27).
+    private var liveSettings: CameraBubbleSettings?
+    /// Whether the take is running (countdown or recording). While the toolbar is still up a
+    /// fullscreen bubble would cover the toolbar and the handles, so it stays bubble-sized with a
+    /// badge until the take starts; the compositor and the preview then both go fullscreen.
+    private var isLive = false
 
     init(feed: CameraFeed) {
         self.feed = feed
@@ -26,6 +33,9 @@ final class CameraBubbleController {
     /// leaves nothing on screen; the take then records without a bubble.
     func show(deviceID: String?, region: Rect, settings: CameraBubbleSettings) {
         self.region = region
+        var settings = settings
+        settings.anchor = liveSettings?.anchor ?? settings.anchor
+        liveSettings = settings
         let capture: CameraCapture
         do {
             capture = try feed.start(deviceID: deviceID, settings: settings)
@@ -36,24 +46,34 @@ final class CameraBubbleController {
         if panel == nil { makePanel() }
         bubbleView?.attach(capture.previewLayer)
         layout()
-        panel?.orderFrontRegardless()
+        if panel?.isVisible != true { panel?.orderFrontRegardless() }
     }
 
-    /// The selection moved or resized while the toolbar is up.
-    func move(to region: Rect) {
-        self.region = region
-        layout()
+    /// Nothing selected right now: take the bubble off screen but keep the camera running, so a
+    /// re-selection a moment later does not restart it (no LED flicker, no warm-up).
+    func conceal() {
+        panel?.orderOut(nil)
+        region = nil
     }
 
+    /// Gone for good: the take ended, the camera was switched off, or the overlay was cancelled.
     func hide() {
+        guard panel != nil || feed.isRunning else { return }
         panel?.orderOut(nil)
         panel = nil
         bubbleView = nil
         region = nil
+        liveSettings = nil
+        isLive = false
         feed.stop()
     }
 
-    var isShowing: Bool { panel != nil }
+    /// The take started (countdown or recording): fullscreen now covers the region for real.
+    func setLive(_ live: Bool) {
+        guard live != isLive else { return }
+        isLive = live
+        layout()
+    }
 
     // MARK: - Layout
 
@@ -61,13 +81,14 @@ final class CameraBubbleController {
         guard let panel, let region, let bubbleView else { return }
         let (settings, fullscreen) = feed.snapshot()
         let regionSize = Size(width: region.width, height: region.height)
-        let local = fullscreen
-            ? Rect(x: 0, y: 0, width: region.width, height: region.height)
-            : CameraBubbleLayout.frame(settings, in: regionSize)
+        let covers = fullscreen && isLive
+        let local = CameraBubbleLayout.frame(settings, in: regionSize, fullscreen: covers)
         let onScreen = Rect(x: region.minX + local.minX, y: region.minY + local.minY, width: local.width, height: local.height)
-        panel.setFrame(Self.appKitRect(onScreen), display: true)
-        bubbleView.cornerRadius = fullscreen ? 0 : CameraBubbleLayout.cornerRadius(for: settings.shape, side: local.width)
+        let frame = Self.appKitRect(onScreen)
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
+        bubbleView.cornerRadius = CameraBubbleLayout.cornerRadius(for: settings.shape, side: local.width, fullscreen: covers)
         bubbleView.mirrored = settings.mirror
+        bubbleView.showsFullscreenBadge = fullscreen && !isLive
     }
 
     private func makePanel() {
@@ -109,6 +130,7 @@ final class CameraBubbleController {
         let local = Point(x: center.x - region.minX, y: center.y - region.minY)
         let anchor = CameraBubbleLayout.anchor(forCenter: local, in: Size(width: region.width, height: region.height))
         feed.update { $0.anchor = anchor }
+        liveSettings?.anchor = anchor
         onAnchorChanged?(anchor)
         layout()
     }
@@ -137,8 +159,11 @@ final class CameraBubbleView: NSView {
 
     var cornerRadius: Double = 0 { didSet { layer?.cornerRadius = cornerRadius } }
     var mirrored = true { didSet { applyMirror() } }
+    /// Fullscreen was chosen while the toolbar is still up: say so instead of covering it.
+    var showsFullscreenBadge = false { didSet { badge.isHidden = !showsFullscreenBadge } }
 
     private var preview: AVCaptureVideoPreviewLayer?
+    private let badge = CATextLayer()
     private var pressOrigin: NSPoint?
     private var moved = false
 
@@ -147,6 +172,14 @@ final class CameraBubbleView: NSView {
         wantsLayer = true
         layer?.masksToBounds = true
         layer?.backgroundColor = NSColor.black.cgColor
+        badge.string = "Fullscreen when recording"
+        badge.fontSize = 11
+        badge.alignmentMode = .center
+        badge.foregroundColor = NSColor.white.cgColor
+        badge.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        badge.contentsScale = 2
+        badge.isHidden = true
+        layer?.addSublayer(badge)
     }
 
     @available(*, unavailable)
@@ -165,6 +198,8 @@ final class CameraBubbleView: NSView {
     override func layout() {
         super.layout()
         preview?.frame = bounds
+        badge.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 18)
+        badge.zPosition = 1
     }
 
     private func applyMirror() {

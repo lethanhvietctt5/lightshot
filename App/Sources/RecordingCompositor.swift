@@ -29,9 +29,12 @@ final class RecordingCompositor: @unchecked Sendable {
     private let pillStyle: KeystrokePillStyle?
     private lazy var ciContext = CIContext(options: [.cacheIntermediates: false])
 
-    /// The camera feed plus the region's size in points — the bubble is laid out in points, like
-    /// the on-screen preview, and scaled by the mapping, so the two agree.
-    private let camera: (feed: CameraFeed, regionSize: Size)?
+    /// The bubble is laid out in region points, like the on-screen preview, and scaled by the
+    /// mapping, so the two agree.
+    private let camera: CameraOverlay?
+    /// The newest camera frame as a `CGImage`, kept while the same buffer is still current (the
+    /// camera runs slower than the screen, so most screen frames reuse it).
+    private var cameraImage: (buffer: CVPixelBuffer, image: CGImage)?
 
     /// - Parameter systemAppearanceIsDark: resolves the keystroke pill's `system` appearance, read
     ///   once at start (the file cannot follow a mid-recording theme switch anyway).
@@ -39,7 +42,7 @@ final class RecordingCompositor: @unchecked Sendable {
         mapping: FrameMapping, width: Int, height: Int,
         clickHighlight: ClickHighlightSettings?,
         keystrokes: KeystrokeOverlaySettings? = nil, systemAppearanceIsDark: Bool = false,
-        camera: (feed: CameraFeed, regionSize: Size)? = nil
+        camera: CameraOverlay? = nil
     ) {
         self.mapping = mapping
         self.width = width
@@ -78,8 +81,8 @@ final class RecordingCompositor: @unchecked Sendable {
 
         let circles = highlight?.circles(at: time) ?? []
         let pills = keystrokes?.items(at: time) ?? []
-        let cameraFrame = camera?.feed.current?.latestFrame
-        guard !circles.isEmpty || !pills.isEmpty || cameraFrame != nil, let target = copy(source) else { return source }
+        let cameraState = camera.map { $0.feed.frameSnapshot() }
+        guard !circles.isEmpty || !pills.isEmpty || cameraState?.frame != nil, let target = copy(source) else { return source }
 
         CVPixelBufferLockBaseAddress(target, [])
         defer { CVPixelBufferUnlockBaseAddress(target, []) }
@@ -93,7 +96,9 @@ final class RecordingCompositor: @unchecked Sendable {
         // Frame pixels are top-left origin like `CaptureRegion`; CoreGraphics is bottom-left.
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1, y: -1)
-        if let camera, let cameraFrame { draw(cameraFrame, feed: camera.feed, regionSize: camera.regionSize, into: context) }
+        if let camera, let cameraState, let frame = cameraState.frame {
+            draw(frame, settings: cameraState.settings, fullscreen: cameraState.isFullscreen, regionSize: camera.regionSize, into: context)
+        }
         draw(circles.map(mapping.pixelCircle), into: context)
         if let pillStyle, !pills.isEmpty { draw(pills, style: pillStyle, over: source, into: context) }
         return target
@@ -103,17 +108,12 @@ final class RecordingCompositor: @unchecked Sendable {
 
     /// The newest camera frame, aspect-filled into the bubble (or the whole frame when fullscreen,
     /// story 28), masked to the shape, mirrored if asked.
-    private func draw(_ frame: CVPixelBuffer, feed: CameraFeed, regionSize: Size, into context: CGContext) {
-        let (settings, fullscreen) = feed.snapshot()
-        let scale = mapping.pixelsPerPointX
-        let local = fullscreen
-            ? Rect(x: 0, y: 0, width: regionSize.width, height: regionSize.height)
-            : CameraBubbleLayout.frame(settings, in: regionSize)
-        let rect = Rect(x: local.minX * scale, y: local.minY * scale, width: local.width * scale, height: local.height * scale)
-        let radius = fullscreen ? 0 : CameraBubbleLayout.cornerRadius(for: settings.shape, side: local.width) * scale
-        var image: CGImage?
-        VTCreateCGImageFromCVPixelBuffer(frame, options: nil, imageOut: &image)
-        guard let image else { return }
+    private func draw(_ frame: CVPixelBuffer, settings: CameraBubbleSettings, fullscreen: Bool, regionSize: Size, into context: CGContext) {
+        let sx = mapping.pixelsPerPointX, sy = mapping.pixelsPerPointY
+        let local = CameraBubbleLayout.frame(settings, in: regionSize, fullscreen: fullscreen)
+        let rect = Rect(x: local.minX * sx, y: local.minY * sy, width: local.width * sx, height: local.height * sy)
+        let radius = CameraBubbleLayout.cornerRadius(for: settings.shape, side: local.width, fullscreen: fullscreen) * sx
+        guard let image = cgImage(for: frame) else { return }
         let aspect = Double(image.width) / Double(max(image.height, 1))
         let cover = CameraBubbleLayout.coverRect(imageAspect: aspect, in: rect).cgRect
         let target = rect.cgRect
@@ -133,6 +133,14 @@ final class RecordingCompositor: @unchecked Sendable {
         context.interpolationQuality = .medium
         context.draw(image, in: cover)
         context.restoreGState()
+    }
+
+    private func cgImage(for frame: CVPixelBuffer) -> CGImage? {
+        if let cameraImage, cameraImage.buffer === frame { return cameraImage.image }
+        var image: CGImage?
+        VTCreateCGImageFromCVPixelBuffer(frame, options: nil, imageOut: &image)
+        cameraImage = image.map { (frame, $0) }
+        return image
     }
 
     // MARK: - Click highlight

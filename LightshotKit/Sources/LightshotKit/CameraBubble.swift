@@ -80,8 +80,10 @@ public enum CameraBubbleLayout {
         return min(wanted, shorter)
     }
 
-    /// The bubble's frame in region points (top-left origin), kept inside the region.
-    public static func frame(_ settings: CameraBubbleSettings, in region: Size) -> Rect {
+    /// The bubble's frame in region points (top-left origin), kept inside the region — or the whole
+    /// region when the camera is fullscreen (story 28).
+    public static func frame(_ settings: CameraBubbleSettings, in region: Size, fullscreen: Bool = false) -> Rect {
+        if fullscreen { return Rect(x: 0, y: 0, width: region.width, height: region.height) }
         let side = side(for: settings.size, in: region)
         let center = settings.anchor.map { Point(x: $0.x * region.width, y: $0.y * region.height) }
             ?? Point(x: region.width - margin - side / 2, y: region.height - margin - side / 2)
@@ -98,7 +100,9 @@ public enum CameraBubbleLayout {
         )
     }
 
-    public static func cornerRadius(for shape: CameraBubbleShape, side: Double) -> Double {
+    /// Fullscreen has no rounding: the camera fills the frame edge to edge.
+    public static func cornerRadius(for shape: CameraBubbleShape, side: Double, fullscreen: Bool = false) -> Double {
+        if fullscreen { return 0 }
         switch shape {
         case .circle: return side / 2
         case .rounded: return side * 0.18
