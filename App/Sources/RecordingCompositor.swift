@@ -162,8 +162,9 @@ final class RecordingCompositor: @unchecked Sendable {
 
     // MARK: - Keystroke pills
 
-    /// One pill per item, laid out left to right and anchored by the configured position; the
-    /// backdrop is a blur of the frame under the pill (or a flat tint), the text on top.
+    /// The burst's pill (and, while it is not fresh, a pill of the held modifiers), laid out left to
+    /// right and anchored by the configured position. CleanShot's look (LIG-45): a rounded
+    /// rectangle over a blur of the frame under it (or a flat tint), bold rounded glyphs on top.
     private func draw(_ items: [KeystrokeItem], style: KeystrokePillStyle, over source: CVPixelBuffer, into context: CGContext) {
         let lines = items.map { style.line(for: $0.text) }
         let widths = lines.map { CGFloat(CTLineGetTypographicBounds($0, nil, nil, nil)) + 2 * style.paddingX }
@@ -191,7 +192,7 @@ final class RecordingCompositor: @unchecked Sendable {
             context.setAlpha(CGFloat(item.opacity))
             context.beginTransparencyLayer(auxiliaryInfo: nil)
 
-            let path = CGPath(roundedRect: rect, cornerWidth: pillHeight / 2, cornerHeight: pillHeight / 2, transform: nil)
+            let path = CGPath(roundedRect: rect, cornerWidth: style.cornerRadius, cornerHeight: style.cornerRadius, transform: nil)
             context.addPath(path)
             context.clip()
             if let backdrop, let groupRect = backdropRect {
@@ -283,6 +284,8 @@ struct KeystrokePillStyle {
     let paddingX: CGFloat
     let paddingY: CGFloat
     let gap: CGFloat
+    let cornerRadius: CGFloat
+    let kern: CGFloat
     let margin: CGFloat
     let blurRadius: CGFloat
     let tint: CGColor
@@ -293,12 +296,16 @@ struct KeystrokePillStyle {
         let fontSize = CGFloat(settings.size.fontSize) * scale
         position = settings.position
         blur = settings.blurBackground
-        font = NSFont.systemFont(ofSize: fontSize, weight: .semibold)
+        let bold = NSFont.systemFont(ofSize: fontSize, weight: .bold)
+        font = bold.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: fontSize) } ?? bold
         ascent = CTFontGetAscent(font)
         descent = CTFontGetDescent(font)
-        paddingX = fontSize * 0.6
-        paddingY = fontSize * 0.35
+        paddingX = fontSize * 0.75
+        paddingY = fontSize * 0.5
         gap = fontSize * 0.4
+        // A rounded rectangle, not a capsule: about a quarter of the pill's height.
+        cornerRadius = fontSize * 0.55
+        kern = fontSize * 0.06
         margin = 24 * scale
         blurRadius = 10 * scale
         let dark: Bool
@@ -309,7 +316,7 @@ struct KeystrokePillStyle {
         }
         // Over a blur the tint is a wash; flat, it has to carry the contrast itself.
         tint = dark
-            ? CGColor(gray: 0.05, alpha: settings.blurBackground ? 0.5 : 0.8)
+            ? CGColor(gray: 0.05, alpha: settings.blurBackground ? 0.45 : 0.8)
             : CGColor(gray: 1, alpha: settings.blurBackground ? 0.55 : 0.92)
         text = dark ? CGColor(gray: 1, alpha: 1) : CGColor(gray: 0.05, alpha: 1)
     }
@@ -317,6 +324,7 @@ struct KeystrokePillStyle {
     func line(for string: String) -> CTLine {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
+            .kern: kern,
             kCTForegroundColorAttributeName as NSAttributedString.Key: text,
         ]
         return CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: attributes))
