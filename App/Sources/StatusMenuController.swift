@@ -74,9 +74,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(stopRecordingClicked)
         refreshRecordingTimer()
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshRecordingTimer() }
         }
+        // `.common` so the clock keeps ticking while a menu or modal alert is open.
+        RunLoop.main.add(timer, forMode: .common)
+        recordingTimer = timer
     }
 
     private func refreshRecordingTimer() {
@@ -148,9 +151,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     /// A capture row: the action's title, its icon, and whatever chord is currently bound to it.
     private func captureItem(
-        _ action: CaptureAction, icon: String, hotkeys: HotkeyBindings, run: @escaping () -> Void
+        _ action: CaptureAction, title: String? = nil, icon: String, hotkeys: HotkeyBindings,
+        run: @escaping () -> Void
     ) -> NSMenuItem {
-        let item = item(action.title, icon: icon, run: run)
+        let item = item(title ?? action.title, icon: icon, run: run)
         if let binding = hotkeys[action], let (key, modifiers) = Self.keyEquivalent(for: binding) {
             item.keyEquivalent = key
             item.keyEquivalentModifierMask = modifiers
@@ -162,17 +166,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     /// reads "Stop Recording" with the stop glyph while one is active.
     private func recordItem(hotkeys: HotkeyBindings) -> NSMenuItem {
         let recording = controller.isRecording
-        let item = item(
-            recording ? "Stop Recording" : CaptureAction.recordScreen.title,
-            icon: recording ? "stop.circle" : "record.circle"
+        return captureItem(
+            .recordScreen,
+            title: recording ? "Stop Recording" : nil,
+            icon: recording ? "stop.circle" : "record.circle",
+            hotkeys: hotkeys
         ) { [controller] in
             controller.toggleRecording()
         }
-        if let binding = hotkeys[.recordScreen], let (key, modifiers) = Self.keyEquivalent(for: binding) {
-            item.keyEquivalent = key
-            item.keyEquivalentModifierMask = modifiers
-        }
-        return item
     }
 
     /// Fullscreen capture, with a per-display submenu on a multi-monitor setup (story 8): a single

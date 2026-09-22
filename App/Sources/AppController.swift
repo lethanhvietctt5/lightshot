@@ -149,7 +149,7 @@ final class AppController: NSObject, CaptureUI {
     var isRecording: Bool { coordinator.isRecording }
 
     /// Seconds recorded so far, for the status-item timer.
-    var recordingElapsed: TimeInterval { coordinator.recordingElapsed() }
+    var recordingElapsed: TimeInterval { coordinator.recordingElapsed }
 
     /// Menu / hotkey entry point for re-firing the last capture mode (story 9).
     func repeatLast() {

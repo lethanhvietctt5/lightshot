@@ -15,6 +15,11 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     var requestResult: CaptureAuthorizationStatus = .authorized
 
     private(set) var starts: [(options: RecordingOptions, url: URL)] = []
+    /// The failure callback of the most recent `start`, so a test can simulate the stream dying.
+    private(set) var onFailure: (@Sendable (RecordingError) -> Void)?
+    /// When set, `start` suspends here until the test resumes it — for the in-flight-start race.
+    var startGate: CheckedContinuation<Void, Never>?
+    var holdStart = false
     private(set) var stopCount = 0
     private(set) var cancelCount = 0
     private(set) var requestAuthorizationCount = 0
@@ -30,8 +35,15 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
         status = requestResult
         return requestResult
     }
-    func start(_ options: RecordingOptions, writingTo url: URL) async -> Result<Void, RecordingError> {
+    func start(
+        _ options: RecordingOptions, writingTo url: URL,
+        onFailure: @escaping @Sendable (RecordingError) -> Void
+    ) async -> Result<Void, RecordingError> {
         starts.append((options, url))
+        self.onFailure = onFailure
+        if holdStart {
+            await withCheckedContinuation { startGate = $0 }
+        }
         return startResult
     }
     func pause() async {}
@@ -45,11 +57,13 @@ private final class SpyMediaSink: MediaSink {
     var saveFails = false
     private(set) var copied: [URL] = []
     private(set) var saves: [(from: URL, to: URL)] = []
+    private(set) var removed: [URL] = []
     func copyFile(at url: URL) { copied.append(url) }
     func save(_ url: URL, to destination: URL) throws {
         if saveFails { throw Failure() }
         saves.append((url, destination))
     }
+    func removeFile(at url: URL) { removed.append(url) }
 }
 
 @MainActor
@@ -109,7 +123,14 @@ private final class StubSettings: SettingsStore {
 private final class ManualClock {
     var now: TimeInterval = 100
     private(set) var waits: [TimeInterval] = []
-    func sleep(_ seconds: TimeInterval) { waits.append(seconds); now += seconds }
+    /// When set, a sleep suspends here until the test resumes it — to act mid-countdown.
+    var holdSleeps = false
+    var sleepGate: CheckedContinuation<Void, Never>?
+    func sleep(_ seconds: TimeInterval) async {
+        waits.append(seconds)
+        if holdSleeps { await withCheckedContinuation { sleepGate = $0 } }
+        now += seconds
+    }
 }
 
 @MainActor
@@ -139,7 +160,7 @@ private final class Harness {
             recordingService: service,
             mediaSink: sink,
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
-            sleep: { seconds in clock.sleep(seconds) },
+            sleep: { seconds in await clock.sleep(seconds) },
             clock: { clock.now },
             ui: ui
         )
@@ -172,7 +193,7 @@ private let display = CaptureRegion.display(id: 7)
     #expect(!h.coordinator.isRecording)
     #expect(h.service.stopCount == 1)
     #expect(h.coordinator.recordingSession.state == .finished(URL(fileURLWithPath: "/tmp/scratch/take.mp4")))
-    #expect(h.coordinator.recordingElapsed() == 30)
+    #expect(h.coordinator.recordingElapsed == 30)
     #expect(h.sink.saves.count == 1)
     #expect(h.sink.saves.first?.from == URL(fileURLWithPath: "/tmp/scratch/take.mp4"))
     // Configured save location + filename pattern + the container's extension.
@@ -197,7 +218,62 @@ private let display = CaptureRegion.display(id: 7)
     let h = Harness()
     await h.coordinator.startRecording(region: display)
     h.now = 112.5
-    #expect(h.coordinator.recordingElapsed() == 12.5)
+    #expect(h.coordinator.recordingElapsed == 12.5)
+}
+
+@Test @MainActor func aStopWhileStartIsStillInFlightIsIgnored() async {
+    // The hotkey can fire again before the service has handed the stream back; that press must
+    // not stop a stream the service hasn't returned yet (nor fail the session).
+    let h = Harness()
+    h.service.holdStart = true
+    let starting = Task { await h.coordinator.startRecording(region: display) }
+    while h.service.startGate == nil { await Task.yield() }
+
+    await h.coordinator.toggleRecording(region: display)   // arrives mid-start
+    #expect(h.service.stopCount == 0)
+    #expect(h.coordinator.isRecording)
+
+    h.service.startGate?.resume()
+    await starting.value
+    #expect(h.coordinator.recordingSession.state == .recording)
+
+    await h.coordinator.stopRecording()                     // a normal stop still works afterwards
+    #expect(h.service.stopCount == 1)
+}
+
+@Test @MainActor func aStopDuringTheCountdownDiscardsAndDeletesTheScratchFile() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3)
+    h.clock.holdSleeps = true
+    let starting = Task { await h.coordinator.startRecording(region: display) }
+    while h.clock.sleepGate == nil { await Task.yield() }
+    #expect(h.coordinator.recordingSession.state == .countdown)
+
+    await h.coordinator.stopRecording()      // Escape during the countdown
+    h.clock.sleepGate?.resume()
+    await starting.value
+
+    #expect(h.service.cancelCount == 1)
+    #expect(h.service.stopCount == 0)
+    #expect(h.service.starts.isEmpty)                 // the stream never started
+    #expect(h.sink.removed.count == 1)
+    #expect(h.sink.removed.first?.pathExtension == "mp4")
+    #expect(h.coordinator.recordingSession.state == .idle)
+    #expect(h.ui.states.last == .idle)
+}
+
+@Test @MainActor func aStreamDyingMidTakeFailsTheSessionDeletesThePartialAndRestoresTheStatusItem() async {
+    let h = Harness()
+    await h.coordinator.startRecording(region: display)
+    h.service.onFailure?(.systemFailure("display disconnected"))
+    await Task.yield()
+    while h.coordinator.isRecording { await Task.yield() }
+
+    #expect(h.coordinator.recordingSession.state == .failed(.systemFailure("display disconnected")))
+    #expect(h.ui.recordingFailures == [.systemFailure("display disconnected")])
+    #expect(h.sink.removed == h.service.starts.map(\.url))
+    #expect(h.ui.states.last == .failed(.systemFailure("display disconnected")))
+    #expect(h.service.stopCount == 0)
 }
 
 // MARK: - Countdown (story 10, until the overlay lands)
@@ -211,7 +287,7 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.ui.states == [.countdown, .recording])
     #expect(h.service.starts.count == 1)
     #expect(h.service.starts.first?.options.countdownSeconds == 3)
-    #expect(h.coordinator.recordingElapsed() == 0)   // the countdown itself is not footage
+    #expect(h.coordinator.recordingElapsed == 0)   // the countdown itself is not footage
 }
 
 // MARK: - Error routing (stories 57–58)
@@ -226,6 +302,8 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.coordinator.recordingSession.state == .failed(.permissionDenied(.screenRecording)))
     #expect(!h.coordinator.isRecording)
     #expect(h.sink.saves.isEmpty)
+    #expect(h.sink.removed.count == 1)                              // no scratch file left behind
+    #expect(h.ui.states.last == .failed(.permissionDenied(.screenRecording)))   // status item reverts
 }
 
 @Test @MainActor func userCancelledIsSilentAndOtherFailuresGetADistinctMessage() async {

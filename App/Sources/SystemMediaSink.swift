@@ -23,4 +23,8 @@ final class SystemMediaSink: MediaSink {
         )
         try fileManager.moveItem(at: url, to: destination)
     }
+
+    func removeFile(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
+    }
 }

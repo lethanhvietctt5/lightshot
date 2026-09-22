@@ -17,15 +17,12 @@ private let log = Logger(subsystem: "dev.lightshot.app", category: "recording")
 /// the recording controls and overlays never appear in the output (story 15). A display-sleep
 /// assertion is held for the life of the take (story 17).
 ///
-/// Only Screen Recording permission is involved here; the microphone, camera and keystroke
-/// features (R7–R11) add their own sources and permissions.
-final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable {
-    /// The same advisory Screen Recording view `SCCaptureService` has — including the shared
-    /// "have we asked yet?" flag — so first-run onboarding and both services agree on the grant.
-    private let permissions = SCCaptureService()
-
-    /// Serialises every touch of the stream and writer: SCK delivers frames on it, and
-    /// pause / resume / stop / cancel hop onto it, so the writer is never used from two threads.
+/// An actor: `start` / `stop` / `cancel` / `pause` / `resume` are serialised, so the stream, writer
+/// and assertion are only ever touched by one call at a time. Frame delivery runs on `queue`; the
+/// writer is only used there. Only Screen Recording permission is involved here; the microphone,
+/// camera and keystroke features (R7–R11) add their own sources and permissions.
+actor SCRecordingService: RecordingService {
+    /// Serialises frame delivery and every writer call.
     private let queue = DispatchQueue(label: "dev.lightshot.recording")
 
     private var stream: SCStream?
@@ -34,35 +31,31 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
     private var sleepAssertion: IOPMAssertionID = 0
 
     func authorizationStatus() async -> CaptureAuthorizationStatus {
-        await permissions.authorizationStatus()
+        ScreenRecordingPermission.status()
     }
 
     @discardableResult
     func requestAuthorization() async -> CaptureAuthorizationStatus {
-        await permissions.requestAuthorization()
+        ScreenRecordingPermission.request()
     }
 
-    func start(_ options: RecordingOptions, writingTo url: URL) async -> Result<Void, RecordingError> {
-        guard case let .video(video) = options.output else {
-            // GIF takes are recorded as video first (R13 converts afterwards); the settings for the
-            // stream are the video ones.
-            return await start(videoSettings: .standard, options: options, writingTo: url)
-        }
-        return await start(videoSettings: video, options: options, writingTo: url)
-    }
-
-    private func start(
-        videoSettings video: VideoSettings, options: RecordingOptions, writingTo url: URL
+    func start(
+        _ options: RecordingOptions,
+        writingTo url: URL,
+        onFailure: @escaping @Sendable (RecordingError) -> Void
     ) async -> Result<Void, RecordingError> {
+        // GIF takes are recorded as video first (R13 converts afterwards): the stream settings are
+        // the video ones either way.
+        let video: VideoSettings
+        if case let .video(settings) = options.output { video = settings } else { video = .standard }
+
         do {
             // The shareable-content query is the first thing that fails when Screen Recording
             // permission is missing — it surfaces as SCStreamError.userDeclined.
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let target = try Self.target(for: options.region, in: content)
+            let size = Self.outputSize(points: target.pointSize, scale: target.scale, settings: video)
 
-            let size = Self.outputSize(
-                points: target.pointSize, scale: target.scale, settings: video
-            )
             let configuration = SCStreamConfiguration()
             configuration.width = size.width
             configuration.height = size.height
@@ -75,7 +68,10 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
             let writer = try RecordingWriter(
                 url: url, width: size.width, height: size.height, codec: video.codec, fps: video.fps
             )
-            let output = StreamOutput(writer: writer)
+            let output = StreamOutput(writer: writer) { [weak self] error in
+                // The stream died on its own: tear down here, then let the coordinator fail the take.
+                Task { await self?.streamDidFail(); onFailure(error) }
+            }
             let stream = SCStream(filter: target.filter, configuration: configuration, delegate: output)
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
             try await stream.startCapture()
@@ -96,31 +92,34 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
     }
 
     func pause() async {
-        let writer = self.writer
-        queue.async { writer?.pause() }
+        guard let writer else { return }
+        queue.async { writer.pause() }
     }
 
     func resume() async {
-        let writer = self.writer
-        queue.async { writer?.resume() }
+        guard let writer else { return }
+        queue.async { writer.resume() }
     }
 
     func stop() async -> Result<URL, RecordingError> {
-        guard let stream, let writer else {
+        guard let stream, let writer, let output else {
             return .failure(.systemFailure("No recording is in progress."))
         }
         defer { tearDown() }
+        // Note the stop time before the stream winds down, so the file runs to the moment the user
+        // stopped rather than to the last frame the screen changed.
+        let stopTime = CMClockGetTime(CMClockGetHostTimeClock())
         do {
             try await stream.stopCapture()
         } catch {
             // The stream may already have stopped (e.g. the display went away); the writer still
             // holds whatever was captured, so finalise it and report the stream's error only if the
             // file itself is unusable.
-            if let streamError = output?.failure { return .failure(streamError) }
+            log.error("stopCapture failed: \(error.localizedDescription, privacy: .public)")
         }
         do {
-            let url = try await writer.finish(on: queue)
-            if let streamError = output?.failure { return .failure(streamError) }
+            let url = try await writer.finish(at: stopTime, on: queue)
+            if let streamError = output.failure { return .failure(streamError) }
             log.info("Recording finished: \(url.lastPathComponent, privacy: .public), \(writer.frameCount) frames")
             return .success(url)
         } catch let error as RecordingError {
@@ -135,8 +134,16 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
     func cancel() async {
         defer { tearDown() }
         try? await stream?.stopCapture()
-        let writer = self.writer
-        queue.sync { writer?.cancel() }
+        guard let writer else { return }
+        queue.sync { writer.cancel() }
+    }
+
+    /// The stream reported its own death: drop it and the writer (deleting the partial file) so
+    /// the coordinator's follow-up `cancel`/`stop` finds nothing running.
+    private func streamDidFail() {
+        guard let writer else { return }
+        queue.sync { writer.cancel() }
+        tearDown()
     }
 
     private func tearDown() {
@@ -172,7 +179,7 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
             return Target(
                 filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
                 pointSize: CGSize(width: display.width, height: display.height),
-                scale: Self.backingScale(for: display.displayID),
+                scale: SCCaptureService.backingScale(for: display),
                 sourceRect: nil
             )
         case let .rect(rect):
@@ -185,7 +192,7 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
             return Target(
                 filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
                 pointSize: sourceRect.size,
-                scale: Self.backingScale(for: display.displayID),
+                scale: SCCaptureService.backingScale(for: display),
                 sourceRect: sourceRect
             )
         case let .window(id, _):
@@ -219,16 +226,10 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
         return (even(width), even(height))
     }
 
-    private static func backingScale(for displayID: CGDirectDisplayID) -> CGFloat {
-        let key = NSDeviceDescriptionKey("NSScreenNumber")
-        let screen = NSScreen.screens.first { ($0.deviceDescription[key] as? CGDirectDisplayID) == displayID }
-        return screen?.backingScaleFactor ?? 2
-    }
-
     /// The status check is advisory; the stream is authoritative — a permission revoked after any
     /// preflight lands here as `userDeclined`. A full disk surfaces as its own case so the message
     /// can say so.
-    private static func mapError(_ error: Error) -> RecordingError {
+    static func mapError(_ error: Error) -> RecordingError {
         let nsError = error as NSError
         if nsError.domain == SCStreamErrorDomain, nsError.code == SCStreamError.Code.userDeclined.rawValue {
             return .permissionDenied(.screenRecording)
@@ -260,13 +261,22 @@ final class SCRecordingService: NSObject, RecordingService, @unchecked Sendable 
 }
 
 /// Receives the stream's frames on the service's queue and hands complete ones to the writer;
-/// remembers a stream-level failure so `stop()` can report it.
+/// reports a stream-level failure once, and keeps it so `stop()` can report it too.
 private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let writer: RecordingWriter
-    private(set) var failure: RecordingError?
+    private let onFailure: @Sendable (RecordingError) -> Void
+    private let lock = NSLock()
+    private var storedFailure: RecordingError?
 
-    init(writer: RecordingWriter) {
+    init(writer: RecordingWriter, onFailure: @escaping @Sendable (RecordingError) -> Void) {
         self.writer = writer
+        self.onFailure = onFailure
+    }
+
+    /// Set from SCK's delegate queue, read from the actor — hence the lock.
+    var failure: RecordingError? {
+        lock.lock(); defer { lock.unlock() }
+        return storedFailure
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -275,13 +285,13 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        let nsError = error as NSError
-        log.error("Stream stopped with error: \(nsError.localizedDescription, privacy: .public)")
-        if nsError.domain == SCStreamErrorDomain, nsError.code == SCStreamError.Code.userDeclined.rawValue {
-            failure = .permissionDenied(.screenRecording)
-        } else {
-            failure = .systemFailure(nsError.localizedDescription)
-        }
+        let mapped = SCRecordingService.mapError(error)
+        log.error("Stream stopped with error: \((error as NSError).localizedDescription, privacy: .public)")
+        lock.lock()
+        let first = storedFailure == nil
+        if first { storedFailure = mapped }
+        lock.unlock()
+        if first { onFailure(mapped) }
     }
 
     /// SCK also delivers "idle" and "blank" frames; only complete ones carry new pixels.
@@ -296,11 +306,13 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
 }
 
 /// Encodes screen frames into an MP4 through `AVAssetWriter`. Every method runs on the service's
-/// serial queue; the class only guards its own state with that convention.
+/// serial queue (`finish` hops onto it itself); the class only guards its own state with that
+/// convention.
 ///
 /// Pause/resume (story 13) is a presentation-time offset: frames delivered while paused are dropped,
 /// and the first frame after resume is re-stamped to follow the last written one, so the file has
-/// no gap and no frozen stretch.
+/// no gap and no frozen stretch. SCK only delivers a frame when the screen changes, so the session
+/// is explicitly ended at the stop time — otherwise a static final stretch would be cut off.
 private final class RecordingWriter: @unchecked Sendable {
     private let url: URL
     private let writer: AVAssetWriter
@@ -351,7 +363,7 @@ private final class RecordingWriter: @unchecked Sendable {
     }
 
     func append(_ sampleBuffer: CMSampleBuffer) {
-        guard failure == nil, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard failure == nil, !paused, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 
         if !started {
@@ -363,7 +375,6 @@ private final class RecordingWriter: @unchecked Sendable {
             writer.startSession(atSourceTime: presentation)
             started = true
         }
-        guard !paused else { return }
         if resumePending, let lastWritten {
             // Close the gap: the next frame lands one frame after the last one written before the pause.
             offset = CMTimeSubtract(CMTimeSubtract(presentation, lastWritten), frameDuration)
@@ -390,26 +401,36 @@ private final class RecordingWriter: @unchecked Sendable {
         resumePending = true
     }
 
+    /// Abandon the take and delete whatever was written.
     func cancel() {
-        if started { writer.cancelWriting() }
+        if started, writer.status == .writing { writer.cancelWriting() }
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Finalise on `queue` and return the file. A take that never received a frame is an error, not
-    /// an empty file.
-    func finish(on queue: DispatchQueue) async throws -> URL {
+    /// Finalise on `queue`, ending the session at `stopTime` (host clock, like the frames) so the
+    /// file runs to the moment of stopping, and return the file. A take that never received a frame
+    /// or that failed mid-way is an error — and its partial file is deleted, not left behind.
+    func finish(at stopTime: CMTime, on queue: DispatchQueue) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
-                if let failure { continuation.resume(throwing: failure); return }
-                guard started else {
+                if let failure {
+                    cancel()
+                    continuation.resume(throwing: failure)
+                    return
+                }
+                guard started, let lastWritten else {
+                    cancel()
                     continuation.resume(throwing: RecordingError.systemFailure("No frames were captured."))
                     return
                 }
+                let end = CMTimeSubtract(stopTime, offset)
+                if CMTimeCompare(end, lastWritten) > 0 { writer.endSession(atSourceTime: end) }
                 input.markAsFinished()
                 writer.finishWriting { [self] in
                     if writer.status == .completed {
                         continuation.resume(returning: url)
                     } else {
+                        try? FileManager.default.removeItem(at: url)
                         continuation.resume(throwing: Self.map(writer.error))
                     }
                 }

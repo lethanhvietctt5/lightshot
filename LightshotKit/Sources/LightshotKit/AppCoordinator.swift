@@ -56,6 +56,10 @@ public final class AppCoordinator {
     /// moves the session first, then the `RecordingService` does the matching OS work, so an
     /// illegal command never reaches the encoder. Read by the app shell for the menu-bar timer.
     public private(set) var recordingSession = RecordingSession()
+    /// True while `startRecording` is awaiting the service's `start`, so a hotkey press in that
+    /// window is ignored rather than stopping a stream that hasn't been handed back yet. The
+    /// countdown is *not* covered: stopping during it is a legitimate discard.
+    private var isStartingRecording = false
 
     /// The most recent capture the user initiated, so `repeatLastCapture()` (story 9) can re-fire the
     /// same kind — including the chosen display for fullscreen. In-memory and set at the *start* of a
@@ -180,8 +184,13 @@ public final class AppCoordinator {
     /// (or revoked after this check — the race), it returns `.permissionDenied` and routes to the
     /// recovery path (story 58).
     private func guideFirstRunAuthorizationIfNeeded() async -> Bool {
-        guard await captureService.authorizationStatus() == .notDetermined else { return true }
-        return await captureService.requestAuthorization() == .authorized
+        await guideFirstRunAuthorizationIfNeeded(for: captureService)
+    }
+
+    /// The same gate against any permission source — the recorder has its own view of the grant.
+    private func guideFirstRunAuthorizationIfNeeded(for service: PermissionAuthorizing) async -> Bool {
+        guard await service.authorizationStatus() == .notDetermined else { return true }
+        return await service.requestAuthorization() == .authorized
     }
 
     /// Window capture flow (stories 6–7). Runs first-run permission onboarding (story 57) up front,
@@ -271,7 +280,7 @@ public final class AppCoordinator {
     public var isRecording: Bool { recordingSession.isActive }
 
     /// Seconds of footage so far, excluding pauses (story 11's timer).
-    public func recordingElapsed() -> TimeInterval { recordingSession.elapsed(at: clock()) }
+    public var recordingElapsed: TimeInterval { recordingSession.elapsed(at: clock()) }
 
     /// The `recordScreen` hotkey / menu row (stories 1–2): one chord starts a recording of `region`
     /// when idle, and stops the one in progress otherwise.
@@ -290,7 +299,7 @@ public final class AppCoordinator {
     /// recovery path, `userCancelled` silent, the rest to a distinct message. A no-op while a take
     /// is already active or when no recorder is wired.
     public func startRecording(region: CaptureRegion) async {
-        guard let recordingService, !isRecording else { return }
+        guard let recordingService, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
 
         let options = RecordingOptions.resolve(region: region, output: .video, defaults: settings.recordingDefaults)
@@ -307,21 +316,33 @@ public final class AppCoordinator {
             ui.presentRecordingState(recordingSession)
         }
 
-        if case let .failure(error) = await recordingService.start(options, writingTo: url) {
+        isStartingRecording = true
+        let outcome = await recordingService.start(options, writingTo: url) { [weak self] error in
+            Task { @MainActor in self?.recordingDidFail(error) }
+        }
+        isStartingRecording = false
+        if case let .failure(error) = outcome {
             failRecording(with: error)
         }
+    }
+
+    /// The stream died mid-take (story 18's neighbour: the display went away, permission was
+    /// revoked). The service has torn itself down; fail the session and route like any failure.
+    private func recordingDidFail(_ error: RecordingError) {
+        guard isRecording else { return }
+        failRecording(with: error)
     }
 
     /// Stop the take in progress (story 2). The session enters `stopping`, the service finalises
     /// the file, the session finishes with it, and the file moves to the configured save location
     /// (`recordingDestination`). A stop during the countdown discards instead — nothing was written.
     public func stopRecording() async {
-        guard let recordingService, isRecording else { return }
+        guard let recordingService, isRecording, !isStartingRecording else { return }
         guard let outcome = try? recordingSession.stop(at: clock()) else { return }
         switch outcome {
         case let .discarded(partialFile):
             await recordingService.cancel()
-            removeScratchFile(partialFile)
+            mediaSink?.removeFile(at: partialFile)
             ui.presentRecordingState(recordingSession)
         case .stopping:
             ui.presentRecordingState(recordingSession)
@@ -350,10 +371,12 @@ public final class AppCoordinator {
         }
     }
 
-    /// Fail the session (keeping its elapsed time for diagnostics) and route the error the way
-    /// capture does: recovery for a missing permission, silence for a cancel, a message otherwise.
+    /// Fail the session (keeping its elapsed time for diagnostics), delete the partial file so
+    /// scratch never accumulates, and route the error the way capture does: recovery for a missing
+    /// permission, silence for a cancel, a message otherwise.
     private func failRecording(with error: RecordingError) {
         try? recordingSession.fail(error, at: clock())
+        if let partialFile = recordingSession.outputURL { mediaSink?.removeFile(at: partialFile) }
         ui.presentRecordingState(recordingSession)
         switch error {
         case .permissionDenied:
@@ -365,24 +388,15 @@ public final class AppCoordinator {
         }
     }
 
-    /// The same first-run gate as capture (story 57), against the recorder's own permission view.
-    private func guideFirstRunAuthorizationIfNeeded(for service: PermissionAuthorizing) async -> Bool {
-        guard await service.authorizationStatus() == .notDetermined else { return true }
-        return await service.requestAuthorization() == .authorized
-    }
-
     /// A fresh file for the writer under the scratch directory; the finished take is moved out of
-    /// here by `deliver`, and a discarded one is deleted, so nothing accumulates.
+    /// here by `deliver`, and a discarded or failed one is deleted through the sink, so nothing
+    /// accumulates. The directory itself is created here (Foundation, like `HistoryStore`).
     private func scratchURL(for kind: RecordingOutputKind) -> URL {
         let directory = scratchDirectory.appendingPathComponent("Lightshot Recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
             .appendingPathComponent("Recording-\(UUID().uuidString)")
             .appendingPathExtension("mp4")
-    }
-
-    private func removeScratchFile(_ url: URL) {
-        try? FileManager.default.removeItem(at: url)
     }
 
     /// Editor output (stories 40/44): flatten base + all elements in z-order via

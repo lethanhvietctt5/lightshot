@@ -204,7 +204,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         highlightClicks: Bool = false,
         showKeystrokes: Bool = false,
         showCursor: Bool = true,
-        countdownEnabled: Bool = true,
+        countdownEnabled: Bool = false,
         countdownSeconds: Int = 3
     ) {
         self.video = video
@@ -221,6 +221,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.countdownSeconds = max(0, countdownSeconds)
     }
 
+    /// The shipped defaults. The countdown is off until its overlay and sound exist (R4) — a
+    /// silent three-second wait would read as the hotkey not working.
     public static let standard = RecordingDefaults()
 }
 
