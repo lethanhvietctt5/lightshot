@@ -57,9 +57,9 @@ struct RecordingOverlayView: View {
                 .frame(width: 96)
 
                 if model.hasSelection {
-                    sizeField("W", text: $widthText) { model.setWidth($0) }
+                    sizeField("W", text: $widthText) { model.setWidth(pixels: $0) }
                     Text("×").foregroundStyle(.secondary)
-                    sizeField("H", text: $heightText) { model.setHeight($0) }
+                    sizeField("H", text: $heightText) { model.setHeight(pixels: $0) }
                 }
 
                 Button("Fullscreen") { model.chooseFullscreen() }
@@ -75,21 +75,16 @@ struct RecordingOverlayView: View {
         }
     }
 
+    /// Fields are in native pixels, like the readout; the model converts to points.
     private func sizeField(_ label: String, text: Binding<String>, commit: @escaping (Double) -> Void) -> some View {
         TextField(label, text: text)
             .textFieldStyle(.roundedBorder)
             .frame(width: 58)
             .multilineTextAlignment(.trailing)
             .onSubmit {
-                // Fields are in native pixels like the readout; the model works in points.
-                if let pixels = Double(text.wrappedValue), pixels > 0 { commit(pixels / pixelScale) }
+                if let pixels = Double(text.wrappedValue), pixels > 0 { commit(pixels) }
                 syncFields()
             }
-    }
-
-    private var pixelScale: Double {
-        guard let px = model.pixelSize, let rect = model.selection.rect, rect.width > 0 else { return 1 }
-        return Double(px.width) / rect.width
     }
 
     private func syncFields() {
@@ -112,13 +107,9 @@ struct RecordingOverlayView: View {
     // MARK: - Canvas
 
     private func draw(into context: inout GraphicsContext, size: CGSize) {
-        // Dim the whole screen, punching the selection (or the hovered window) out with an even-odd
-        // fill so the live region shows the real screen through the transparent window.
-        var dimmed = Path(CGRect(origin: .zero, size: size))
+        // The selection — or, before one exists, the hovered window — shows through the dimming.
         let box: CGRect? = model.hasSelection ? model.selection.rect?.cgRect : model.hovered?.frame.cgRect
-        if let box { dimmed.addRect(box) }
-        context.fill(dimmed, with: .color(.black.opacity(0.45)), style: FillStyle(eoFill: true))
-
+        OverlayCanvas.dim(&context, size: size, punchingOut: box)
         guard let box else { return }
         context.stroke(Path(box), with: .color(.white), style: StrokeStyle(lineWidth: model.hasSelection ? 1 : 2))
 
@@ -132,23 +123,7 @@ struct RecordingOverlayView: View {
         }
 
         if let px = model.pixelSize {
-            let label = context.resolve(
-                Text("\(px.width) × \(px.height)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
-            )
-            let textSize = label.measure(in: CGSize(width: 400, height: 40))
-            let aboveY = box.minY - textSize.height / 2 - 8
-            let center = CGPoint(
-                x: box.midX,
-                y: aboveY - textSize.height / 2 >= 0 ? aboveY : box.maxY + textSize.height / 2 + 8
-            )
-            let pill = CGRect(
-                x: center.x - textSize.width / 2 - 6, y: center.y - textSize.height / 2 - 3,
-                width: textSize.width + 12, height: textSize.height + 6
-            )
-            context.fill(Path(roundedRect: pill, cornerRadius: 4), with: .color(.black.opacity(0.6)))
-            context.draw(label, at: center, anchor: .center)
+            OverlayCanvas.drawReadout(&context, width: px.width, height: px.height, around: box)
         }
     }
 }

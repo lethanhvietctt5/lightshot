@@ -76,8 +76,8 @@ public struct EditableSelection: Equatable, Sendable {
         let startRect: Rect?
     }
 
-    /// Start with an optional remembered rect; a remembered rect that no longer fits the bounds
-    /// (or is too small) is discarded rather than shown wrong.
+    /// Start with an optional remembered rect: clipped to the bounds if it still overlaps them by
+    /// at least the minimum size, otherwise discarded rather than shown wrong.
     public init(bounds: Rect, ratio: AspectRatio = .freeform, rect: Rect? = nil) {
         self.bounds = bounds.standardized
         self.ratio = ratio
@@ -117,7 +117,8 @@ public struct EditableSelection: Equatable, Sendable {
         case .move:
             drag = Drag(kind: .move, anchor: point, startRect: rect)
         case let .resize(handle):
-            drag = Drag(kind: .resize(handle), anchor: Self.anchor(opposite: handle, in: rect!), startRect: rect)
+            guard let rect else { return }
+            drag = Drag(kind: .resize(handle), anchor: Self.anchor(opposite: handle, in: rect), startRect: rect)
         }
     }
 
@@ -127,7 +128,7 @@ public struct EditableSelection: Equatable, Sendable {
         let lock: Double? = forceSquare ? 1 : ratio.value
         switch drag.kind {
         case .draw:
-            rect = fitted(anchor: drag.anchor, toward: point, lock: lock, anchoredEdges: [])
+            rect = fitted(anchor: drag.anchor, toward: point, lock: lock)
         case .move:
             guard let start = drag.startRect else { return }
             rect = translated(start, by: Point(x: point.x - drag.anchor.x, y: point.y - drag.anchor.y))
@@ -151,11 +152,13 @@ public struct EditableSelection: Equatable, Sendable {
         self.rect = translated(rect, by: Point(x: dx, y: dy))
     }
 
-    /// ⇧-arrows: grow or shrink from the top-left corner by `dw`/`dh` points (the ratio follows the width).
+    /// ⇧-arrows: grow or shrink from the top-left corner by `dw`/`dh` points. Under a ratio lock
+    /// whichever axis the key moved drives the other.
     public mutating func resize(dw: Double, dh: Double) {
         guard let rect, hasSelection, !isDragging else { return }
         if let lock = ratio.value {
-            setSize(width: rect.width + dw, height: (rect.width + dw) / lock)
+            let width = dw != 0 ? rect.width + dw : (rect.height + dh) * lock
+            setSize(width: width, height: width / lock)
         } else {
             setSize(width: rect.width + dw, height: rect.height + dh)
         }
@@ -218,7 +221,7 @@ public struct EditableSelection: Equatable, Sendable {
 
     /// The rect spanned from `anchor` toward `point`, ratio-locked (driven by the pointer's
     /// dominant axis) and shrunk to stay inside the bounds without moving the anchor.
-    private func fitted(anchor: Point, toward point: Point, lock: Double?, anchoredEdges: Set<Handle>) -> Rect {
+    private func fitted(anchor: Point, toward point: Point, lock: Double?) -> Rect {
         let target = clamp(point)
         var dx = target.x - anchor.x
         var dy = target.y - anchor.y
@@ -244,26 +247,31 @@ public struct EditableSelection: Equatable, Sendable {
         let target = clamp(point)
         switch handle {
         case .topLeft, .topRight, .bottomLeft, .bottomRight:
-            return fitted(anchor: anchor, toward: target, lock: lock, anchoredEdges: [])
+            return fitted(anchor: anchor, toward: target, lock: lock)
         case .left, .right:
-            // The edge follows the pointer's x; under a lock the height follows, anchored at the top.
+            // The edge follows the pointer's x (crossing the anchor flips the rect). Under a lock the
+            // height follows, anchored at the top, and both are capped by the room on that side.
             let dx = target.x - anchor.x
-            let width = abs(dx)
-            let x = min(anchor.x, anchor.x + dx)
-            if let lock {
-                let height = min(width / lock, bounds.maxY - start.minY)
-                return Rect(x: handle == .left ? anchor.x - height * lock : anchor.x, y: start.minY, width: height * lock, height: height)
+            guard let lock else {
+                return Rect(x: min(anchor.x, anchor.x + dx), y: start.minY, width: abs(dx), height: start.height)
             }
-            return Rect(x: x, y: start.minY, width: width, height: start.height)
+            let roomX = dx < 0 ? anchor.x - bounds.minX : bounds.maxX - anchor.x
+            var width = min(abs(dx), roomX)
+            var height = width / lock
+            let roomY = bounds.maxY - start.minY
+            if height > roomY { height = roomY; width = height * lock }
+            return Rect(x: dx < 0 ? anchor.x - width : anchor.x, y: start.minY, width: width, height: height)
         case .top, .bottom:
             let dy = target.y - anchor.y
-            let height = abs(dy)
-            let y = min(anchor.y, anchor.y + dy)
-            if let lock {
-                let width = min(height * lock, bounds.maxX - start.minX)
-                return Rect(x: start.minX, y: handle == .top ? anchor.y - width / lock : anchor.y, width: width, height: width / lock)
+            guard let lock else {
+                return Rect(x: start.minX, y: min(anchor.y, anchor.y + dy), width: start.width, height: abs(dy))
             }
-            return Rect(x: start.minX, y: y, width: start.width, height: height)
+            let roomY = dy < 0 ? anchor.y - bounds.minY : bounds.maxY - anchor.y
+            var height = min(abs(dy), roomY)
+            var width = height * lock
+            let roomX = bounds.maxX - start.minX
+            if width > roomX { width = roomX; height = width / lock }
+            return Rect(x: start.minX, y: dy < 0 ? anchor.y - height : anchor.y, width: width, height: height)
         }
     }
 

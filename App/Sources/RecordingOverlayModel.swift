@@ -20,7 +20,8 @@ final class RecordingOverlayModel {
     let windows: [HoverWindow]
     /// The display the overlay covers — what "Fullscreen" resolves to.
     let displayID: UInt32
-    private let pixelScale: Double
+    /// Screen points → native pixels: the readout, the typed fields and the arrow keys all speak pixels.
+    let pixelScale: Double
     private let finish: (CaptureRegion?) -> Void
 
     /// The window under the pointer while nothing is selected yet — what the view highlights.
@@ -52,8 +53,9 @@ final class RecordingOverlayModel {
                 selection.snap(to: frame)
                 snappedWindow = window
             }
-        case .display:
-            selection = EditableSelection(bounds: bounds, rect: bounds)
+        case let .display(id):
+            // Only the display this overlay covers can be pre-filled.
+            selection = EditableSelection(bounds: bounds, rect: id == displayID ? bounds : nil)
         case nil:
             selection = EditableSelection(bounds: bounds)
         }
@@ -93,7 +95,9 @@ final class RecordingOverlayModel {
         if !isDragging {
             guard start.distance(to: point) >= Self.dragThreshold else { return }
             isDragging = true
-            if selection.dragKind(at: start) == .draw { snappedWindow = nil }
+            // Any drag — a fresh rect, a move, or a (hidden) handle — turns a snapped window back
+            // into a plain rect, so what is resolved always matches what is shown.
+            snappedWindow = nil
             selection.dragBegan(at: start)
         }
         selection.dragChanged(to: point, forceSquare: Self.optionHeld)
@@ -117,7 +121,7 @@ final class RecordingOverlayModel {
             snappedWindow = window
             selection.snap(to: window.frame)
             hovered = nil
-        } else if let rect = selection.rect, !rect.contains(point), selection.dragKind(at: point) == .draw {
+        } else if selection.dragKind(at: point) == .draw {   // outside the selection and its handles
             clearSelection()
         }
     }
@@ -133,15 +137,15 @@ final class RecordingOverlayModel {
 
     // MARK: - Keyboard and fields
 
-    /// Arrow keys: move by 1 pt; with ⇧, resize by 10 pt. Either edit turns a snapped window into
-    /// a plain rect.
+    /// Arrow keys: move by 1 px; with ⇧, resize by 10 px (native pixels, like the readout). Either
+    /// edit turns a snapped window into a plain rect.
     func arrow(dx: Double, dy: Double, shift: Bool) {
         guard hasSelection else { return }
         snappedWindow = nil
         if shift {
-            selection.resize(dw: dx * 10, dh: dy * 10)
+            selection.resize(dw: dx * 10 / pixelScale, dh: dy * 10 / pixelScale)
         } else {
-            selection.nudge(dx: dx, dy: dy)
+            selection.nudge(dx: dx / pixelScale, dy: dy / pixelScale)
         }
     }
 
@@ -150,14 +154,16 @@ final class RecordingOverlayModel {
         selection.setRatio(ratio)
     }
 
-    func setWidth(_ width: Double) {
+    /// The typed width, in native pixels.
+    func setWidth(pixels: Double) {
         snappedWindow = nil
-        selection.setWidth(width)
+        selection.setWidth(pixels / pixelScale)
     }
 
-    func setHeight(_ height: Double) {
+    /// The typed height, in native pixels.
+    func setHeight(pixels: Double) {
         snappedWindow = nil
-        selection.setHeight(height)
+        selection.setHeight(pixels / pixelScale)
     }
 
     // MARK: - Resolution

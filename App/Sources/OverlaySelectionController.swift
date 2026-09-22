@@ -7,10 +7,11 @@ import LightshotKit
 /// choice into a `CaptureRegion` (or `nil` on Escape). The pre-capture step — it never captures.
 ///
 /// A thin OS wrapper (no unit tests; the coordinator's overlay → capture ordering is tested against
-/// a fake). Both entry points bridge the window's imperative lifecycle to `async` via a checked
+/// a fake). Every entry point bridges the window's imperative lifecycle to `async` via a checked
 /// continuation, resumed exactly once when the user confirms or cancels: `selectRegion()` drags a
-/// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14). v1 covers the main
-/// screen; per-display selection is a follow-up.
+/// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14),
+/// `selectRecordingRegion(initial:)` runs the editable recording selection (spec 0006). v1 covers
+/// the main screen; per-display selection is a follow-up.
 @MainActor
 final class OverlaySelectionController: OverlayController {
     private var window: OverlayKeyWindow?
@@ -53,12 +54,28 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
-    private func presentRectOverlay() {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let scale = Double(screen?.backingScaleFactor ?? 2)
+    /// The main screen every overlay covers in v1: its frame, backing scale and display id.
+    private struct ScreenGeometry {
+        let frame: NSRect
+        let scale: Double
+        let displayID: UInt32
+    }
 
-        let model = SelectionOverlayModel(pixelScale: scale) { [weak self] region in
+    private static func mainScreen() -> ScreenGeometry {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        return ScreenGeometry(
+            frame: screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900),
+            scale: Double(screen?.backingScaleFactor ?? 2),
+            displayID: UInt32(number ?? CGMainDisplayID())
+        )
+    }
+
+    private func presentRectOverlay() {
+        let geometry = Self.mainScreen()
+        let frame = geometry.frame
+
+        let model = SelectionOverlayModel(pixelScale: geometry.scale) { [weak self] region in
             self?.finish(with: region)
         }
 
@@ -70,8 +87,7 @@ final class OverlaySelectionController: OverlayController {
     }
 
     private func presentWindowOverlay(windows: [WindowHoverOverlayModel.HoverWindow]) {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let frame = Self.mainScreen().frame
 
         let model = WindowHoverOverlayModel(windows: windows) { [weak self] region in
             self?.finish(with: region)
@@ -87,16 +103,13 @@ final class OverlaySelectionController: OverlayController {
     /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
     /// v1 covers the main screen, like the other two modes.
     private func presentRecordingOverlay(windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?) {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let scale = Double(screen?.backingScaleFactor ?? 2)
-        let screenNumber = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-        let displayID = UInt32(screenNumber ?? CGMainDisplayID())
+        let geometry = Self.mainScreen()
+        let frame = geometry.frame
 
         let model = RecordingOverlayModel(
             bounds: Rect(x: 0, y: 0, width: frame.width, height: frame.height),
-            pixelScale: scale,
-            displayID: displayID,
+            pixelScale: geometry.scale,
+            displayID: geometry.displayID,
             windows: windows,
             initial: initial
         ) { [weak self] region in
@@ -111,7 +124,7 @@ final class OverlaySelectionController: OverlayController {
         present(window, at: frame)
     }
 
-    /// The shared borderless, screen-saver-level, transparent full-screen window both modes present
+    /// The shared borderless, screen-saver-level, transparent full-screen window every mode presents
     /// in — only its content view and key handlers differ.
     private func makeOverlayWindow(frame: NSRect) -> OverlayKeyWindow {
         let window = OverlayKeyWindow(

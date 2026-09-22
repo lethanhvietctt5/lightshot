@@ -33,7 +33,8 @@ public protocol OverlayController: AnyObject {
     /// (handles, move, arrow keys, ratio lock, typed size), hover-and-click a window to snap to it,
     /// or pick the whole display. Unlike `selectRegion()`, releasing the drag does not confirm —
     /// Start (Return until the recorder toolbar lands) does. `initial` is a remembered region to
-    /// pre-fill; one that no longer fits the current displays is ignored.
+    /// pre-fill: a rect is clipped to what still fits (or dropped), a window only if it is still
+    /// open, a display only if it is the one the overlay covers.
     ///
     /// Resolves to a `.rect`, `.window` or `.display` `CaptureRegion`, or `nil` on Escape.
     func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion?

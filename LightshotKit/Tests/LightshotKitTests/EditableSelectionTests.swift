@@ -94,6 +94,32 @@ private func drawn(_ a: Point, _ b: Point, ratio: AspectRatio = .freeform, squar
     #expect(s.rect == Rect(x: 100, y: 100, width: 640, height: 360))
 }
 
+@Test func ratioLockedEdgeDragsNeverLeaveTheBounds() {
+    var s = drawn(Point(x: 100, y: 100), Point(x: 300, y: 200), ratio: .r1x1)   // a locked drag: 200×200
+    #expect(s.rect == Rect(x: 100, y: 100, width: 200, height: 200))
+    s.dragBegan(at: Point(x: 100, y: 200))          // left edge, dragged far past the right one
+    s.dragEnded(at: Point(x: 900, y: 200))
+    #expect(s.rect == Rect(x: 300, y: 100, width: 600, height: 600))
+    #expect(s.rect!.maxX <= 1000 && s.rect!.maxY <= 800)
+
+    s.dragBegan(at: Point(x: 900, y: 400))          // right edge, dragged off the right of the screen
+    s.dragEnded(at: Point(x: 1500, y: 400))
+    #expect(s.rect!.maxX <= 1000 && s.rect!.maxY <= 800)
+    #expect(s.rect!.width == s.rect!.height)
+}
+
+@Test func ratioLockedTopAndBottomEdgeDragsFollowWithTheWidth() {
+    var s = drawn(Point(x: 100, y: 100), Point(x: 420, y: 280), ratio: .r16x9)   // 320×180
+    s.dragBegan(at: Point(x: 260, y: 280))          // bottom edge → width follows, left anchored
+    s.dragEnded(at: Point(x: 260, y: 190))
+    #expect(s.rect == Rect(x: 100, y: 100, width: 160, height: 90))
+    s.dragBegan(at: Point(x: 180, y: 100))          // top edge dragged to the screen's top edge
+    s.dragEnded(at: Point(x: 180, y: 0))
+    let r = s.rect!
+    #expect(r.minX == 100 && r.minY == 0 && r.height == 190)   // bottom edge anchored at y = 190
+    #expect(abs(r.width - 190 * 16 / 9) < 0.001)               // width follows the height
+}
+
 // MARK: - Move, nudge, typed size, ratio change
 
 @Test func moveNudgeAndTypedSizesStayInsideTheBounds() {
@@ -121,6 +147,8 @@ private func drawn(_ a: Point, _ b: Point, ratio: AspectRatio = .freeform, squar
     #expect(s.rect == Rect(x: 0, y: 0, width: 80, height: 45))
     s.resize(dw: 80, dh: 0)
     #expect(s.rect == Rect(x: 0, y: 0, width: 160, height: 90))
+    s.resize(dw: 0, dh: 90)                          // ⇧↓ drives the height under a lock
+    #expect(s.rect == Rect(x: 0, y: 0, width: 320, height: 180))
 }
 
 @Test func changingTheRatioRefitsFromTheTopLeftAndShrinksToFit() {
