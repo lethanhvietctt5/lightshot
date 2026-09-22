@@ -47,6 +47,17 @@ xcodebuild -project Lightshot.xcodeproj -scheme Lightshot -destination 'platform
 
 Tooling: **XcodeGen** (`brew install xcodegen`) generates the app project. Prefer **Swift Testing** over XCTest for new tests. The domain test target having zero AppKit/ScreenCaptureKit imports is the litmus test that a seam is placed correctly — treat a new framework import in that target as a design smell to justify or fix.
 
+## Releasing
+
+Releases are cut locally by the maintainer with one command (spec 0002; details in [`scripts/README.md`](scripts/README.md)):
+
+```bash
+scripts/release.sh 0.1.0 --dry-run   # test → build universal Release → sign → verify → DMG; nothing tagged or uploaded
+scripts/release.sh 0.1.0             # same, then pushes tag v0.1.0 and creates a DRAFT GitHub Release (publish is a manual click)
+```
+
+The app is signed with one fixed self-signed certificate (`Lightshot Release Signing`) so users' permissions survive updates; the expected designated requirement is pinned in `scripts/release-identity.txt` and the script refuses to ship a build that does not match it. Never change the bundle identifier `dev.lightshot.app` or that certificate without a deliberate, announced permission reset. Optional per-version highlights go in `docs/releases/<version>.md`.
+
 ## Architecture — the big picture
 
 Everything interesting is a pure function over a value type; everything OS-facing hides behind a protocol.

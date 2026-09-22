@@ -1,0 +1,1 @@
+identifier "dev.lightshot.app" and certificate leaf = H"DE85A24FEAD699D209C50D3A4B667B33731473D6"
