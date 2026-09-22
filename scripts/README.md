@@ -11,7 +11,7 @@ Everything lands in `build/release/` (gitignored): the app, `Lightshot-<version>
 
 ## Why the identity is pinned
 
-macOS ties Screen Recording (and every other TCC grant) to the app's *designated requirement*. For a self-signed identity that is `identifier "dev.lightshot.app" and certificate leaf = H"<sha1 of the certificate>"`. Sign every release with the same certificate and users keep their permissions across updates; sign one with a different certificate and every user's capture silently breaks. `release-identity.txt` holds the expected requirement and the script refuses to continue if the signed build's requirement differs, byte for byte. It contains only a public hash and is safe to commit.
+macOS ties Screen Recording (and every other TCC grant) to the app's *designated requirement*. For a self-signed identity that is `identifier "dev.lightshot.app" and certificate leaf = H"<sha1 of the certificate>"`. Sign every release with the same certificate and users keep their permissions across updates; sign one with a different certificate and every user's capture silently breaks. `release-identity.txt` holds the expected requirement and the script refuses to continue if the signed build's requirement differs (compared case-insensitively: `codesign` prints the hash in lowercase hex, `security find-identity` in uppercase). It contains only a public hash and is safe to commit.
 
 Two things must never change casually: the bundle identifier `dev.lightshot.app` and this certificate.
 

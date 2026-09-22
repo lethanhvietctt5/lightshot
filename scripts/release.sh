@@ -170,7 +170,9 @@ if [[ -z "$EXPECTED_REQUIREMENT" ]]; then
   note "pin it with:  printf '%s\\n' '$ACTUAL_REQUIREMENT' > $IDENTITY_FILE"
   fail "$IDENTITY_FILE is missing — commit the pinned requirement above, then rerun"
 fi
-if [[ "$ACTUAL_REQUIREMENT" != "$EXPECTED_REQUIREMENT" ]]; then
+# codesign prints the certificate hash in lowercase hex; `security find-identity` shows it
+# in uppercase. Compare case-insensitively so a hand-pinned file cannot fail a correct build.
+if [[ "$(tr '[:upper:]' '[:lower:]' <<< "$ACTUAL_REQUIREMENT")" != "$(tr '[:upper:]' '[:lower:]' <<< "$EXPECTED_REQUIREMENT")" ]]; then
   note "expected: $EXPECTED_REQUIREMENT"
   note "actual:   $ACTUAL_REQUIREMENT"
   fail "signed with a different identity than the one pinned in $IDENTITY_FILE — shipping this would reset every user's permissions"

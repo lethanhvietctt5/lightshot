@@ -1,1 +1,1 @@
-identifier "dev.lightshot.app" and certificate leaf = H"DE85A24FEAD699D209C50D3A4B667B33731473D6"
+identifier "dev.lightshot.app" and certificate leaf = H"de85a24fead699d209c50d3a4b667b33731473d6"
