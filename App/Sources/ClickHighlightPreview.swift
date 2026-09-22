@@ -8,6 +8,7 @@ struct ClickHighlightPreview: View {
     let settings: ClickHighlightSettings
     @State private var model: ClickHighlightModel
     @State private var started = Date()
+    @State private var pressed = false
 
     init(settings: ClickHighlightSettings) {
         self.settings = settings
@@ -20,14 +21,12 @@ struct ClickHighlightPreview: View {
                 let now = context.date.timeIntervalSince(started)
                 var live = model
                 live.prune(at: now)
+                let color = Color(nsColor: settings.color.nsColor)
                 for circle in live.circles(at: now) {
-                    let rect = CGRect(x: circle.center.x - circle.radius, y: circle.center.y - circle.radius,
-                                      width: circle.radius * 2, height: circle.radius * 2)
-                    let color = Self.color(for: settings.color).opacity(circle.opacity)
-                    if circle.filled {
-                        graphics.fill(Path(ellipseIn: rect), with: .color(color))
-                    } else {
-                        graphics.stroke(Path(ellipseIn: rect), with: .color(color), lineWidth: max(2, circle.radius * 0.18))
+                    let path = Path(ellipseIn: circle.bounds.cgRect)
+                    if circle.filled { graphics.fill(path, with: .color(color.opacity(circle.opacity))) }
+                    if circle.strokeWidth > 0 {
+                        graphics.stroke(path, with: .color(color.opacity(circle.opacity)), lineWidth: circle.strokeWidth)
                     }
                 }
                 if live.pointer == nil {
@@ -42,14 +41,14 @@ struct ClickHighlightPreview: View {
         .onContinuousHover { phase in
             if case let .active(location) = phase { model.pointerMoved(to: Point(location)) }
         }
-        .gesture(DragGesture(minimumDistance: 0).onEnded { value in
-            model.clicked(at: Point(value.location), time: Date().timeIntervalSince(started))
-        })
+        // Ring on mouse-down, as the recorder does (a drag gesture's first change is the press).
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard !pressed else { return }
+                pressed = true
+                model.clicked(at: Point(value.location), time: Date().timeIntervalSince(started))
+            }
+            .onEnded { _ in pressed = false })
         .onChange(of: settings) { _, new in model = ClickHighlightModel(settings: new) }
-    }
-
-    static func color(for color: CursorHighlightColor) -> Color {
-        guard let rgb = color.rgb else { return .accentColor }
-        return Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 }

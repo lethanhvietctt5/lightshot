@@ -171,14 +171,20 @@ struct SettingsView: View {
             Picker("Highlight style", selection: $model.recordingDefaults.clickHighlight.style) {
                 ForEach(CursorHighlightStyle.allCases, id: \.self) { Text($0.title).tag($0) }
             }
+            .disabled(!model.recordingDefaults.highlightClicks)
             Picker("Highlight size", selection: $model.recordingDefaults.clickHighlight.size) {
                 ForEach(CursorHighlightSize.allCases, id: \.self) { Text($0.title).tag($0) }
             }
+            .disabled(!model.recordingDefaults.highlightClicks)
             Picker("Highlight colour", selection: $model.recordingDefaults.clickHighlight.color) {
                 ForEach(CursorHighlightColor.allCases, id: \.self) { Text($0.title).tag($0) }
             }
+            .disabled(!model.recordingDefaults.highlightClicks)
             Toggle("Animate clicks", isOn: $model.recordingDefaults.clickHighlight.animateClicks)
+                .disabled(!model.recordingDefaults.highlightClicks)
             ClickHighlightPreview(settings: model.recordingDefaults.clickHighlight)
+                .disabled(!model.recordingDefaults.highlightClicks)
+                .opacity(model.recordingDefaults.highlightClicks ? 1 : 0.5)
             HStack {
                 Text("Microphone volume")
                 Slider(value: $model.recordingDefaults.microphoneVolume, in: 0...2, step: 0.1)

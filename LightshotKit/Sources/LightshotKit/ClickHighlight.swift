@@ -1,6 +1,7 @@
 import Foundation
 
-/// How the pointer highlight is drawn (spec 0006, story 29).
+/// How the pointer halo is drawn (spec 0006, story 29): a stroked ring, a filled disc, or a filled
+/// disc with a solid outline. Click rings are always stroked.
 public enum CursorHighlightStyle: String, CaseIterable, Codable, Sendable {
     case ring
     case filled
@@ -38,19 +39,32 @@ public enum CursorHighlightColor: String, CaseIterable, Codable, Sendable {
 
     public var title: String { self == .accent ? "System Accent" : rawValue.capitalized }
 
-    /// sRGB components `0...1`, or `nil` for the accent colour the app looks up.
-    public var rgb: (red: Double, green: Double, blue: Double)? {
+    /// sRGB components, or `nil` for the accent colour the app looks up.
+    public var rgb: RGBColor? {
         switch self {
-        case .blue: return (0.20, 0.50, 1.00)
-        case .red: return (1.00, 0.25, 0.25)
-        case .green: return (0.25, 0.80, 0.40)
-        case .yellow: return (1.00, 0.85, 0.20)
-        case .orange: return (1.00, 0.55, 0.15)
-        case .purple: return (0.65, 0.40, 1.00)
-        case .pink: return (1.00, 0.45, 0.75)
-        case .gray: return (0.60, 0.60, 0.60)
+        case .blue: return RGBColor(red: 0.20, green: 0.50, blue: 1.00)
+        case .red: return RGBColor(red: 1.00, green: 0.25, blue: 0.25)
+        case .green: return RGBColor(red: 0.25, green: 0.80, blue: 0.40)
+        case .yellow: return RGBColor(red: 1.00, green: 0.85, blue: 0.20)
+        case .orange: return RGBColor(red: 1.00, green: 0.55, blue: 0.15)
+        case .purple: return RGBColor(red: 0.65, green: 0.40, blue: 1.00)
+        case .pink: return RGBColor(red: 1.00, green: 0.45, blue: 0.75)
+        case .gray: return RGBColor(red: 0.60, green: 0.60, blue: 0.60)
         case .accent: return nil
         }
+    }
+}
+
+/// sRGB components in `0...1`.
+public struct RGBColor: Equatable, Sendable {
+    public let red: Double
+    public let green: Double
+    public let blue: Double
+
+    public init(red: Double, green: Double, blue: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
     }
 }
 
@@ -76,13 +90,31 @@ public struct ClickHighlightSettings: Equatable, Codable, Sendable {
 }
 
 /// One circle to draw over a frame, in screen points: the steady pointer halo, or a click ring.
+/// Filled and stroked are independent so the `outline` style can be both.
 public struct HighlightCircle: Equatable, Sendable {
     public let center: Point
     public let radius: Double
     /// `0...1`; click rings fade as they expand.
     public let opacity: Double
-    /// Filled (`true`) or stroked (`false`).
     public let filled: Bool
+    /// The stroke's width, `0` for no stroke.
+    public let strokeWidth: Double
+
+    public init(center: Point, radius: Double, opacity: Double, filled: Bool, strokeWidth: Double) {
+        self.center = center
+        self.radius = radius
+        self.opacity = opacity
+        self.filled = filled
+        self.strokeWidth = strokeWidth
+    }
+
+    /// The stroke width for a circle of `radius`: thin, but never under two points.
+    public static func strokeWidth(for radius: Double) -> Double { max(2, radius * 0.18) }
+
+    /// The circle's bounding box, for drawing.
+    public var bounds: Rect {
+        Rect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+    }
 }
 
 /// The click-highlight geometry per frame (story 29): where the pointer halo sits and which click
@@ -99,15 +131,15 @@ public struct ClickHighlightModel: Equatable, Sendable {
 
     public let settings: ClickHighlightSettings
     public private(set) var pointer: Point?
-    private var clicks: [(position: Point, time: TimeInterval)] = []
+    private var clicks: [Click] = []
+
+    private struct Click: Equatable, Sendable {
+        let position: Point
+        let time: TimeInterval
+    }
 
     public init(settings: ClickHighlightSettings) {
         self.settings = settings
-    }
-
-    public static func == (lhs: ClickHighlightModel, rhs: ClickHighlightModel) -> Bool {
-        lhs.settings == rhs.settings && lhs.pointer == rhs.pointer
-            && lhs.clicks.map(\.position) == rhs.clicks.map(\.position) && lhs.clicks.map(\.time) == rhs.clicks.map(\.time)
     }
 
     public mutating func pointerMoved(to point: Point) {
@@ -118,7 +150,7 @@ public struct ClickHighlightModel: Equatable, Sendable {
     public mutating func clicked(at point: Point, time: TimeInterval) {
         pointer = point
         guard settings.animateClicks else { return }
-        clicks.append((point, time))
+        clicks.append(Click(position: point, time: time))
     }
 
     /// Drop rings that have finished animating by `time`.
@@ -132,16 +164,19 @@ public struct ClickHighlightModel: Equatable, Sendable {
         var result: [HighlightCircle] = []
         let radius = settings.size.radius
         if let pointer {
-            result.append(HighlightCircle(center: pointer, radius: radius, opacity: Self.haloOpacity, filled: settings.style == .filled))
+            result.append(HighlightCircle(
+                center: pointer, radius: radius, opacity: Self.haloOpacity,
+                filled: settings.style != .ring,
+                strokeWidth: settings.style == .filled ? 0 : HighlightCircle.strokeWidth(for: radius)
+            ))
         }
         for click in clicks {
             let progress = (time - click.time) / Self.ringDuration
             guard progress >= 0, progress < 1 else { continue }
+            let ringRadius = radius * (1 + (Self.ringGrowth - 1) * progress)
             result.append(HighlightCircle(
-                center: click.position,
-                radius: radius * (1 + (Self.ringGrowth - 1) * progress),
-                opacity: 1 - progress,
-                filled: false
+                center: click.position, radius: ringRadius, opacity: 1 - progress,
+                filled: false, strokeWidth: HighlightCircle.strokeWidth(for: ringRadius)
             ))
         }
         return result
@@ -167,8 +202,11 @@ public struct FrameMapping: Equatable, Sendable {
         Point(x: (screenPoint.x - regionOrigin.x) * pixelsPerPointX, y: (screenPoint.y - regionOrigin.y) * pixelsPerPointY)
     }
 
-    /// A circle in screen points as a circle in frame pixels (the radius follows the x scale).
+    /// A circle in screen points as a circle in frame pixels (radius and stroke follow the x scale).
     public func pixelCircle(for circle: HighlightCircle) -> HighlightCircle {
-        HighlightCircle(center: pixelPoint(for: circle.center), radius: circle.radius * pixelsPerPointX, opacity: circle.opacity, filled: circle.filled)
+        HighlightCircle(
+            center: pixelPoint(for: circle.center), radius: circle.radius * pixelsPerPointX, opacity: circle.opacity,
+            filled: circle.filled, strokeWidth: circle.strokeWidth * pixelsPerPointX
+        )
     }
 }

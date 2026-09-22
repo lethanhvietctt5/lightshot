@@ -24,7 +24,7 @@ final class RecordingCompositor: @unchecked Sendable {
         self.width = width
         self.height = height
         self.highlight = clickHighlight.map { ClickHighlightModel(settings: $0) }
-        self.highlightColor = Self.cgColor(for: clickHighlight?.color ?? .yellow)
+        self.highlightColor = clickHighlight.map { $0.color.nsColor.cgColor } ?? .clear
     }
 
     /// Whether any overlay is active; when not, frames pass through without a copy.
@@ -64,18 +64,14 @@ final class RecordingCompositor: @unchecked Sendable {
     }
 
     private func draw(_ circles: [HighlightCircle], into context: CGContext) {
+        context.setFillColor(highlightColor)
+        context.setStrokeColor(highlightColor)
         for circle in circles {
-            let rect = CGRect(
-                x: circle.center.x - circle.radius, y: circle.center.y - circle.radius,
-                width: circle.radius * 2, height: circle.radius * 2
-            )
+            let rect = circle.bounds.cgRect
             context.setAlpha(CGFloat(circle.opacity))
-            if circle.filled {
-                context.setFillColor(highlightColor)
-                context.fillEllipse(in: rect)
-            } else {
-                context.setStrokeColor(highlightColor)
-                context.setLineWidth(max(2, circle.radius * 0.18))
+            if circle.filled { context.fillEllipse(in: rect) }
+            if circle.strokeWidth > 0 {
+                context.setLineWidth(CGFloat(circle.strokeWidth))
                 context.strokeEllipse(in: rect)
             }
         }
@@ -114,10 +110,13 @@ final class RecordingCompositor: @unchecked Sendable {
         return target
     }
 
-    private static func cgColor(for color: CursorHighlightColor) -> CGColor {
-        if let rgb = color.rgb {
-            return CGColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
-        }
-        return NSColor.controlAccentColor.usingColorSpace(.sRGB)?.cgColor ?? CGColor(srgbRed: 0.2, green: 0.5, blue: 1, alpha: 1)
+}
+
+extension CursorHighlightColor {
+    /// The highlight colour as AppKit sees it; `.accent` is the system accent. Shared by the
+    /// compositor and the Settings preview so the two never disagree.
+    var nsColor: NSColor {
+        guard let rgb else { return .controlAccentColor }
+        return NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
     }
 }

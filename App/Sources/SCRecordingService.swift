@@ -39,11 +39,14 @@ actor SCRecordingService: RecordingService {
     private var writer: RecordingWriter?
     private var microphone: MicrophoneCapture?
     /// The pointer feed for the click highlight (story 29), running only while an overlay needs it.
-    private let mouse = MouseEventMonitor()
-    private var mouseActive = false
+    private let pointerEvents: any InputEventSource
     /// The MP4 the caller asked for; the writer's fragmented movie sits beside it.
     private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
+
+    init(pointerEvents: any InputEventSource = MouseEventMonitor()) {
+        self.pointerEvents = pointerEvents
+    }
 
     /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
     static func scratchMovieURL(for url: URL) -> URL {
@@ -155,11 +158,12 @@ actor SCRecordingService: RecordingService {
             microphone?.start()
             if compositor.isActive {
                 let queue = self.queue
-                mouse.start { event in
+                // Seed the halo where the pointer already is: the first frames must not wait for a move.
+                compositor.handle(.moved(MouseEventMonitor.pointer()), at: 0)
+                pointerEvents.start { event in
                     let now = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()))
                     queue.async { compositor.handle(event, at: now) }
                 }
-                mouseActive = true
             }
             audioMeter.level = 0
             systemAudioMeter.level = 0
@@ -257,7 +261,7 @@ actor SCRecordingService: RecordingService {
     }
 
     private func tearDown() {
-        if mouseActive { mouse.stop(); mouseActive = false }
+        pointerEvents.stop()
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0
@@ -415,7 +419,8 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
         guard sampleBuffer.isValid else { return }
         switch type {
         case .screen:
-            guard Self.isComplete(sampleBuffer), let frame = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+            guard Self.isComplete(sampleBuffer), !writer.isPaused,
+                  let frame = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
             let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
             let composited = compositor?.composite(frame, at: CMTimeGetSeconds(presentation)) ?? frame
             writer.append(composited, at: presentation)
@@ -656,6 +661,8 @@ private final class RecordingWriter: @unchecked Sendable {
     }
 
     func pause() { paused = true }
+    /// Whether frames are being dropped; lets the output skip compositing work that would be thrown away.
+    var isPaused: Bool { paused }
 
     /// Re-base the offset at the moment of resuming — against the host clock the frames and
     /// audio share — so both continue one frame after the last thing written, whether or not the
