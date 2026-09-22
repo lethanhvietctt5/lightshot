@@ -24,6 +24,8 @@ final class AppController: NSObject, CaptureUI {
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
+    /// The post-recording overlay (spec 0006, stories 32–34).
+    private let postRecordingOverlay = PostRecordingOverlayController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
 
@@ -558,10 +560,31 @@ final class AppController: NSObject, CaptureUI {
         await countdown.run(seconds: seconds, playSounds: settings.recordingDefaults.playSounds)
     }
 
-    /// R2's outcome: reveal the saved file, as the editor's Save does. R12 replaces this with the
-    /// post-recording overlay.
-    func presentRecordingFinished(at url: URL) {
+    /// "Save silently" (story 33): the file is where Settings says; nothing to show.
+    func presentRecordingFinished(at url: URL) {}
+
+    /// The post-recording overlay (story 32): its actions report back to the coordinator, which
+    /// owns the pending take. Open editor and Trim light up with R14.
+    func presentPostRecordingOverlay(_ recording: PendingRecording) {
+        postRecordingOverlay.present(recording, actions: PostRecordingOverlayController.Actions(
+            copy: { [weak self] name in self?.coordinator.copyPendingRecordingFile(as: name) != nil },
+            save: { [weak self] name in self?.coordinator.savePendingRecording(as: name) != nil },
+            delete: { [weak self] in self?.coordinator.deletePendingRecording() ?? false },
+            dismiss: { [weak self] name in self?.coordinator.dismissPendingRecording(as: name) },
+            openEditor: nil,
+            trim: nil
+        ))
+    }
+
+    /// Story 33's "open the video editor": the editor is R14, so until then the saved file is
+    /// revealed instead of silently landing.
+    func openVideoEditor(at url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// Quitting with the overlay up keeps the take (story 32), like any other dismissal.
+    func keepPendingRecordingOnQuit() {
+        coordinator.dismissPendingRecording()
     }
 
     func presentRecordingFailure(_ error: RecordingError) {

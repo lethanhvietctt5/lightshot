@@ -62,4 +62,21 @@ public protocol MediaSink {
     /// Move a finished recording to its final destination (the default save location + filename
     /// pattern, or a Save-As choice), replacing nothing silently — a collision is an error.
     func save(_ url: URL, to destination: URL) throws
+
+    /// Throw a recording away (story 32's Delete): to the Trash where the OS offers one.
+    func trash(_ url: URL) throws
+}
+
+/// A finished take waiting in the post-recording overlay (stories 32–34): still in the scratch
+/// directory until Save, a dismissal (which saves) or Delete decides where it goes.
+public struct PendingRecording: Equatable, Sendable {
+    public let file: URL
+    public let kind: RecordingOutputKind
+    public let duration: TimeInterval
+
+    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval) {
+        self.file = file
+        self.kind = kind
+        self.duration = duration
+    }
 }

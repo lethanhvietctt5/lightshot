@@ -148,6 +148,10 @@ struct SettingsView: View {
     /// remembered-area toggle, R4 the countdown and sounds, R5 the controls.
     private var recordingSection: some View {
         Section("Recording") {
+            Picker("After recording", selection: $model.recordingDefaults.afterRecording) {
+                ForEach(AfterRecordingAction.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .help("What happens when a recording stops: the overlay with copy / save / delete, a silent save to the default location, or the video editor.")
             Picker("Frame rate", selection: $model.recordingDefaults.video.fps) {
                 ForEach(VideoSettings.fpsChoices, id: \.self) { Text("\($0) fps").tag($0) }
             }

@@ -38,8 +38,14 @@ public protocol CaptureUI: AnyObject {
     /// The microphone vanished mid-take (story 24): `true` to keep recording without audio, `false`
     /// to stop now.
     func resolveMicrophoneDisconnected() async -> Bool
-    /// A recording was saved at `url` (R2's outcome until the post-recording overlay lands, R12).
+    /// A recording was saved at `url` without an overlay ("save silently", story 33).
     func presentRecordingFinished(at url: URL)
+    /// Show the post-recording overlay for a take still in scratch (story 32). The overlay drives
+    /// the outcome through `copyPendingRecordingFile`, `savePendingRecording(as:)`,
+    /// `deletePendingRecording` and `dismissPendingRecording`.
+    func presentPostRecordingOverlay(_ recording: PendingRecording)
+    /// Open the saved recording in the video editor (story 33; the editor itself is R14).
+    func openVideoEditor(at url: URL)
     /// Surface a distinct, non-blank message for a recording failure other than permission/cancel.
     func presentRecordingFailure(_ error: RecordingError)
 }
@@ -344,6 +350,9 @@ public final class AppCoordinator {
     ) async {
         guard let recordingService, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
+        // A take still waiting in the overlay is kept (saved under the pattern) before a new one
+        // can replace it — the app moving on is a dismissal (story 32).
+        dismissPendingRecording()
 
         let options = RecordingOptions.resolve(
             region: region, output: output, defaults: settings.recordingDefaults, overrides: overrides
@@ -476,24 +485,91 @@ public final class AppCoordinator {
                 ui.presentRecordingState(recordingSession)
                 // A GIF take is converted by R13; until then it is delivered as the video the
                 // writer produced, under that file's own container extension.
-                deliver(file)
+                finished(file)
             case let .failure(error):
                 failRecording(with: error)
             }
         }
     }
 
-    /// Move the finished file to its default destination and tell the UI (R2's outcome; R12 replaces
-    /// the reveal with the post-recording overlay). A save failure is a recording failure with a
-    /// distinct message — the file stays in the scratch directory rather than vanishing.
-    private func deliver(_ file: URL) {
-        guard let mediaSink else { return }
-        let destination = settings.recordingDestination(pathExtension: file.pathExtension)
+    /// The take waiting in the post-recording overlay, if one is up (stories 32–34).
+    public private(set) var pendingRecording: PendingRecording?
+
+    /// A take finished: route it by the after-recording setting (story 33). The overlay path keeps
+    /// the file in scratch until the overlay decides; the other two save at once.
+    private func finished(_ file: URL) {
+        let kind = recordingSession.options?.output.kind ?? .video
+        let recording = PendingRecording(file: file, kind: kind, duration: recordingSession.elapsed(at: clock()))
+        switch settings.recordingDefaults.afterRecording {
+        case .showOverlay:
+            pendingRecording = recording
+            ui.presentPostRecordingOverlay(recording)
+        case .saveSilently:
+            if let saved = deliver(file, as: nil) { ui.presentRecordingFinished(at: saved) }
+        case .openEditor:
+            if let saved = deliver(file, as: nil) { ui.openVideoEditor(at: saved) }
+        }
+    }
+
+    /// Move the finished file to its destination — the save location + filename pattern, or the
+    /// name the overlay's Rename gave it — and return where it landed. A save failure is a
+    /// recording failure with a distinct message; the file stays in the scratch directory rather
+    /// than vanishing.
+    @discardableResult
+    private func deliver(_ file: URL, as name: String?) -> URL? {
+        guard let mediaSink else { return nil }
+        let destination = name.map { settings.recordingDestination(named: $0, pathExtension: file.pathExtension) }
+            ?? settings.recordingDestination(pathExtension: file.pathExtension)
         do {
             try mediaSink.save(file, to: destination)
-            ui.presentRecordingFinished(at: destination)
+            return destination
         } catch {
             ui.presentRecordingFailure(.systemFailure(error.localizedDescription))
+            return nil
+        }
+    }
+
+    // MARK: - Post-recording overlay (stories 32–34)
+
+    /// Copy file: the take is saved first (under `name`, or the pattern) and the saved file's
+    /// reference goes on the pasteboard — a reference to the scratch file would dangle once the
+    /// overlay went and moved it. Returns where it landed; `nil` on a failed save (still pending).
+    @discardableResult
+    public func copyPendingRecordingFile(as name: String? = nil) -> URL? {
+        guard let saved = savePendingRecording(as: name) else { return nil }
+        mediaSink?.copyFile(at: saved)
+        return saved
+    }
+
+    /// Save (or a dismissal, which keeps the file): move to the default location under the pattern,
+    /// or under `name` when the overlay's Rename changed it. Returns where it landed, `nil` on a
+    /// failure (the take stays pending so nothing is lost).
+    @discardableResult
+    public func savePendingRecording(as name: String? = nil) -> URL? {
+        guard let pendingRecording else { return nil }
+        guard let saved = deliver(pendingRecording.file, as: name) else { return nil }
+        self.pendingRecording = nil
+        return saved
+    }
+
+    /// The overlay went away without a decision (Escape, timeout, the app moving on): the file is
+    /// kept, under the name typed so far or the pattern (story 32).
+    public func dismissPendingRecording(as name: String? = nil) {
+        savePendingRecording(as: name)
+    }
+
+    /// Delete: the take is thrown away. Returns whether it is gone; a failure to trash it surfaces
+    /// and leaves it pending.
+    @discardableResult
+    public func deletePendingRecording() -> Bool {
+        guard let pendingRecording, let mediaSink else { return false }
+        do {
+            try mediaSink.trash(pendingRecording.file)
+            self.pendingRecording = nil
+            return true
+        } catch {
+            ui.presentRecordingFailure(.systemFailure(error.localizedDescription))
+            return false
         }
     }
 

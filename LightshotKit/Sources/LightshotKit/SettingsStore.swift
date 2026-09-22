@@ -66,9 +66,15 @@ public extension SettingsStore {
     /// The same destination for a file that already has its container's extension — a recovered
     /// take, or a movie the MP4 rewrap could not process.
     func recordingDestination(pathExtension: String, at date: Date = Date()) -> URL {
-        saveLocation
-            .appendingPathComponent(FilenameFormatter(pattern: filenamePattern).filename(at: date))
-            .appendingPathExtension(pathExtension)
+        recordingDestination(named: FilenameFormatter(pattern: filenamePattern).filename(at: date), pathExtension: pathExtension)
+    }
+
+    /// The destination for a recording the user renamed in the post-recording overlay (story 32):
+    /// the save location joined with that name, sanitised by `FilenameFormatter`; an unusable name
+    /// falls back to the pattern.
+    func recordingDestination(named name: String, pathExtension: String, at date: Date = Date()) -> URL {
+        let cleaned = FilenameFormatter.sanitized(name) ?? FilenameFormatter(pattern: filenamePattern).filename(at: date)
+        return saveLocation.appendingPathComponent(cleaned).appendingPathExtension(pathExtension)
     }
 }
 
@@ -80,6 +86,16 @@ public extension SettingsStore {
 /// `"Screenshot %Y-%m-%d at %H.%M.%S"` mirrors macOS's own screenshot names. Pure and deterministic
 /// given a `date` + `calendar`, so it is unit-tested without touching disk.
 public struct FilenameFormatter: Equatable, Sendable {
+    /// A user-typed file name made safe for the save folder: `/` and `:` become `-` (Finder shows
+    /// `:` as `/`), surrounding whitespace and leading / trailing dots go, so a name can never
+    /// escape the folder, hide the file or double the extension's dot. `nil` when nothing is left.
+    public static func sanitized(_ name: String) -> String? {
+        let cleaned = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
     public var pattern: String
     public var calendar: Calendar
 

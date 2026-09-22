@@ -64,12 +64,18 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
 private final class SpyMediaSink: MediaSink {
     struct Failure: Error {}
     var saveFails = false
+    var trashFails = false
     private(set) var copied: [URL] = []
     private(set) var saves: [(from: URL, to: URL)] = []
+    private(set) var trashed: [URL] = []
     func copyFile(at url: URL) { copied.append(url) }
     func save(_ url: URL, to destination: URL) throws {
         if saveFails { throw Failure() }
         saves.append((url, destination))
+    }
+    func trash(_ url: URL) throws {
+        if trashFails { throw Failure() }
+        trashed.append(url)
     }
 }
 
@@ -88,6 +94,8 @@ private final class SpyUI: CaptureUI {
     var continueWithoutAudio = true
     private(set) var microphoneLostPrompts = 0
     private(set) var finished: [URL] = []
+    private(set) var overlays: [PendingRecording] = []
+    private(set) var editors: [URL] = []
     private(set) var recordingFailures: [RecordingError] = []
     private(set) var permissionDeniedCount = 0
 
@@ -107,6 +115,8 @@ private final class SpyUI: CaptureUI {
     func confirmRecordingDiscard() async -> Bool { discardConfirmations += 1; return confirmResult }
     func resolveMicrophoneDisconnected() async -> Bool { microphoneLostPrompts += 1; return continueWithoutAudio }
     func presentRecordingFinished(at url: URL) { finished.append(url) }
+    func presentPostRecordingOverlay(_ recording: PendingRecording) { overlays.append(recording) }
+    func openVideoEditor(at url: URL) { editors.append(url) }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
 }
 
@@ -151,7 +161,9 @@ private final class StubSettings: SettingsStore {
     var captureDelay: TimeInterval = 0
     var historyRetention = 50
     var launchAtLogin = false
-    var recordingDefaults = RecordingDefaults(countdownEnabled: false)
+    // Silent save by default so the take-level tests see the file land at once; the after-recording
+    // tests set the overlay path explicitly.
+    var recordingDefaults = RecordingDefaults(countdownEnabled: false, afterRecording: .saveSilently)
     var rememberLastRecordingArea = false
     var lastRecordingRegion: CaptureRegion?
 }
@@ -225,6 +237,7 @@ private let display = CaptureRegion.display(id: 7)
 
 @Test @MainActor func toggleAgainStopsFinishesAndSavesToTheDefaultDestination() async {
     let h = Harness()
+    h.settings.recordingDefaults.afterRecording = .saveSilently
     await h.coordinator.toggleRecording()
     h.now = 130
     await h.coordinator.toggleRecording()
@@ -240,7 +253,114 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.sink.saves.first?.to.pathExtension == "mp4")
     #expect(h.sink.saves.first?.to.lastPathComponent.hasPrefix("Recording ") == true)
     #expect(h.ui.finished == h.sink.saves.map(\.to))
+    #expect(h.ui.overlays.isEmpty && h.ui.editors.isEmpty)
     #expect(h.ui.states == [.recording, .stopping, .finished(URL(fileURLWithPath: "/tmp/scratch/take.mp4"))])
+}
+
+// MARK: - After recording (stories 32–34)
+
+private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
+
+@MainActor private func finishedTake(_ h: Harness, after: AfterRecordingAction) async {
+    h.settings.recordingDefaults.afterRecording = after
+    await h.coordinator.toggleRecording()
+    h.now = 130
+    await h.coordinator.toggleRecording()
+}
+
+@Test @MainActor func theDefaultShowsTheOverlayAndKeepsTheTakeInScratchUntilItDecides() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    #expect(h.sink.saves.isEmpty)                                  // nothing moved yet
+    #expect(h.ui.finished.isEmpty)
+    #expect(h.ui.overlays == [PendingRecording(file: take, kind: .video, duration: 30)])
+    #expect(h.coordinator.pendingRecording?.file == take)
+}
+
+@Test @MainActor func openEditorSavesFirstThenOpensTheEditor() async {
+    let h = Harness()
+    await finishedTake(h, after: .openEditor)
+    #expect(h.sink.saves.count == 1)
+    #expect(h.ui.editors == h.sink.saves.map(\.to))
+    #expect(h.ui.overlays.isEmpty && h.ui.finished.isEmpty)
+    #expect(h.coordinator.pendingRecording == nil)
+}
+
+@Test @MainActor func theOverlaysActionsCopySaveRenameAndDismiss() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+
+    // Copy file saves first and copies the saved file's reference, never the scratch one.
+    let copied = h.coordinator.copyPendingRecordingFile(as: "clip")
+    #expect(copied?.path == "/tmp/movies/clip.mp4")
+    #expect(h.sink.copied == [URL(fileURLWithPath: "/tmp/movies/clip.mp4")])
+    #expect(h.coordinator.pendingRecording == nil)
+
+    // Rename then Save: the name replaces the pattern, the extension stays the file's own;
+    // separators cannot escape the save folder.
+    await finishedTake(h, after: .showOverlay)
+    let saved = h.coordinator.savePendingRecording(as: "../demo:take/1")
+    #expect(saved?.path == "/tmp/movies/-demo-take-1.mp4")
+    #expect(h.sink.saves.map(\.from) == [take, take])
+    #expect(h.coordinator.pendingRecording == nil)
+
+    // A dismissal keeps the file — under the pattern, or the name typed so far.
+    await finishedTake(h, after: .showOverlay)
+    h.coordinator.dismissPendingRecording()
+    #expect(h.sink.saves.last?.to.lastPathComponent.hasPrefix("Recording ") == true)
+    await finishedTake(h, after: .showOverlay)
+    h.coordinator.dismissPendingRecording(as: "typed")
+    #expect(h.sink.saves.last?.to.lastPathComponent == "typed.mp4")
+    #expect(h.coordinator.pendingRecording == nil)
+
+    // Nothing pending: the actions are no-ops.
+    #expect(h.coordinator.copyPendingRecordingFile() == nil)
+    h.coordinator.dismissPendingRecording()
+    #expect(h.sink.copied.count == 1 && h.sink.saves.count == 4)
+}
+
+@Test @MainActor func aNewTakeKeepsThePendingOneBeforeItStarts() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    #expect(h.sink.saves.isEmpty)
+    await h.coordinator.toggleRecording()                          // the app moves on
+    #expect(h.sink.saves.count == 1 && h.sink.saves[0].from == take)
+    #expect(h.coordinator.isRecording)
+    #expect(h.coordinator.pendingRecording == nil)
+}
+
+@Test @MainActor func deleteTrashesTheTakeAndAFailureKeepsItPending() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    h.sink.trashFails = true
+    #expect(!h.coordinator.deletePendingRecording())
+    #expect(h.sink.trashed.isEmpty && h.coordinator.pendingRecording != nil)
+    #expect(h.ui.recordingFailures.count == 1)
+
+    h.sink.trashFails = false
+    #expect(h.coordinator.deletePendingRecording())
+    #expect(h.sink.trashed == [take] && h.coordinator.pendingRecording == nil)
+    #expect(h.sink.saves.isEmpty)
+}
+
+@Test @MainActor func aFailedSaveFromTheOverlayKeepsTheTakePending() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    h.sink.saveFails = true
+    #expect(h.coordinator.savePendingRecording() == nil)
+    #expect(h.coordinator.pendingRecording != nil)
+    #expect(h.ui.recordingFailures.count == 1)
+    h.sink.saveFails = false
+    #expect(h.coordinator.savePendingRecording() != nil)
+}
+
+@Test @MainActor func anEmptyOrDottedRenameFallsBackToThePattern() {
+    let s = StubSettings()
+    #expect(s.recordingDestination(named: "   ", pathExtension: "mp4").lastPathComponent.hasPrefix("Recording "))
+    #expect(s.recordingDestination(named: "...", pathExtension: "mp4").lastPathComponent.hasPrefix("Recording "))
+    #expect(s.recordingDestination(named: ".hidden", pathExtension: "mov").lastPathComponent == "hidden.mov")
+    #expect(s.recordingDestination(named: "name.", pathExtension: "mp4").lastPathComponent == "name.mp4")
+    #expect(FilenameFormatter.sanitized("a/b:c") == "a-b-c")
 }
 
 @Test @MainActor func aSecondStartWhileActiveAndAStopWhileIdleAreNoOps() async {
@@ -338,7 +458,7 @@ private let display = CaptureRegion.display(id: 7)
     #expect(options?.microphone == .device(id: nil))
     #expect(options?.highlightClicks == true)
     #expect(options?.computerAudio == false)              // untouched toggles keep the default
-    #expect(h.settings.recordingDefaults == RecordingDefaults(countdownEnabled: false))   // not written back
+    #expect(h.settings.recordingDefaults == RecordingDefaults(countdownEnabled: false, afterRecording: .saveSilently))   // not written back
 
     // Until R13 converts it, a GIF take is delivered as the MP4 the writer produced.
     await h.coordinator.stopRecording()

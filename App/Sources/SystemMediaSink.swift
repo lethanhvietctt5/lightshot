@@ -23,4 +23,9 @@ final class SystemMediaSink: MediaSink {
         )
         try fileManager.moveItem(at: url, to: destination)
     }
+
+    /// To the Trash, so a mis-click is recoverable (story 32's Delete).
+    func trash(_ url: URL) throws {
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+    }
 }
