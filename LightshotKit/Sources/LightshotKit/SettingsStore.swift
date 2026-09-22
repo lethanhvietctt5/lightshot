@@ -35,6 +35,11 @@ public protocol SettingsStore: AnyObject {
     var historyRetention: Int { get set }
     /// Whether the app is registered to launch at login (story 59).
     var launchAtLogin: Bool { get set }
+
+    /// The Settings-owned baseline every recording starts from (spec 0006, story 40): encoder,
+    /// FPS, audio/camera/overlay toggles, countdown. The recorder toolbar overrides per recording
+    /// through `RecordingOptions.resolve`; the Recording settings section (R6) edits these.
+    var recordingDefaults: RecordingDefaults { get set }
 }
 
 public extension SettingsStore {
@@ -44,6 +49,14 @@ public extension SettingsStore {
     func defaultDestination(at date: Date = Date()) -> URL {
         FilenameFormatter(pattern: filenamePattern)
             .destinationURL(in: saveLocation, format: defaultFormat, at: date)
+    }
+
+    /// Where a finished recording lands by default (spec 0006, R2): the same save location and
+    /// filename pattern as screenshots, with the container's extension — `.mp4` for video, `.gif`.
+    func recordingDestination(kind: RecordingOutputKind, at date: Date = Date()) -> URL {
+        saveLocation
+            .appendingPathComponent(FilenameFormatter(pattern: filenamePattern).filename(at: date))
+            .appendingPathExtension(kind == .video ? "mp4" : "gif")
     }
 }
 

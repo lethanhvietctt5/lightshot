@@ -20,7 +20,7 @@ final class SCCaptureService: CaptureService {
     /// is only two-state — it can't tell a never-asked first run from a standing denial — so we
     /// remember whether `requestAuthorization()` has run to recover the `.notDetermined` case that
     /// drives first-run onboarding (story 57).
-    private let hasRequestedDefaultsKey = "com.lightshot.hasRequestedScreenRecordingAccess"
+    static let hasRequestedDefaultsKey = "com.lightshot.hasRequestedScreenRecordingAccess"
 
     /// Whether to draw the cursor into the capture (story 12). A closure, not a stored flag, so it
     /// reads the live `SettingsStore` value at capture time rather than a value frozen at launch.
@@ -37,7 +37,7 @@ final class SCCaptureService: CaptureService {
         if CGPreflightScreenCaptureAccess() {
             return .authorized
         }
-        return UserDefaults.standard.bool(forKey: hasRequestedDefaultsKey) ? .denied : .notDetermined
+        return UserDefaults.standard.bool(forKey: Self.hasRequestedDefaultsKey) ? .denied : .notDetermined
     }
 
     /// Trigger the one-time system prompt and report the status as of the call returning —
@@ -48,7 +48,7 @@ final class SCCaptureService: CaptureService {
     @discardableResult
     func requestAuthorization() async -> CaptureAuthorizationStatus {
         let granted = CGRequestScreenCaptureAccess()
-        UserDefaults.standard.set(true, forKey: hasRequestedDefaultsKey)
+        UserDefaults.standard.set(true, forKey: Self.hasRequestedDefaultsKey)
         return granted ? .authorized : .denied
     }
 

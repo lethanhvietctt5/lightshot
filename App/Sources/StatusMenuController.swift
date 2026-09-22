@@ -18,19 +18,74 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let controller: AppController
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
+    private var recordingTimer: Timer?
 
     init(controller: AppController) {
         self.controller = controller
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
+        showIdleStatusItem()
+        menu.delegate = self
+        statusItem.menu = menu
+
+        // While recording, the status item becomes the stop button with the elapsed time (story 11).
+        controller.recordingStateObserver = { [weak self] session in
+            self?.recordingStateDidChange(session)
+        }
+    }
+
+    // MARK: - Recording indicator (spec 0006, story 11)
+
+    private func recordingStateDidChange(_ session: RecordingSession) {
+        if session.isActive {
+            showRecordingStatusItem()
+        } else {
+            showIdleStatusItem()
+        }
+    }
+
+    private func showIdleStatusItem() {
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        statusItem.length = NSStatusItem.squareLength
         let icon = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Lightshot")
         icon?.isTemplate = true
         statusItem.button?.image = icon
+        statusItem.button?.title = ""
         statusItem.button?.toolTip = "Lightshot"
-
-        menu.delegate = self
+        statusItem.button?.contentTintColor = nil
+        statusItem.button?.target = nil
+        statusItem.button?.action = nil
         statusItem.menu = menu
+    }
+
+    /// A red stop glyph and `mm:ss`; clicking stops the take directly instead of opening the menu.
+    private func showRecordingStatusItem() {
+        guard recordingTimer == nil else { return }
+        statusItem.length = NSStatusItem.variableLength
+        let icon = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop Recording")
+        icon?.isTemplate = true
+        statusItem.button?.image = icon
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.contentTintColor = .systemRed
+        statusItem.button?.toolTip = "Stop Recording"
+        statusItem.menu = nil
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(stopRecordingClicked)
+        refreshRecordingTimer()
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshRecordingTimer() }
+        }
+    }
+
+    private func refreshRecordingTimer() {
+        let seconds = Int(controller.recordingElapsed.rounded(.down))
+        statusItem.button?.title = String(format: " %02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    @objc private func stopRecordingClicked() {
+        controller.toggleRecording()
     }
 
     // MARK: - NSMenuDelegate
@@ -52,6 +107,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(captureItem(.window, icon: "macwindow", hotkeys: hotkeys) { [controller] in
             controller.captureWindow()
         })
+        menu.addItem(recordItem(hotkeys: hotkeys))
 
         menu.addItem(.separator())
 
@@ -96,6 +152,23 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     ) -> NSMenuItem {
         let item = item(action.title, icon: icon, run: run)
         if let binding = hotkeys[action], let (key, modifiers) = Self.keyEquivalent(for: binding) {
+            item.keyEquivalent = key
+            item.keyEquivalentModifierMask = modifiers
+        }
+        return item
+    }
+
+    /// Record Screen (spec 0006, stories 1–2): the same row and chord start and stop a take, so it
+    /// reads "Stop Recording" with the stop glyph while one is active.
+    private func recordItem(hotkeys: HotkeyBindings) -> NSMenuItem {
+        let recording = controller.isRecording
+        let item = item(
+            recording ? "Stop Recording" : CaptureAction.recordScreen.title,
+            icon: recording ? "stop.circle" : "record.circle"
+        ) { [controller] in
+            controller.toggleRecording()
+        }
+        if let binding = hotkeys[.recordScreen], let (key, modifiers) = Self.keyEquivalent(for: binding) {
             item.keyEquivalent = key
             item.keyEquivalentModifierMask = modifiers
         }

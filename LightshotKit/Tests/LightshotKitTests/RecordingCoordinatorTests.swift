@@ -1,0 +1,302 @@
+import Testing
+import Foundation
+@testable import LightshotKit
+
+// Coordinator routing for the recording spine (spec 0006, R2: stories 1, 2, 6, 11, 17, 57–58).
+// Fakes stand in for the recorder, the media sink and the UI, so the sequencing — session first,
+// then the service; save on finish; recovery on permission denial — runs with no display or TCC.
+
+// MARK: - Fakes
+
+private final class FakeRecordingService: RecordingService, @unchecked Sendable {
+    var startResult: Result<Void, RecordingError> = .success(())
+    var stopResult: Result<URL, RecordingError>
+    var status: CaptureAuthorizationStatus = .authorized
+    var requestResult: CaptureAuthorizationStatus = .authorized
+
+    private(set) var starts: [(options: RecordingOptions, url: URL)] = []
+    private(set) var stopCount = 0
+    private(set) var cancelCount = 0
+    private(set) var requestAuthorizationCount = 0
+
+    init(stopResult: Result<URL, RecordingError> = .success(URL(fileURLWithPath: "/tmp/scratch/take.mp4"))) {
+        self.stopResult = stopResult
+    }
+
+    func authorizationStatus() async -> CaptureAuthorizationStatus { status }
+    @discardableResult
+    func requestAuthorization() async -> CaptureAuthorizationStatus {
+        requestAuthorizationCount += 1
+        status = requestResult
+        return requestResult
+    }
+    func start(_ options: RecordingOptions, writingTo url: URL) async -> Result<Void, RecordingError> {
+        starts.append((options, url))
+        return startResult
+    }
+    func pause() async {}
+    func resume() async {}
+    func stop() async -> Result<URL, RecordingError> { stopCount += 1; return stopResult }
+    func cancel() async { cancelCount += 1 }
+}
+
+private final class SpyMediaSink: MediaSink {
+    struct Failure: Error {}
+    var saveFails = false
+    private(set) var copied: [URL] = []
+    private(set) var saves: [(from: URL, to: URL)] = []
+    func copyFile(at url: URL) { copied.append(url) }
+    func save(_ url: URL, to destination: URL) throws {
+        if saveFails { throw Failure() }
+        saves.append((url, destination))
+    }
+}
+
+@MainActor
+private final class SpyUI: CaptureUI {
+    private(set) var states: [RecordingSession.State] = []
+    private(set) var finished: [URL] = []
+    private(set) var recordingFailures: [RecordingError] = []
+    private(set) var permissionDeniedCount = 0
+
+    func openEditor(with image: CapturedImage) {}
+    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {}
+    func presentPermissionDenied() { permissionDeniedCount += 1 }
+    func presentCaptureFailure(_ error: CaptureError) {}
+    func presentImageLoadFailure(_ error: ImageLoadError) {}
+    func presentRecordingState(_ session: RecordingSession) { states.append(session.state) }
+    func presentRecordingFinished(at url: URL) { finished.append(url) }
+    func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
+}
+
+// The capture-side seams are irrelevant here; minimal stubs keep the coordinator constructible.
+private final class IdleCaptureService: CaptureService, @unchecked Sendable {
+    func authorizationStatus() async -> CaptureAuthorizationStatus { .authorized }
+    func requestAuthorization() async -> CaptureAuthorizationStatus { .authorized }
+    func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
+    func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
+}
+@MainActor
+private final class IdleOverlay: OverlayController {
+    func selectRegion() async -> CaptureRegion? { nil }
+    func selectWindow() async -> CaptureRegion? { nil }
+}
+@MainActor
+private final class IdleImageSource: ImageSource {
+    func loadImage(from url: URL) -> Result<CapturedImage, ImageLoadError> { .failure(.userCancelled) }
+    func openDocument() -> Result<CapturedImage, ImageLoadError> { .failure(.userCancelled) }
+}
+private final class IdleImageSink: ImageSink {
+    func copyToClipboard(_ image: RenderedImage) {}
+    func write(_ image: RenderedImage, to url: URL, format: ImageFormat) throws {}
+}
+@MainActor
+private final class StubSettings: SettingsStore {
+    var defaultFormat: ImageFormat = .png
+    var saveLocation = URL(fileURLWithPath: "/tmp/movies", isDirectory: true)
+    var filenamePattern = "Recording %Y"
+    var hotkeys = HotkeyBindings.defaults
+    var openInEditor = true
+    var includeCursor = false
+    var captureDelay: TimeInterval = 0
+    var historyRetention = 50
+    var launchAtLogin = false
+    var recordingDefaults = RecordingDefaults(countdownEnabled: false)
+}
+
+/// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.
+@MainActor
+private final class ManualClock {
+    var now: TimeInterval = 100
+    private(set) var waits: [TimeInterval] = []
+    func sleep(_ seconds: TimeInterval) { waits.append(seconds); now += seconds }
+}
+
+@MainActor
+private final class Harness {
+    let service: FakeRecordingService
+    let sink = SpyMediaSink()
+    let ui = SpyUI()
+    let settings = StubSettings()
+    let clock = ManualClock()
+    let coordinator: AppCoordinator
+
+    var now: TimeInterval {
+        get { clock.now }
+        set { clock.now = newValue }
+    }
+    var waits: [TimeInterval] { clock.waits }
+
+    init(service: FakeRecordingService = FakeRecordingService()) {
+        self.service = service
+        let clock = self.clock
+        coordinator = AppCoordinator(
+            captureService: IdleCaptureService(),
+            overlay: IdleOverlay(),
+            imageSource: IdleImageSource(),
+            imageSink: IdleImageSink(),
+            settings: settings,
+            recordingService: service,
+            mediaSink: sink,
+            scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
+            sleep: { seconds in clock.sleep(seconds) },
+            clock: { clock.now },
+            ui: ui
+        )
+    }
+}
+
+private let display = CaptureRegion.display(id: 7)
+
+// MARK: - Start / stop (stories 1, 2, 6)
+
+@Test @MainActor func toggleStartsAVideoRecordingOfTheDisplayAndReportsTheState() async {
+    let h = Harness()
+    await h.coordinator.toggleRecording(region: display)
+
+    #expect(h.coordinator.isRecording)
+    #expect(h.service.starts.count == 1)
+    #expect(h.service.starts.first?.options.region == display)
+    #expect(h.service.starts.first?.options.output.kind == .video)
+    #expect(h.service.starts.first?.url.pathExtension == "mp4")
+    #expect(h.ui.states == [.recording])
+    #expect(h.waits.isEmpty)   // no countdown configured
+}
+
+@Test @MainActor func toggleAgainStopsFinishesAndSavesToTheDefaultDestination() async {
+    let h = Harness()
+    await h.coordinator.toggleRecording(region: display)
+    h.now = 130
+    await h.coordinator.toggleRecording(region: display)
+
+    #expect(!h.coordinator.isRecording)
+    #expect(h.service.stopCount == 1)
+    #expect(h.coordinator.recordingSession.state == .finished(URL(fileURLWithPath: "/tmp/scratch/take.mp4")))
+    #expect(h.coordinator.recordingElapsed() == 30)
+    #expect(h.sink.saves.count == 1)
+    #expect(h.sink.saves.first?.from == URL(fileURLWithPath: "/tmp/scratch/take.mp4"))
+    // Configured save location + filename pattern + the container's extension.
+    #expect(h.sink.saves.first?.to.deletingLastPathComponent().path == "/tmp/movies")
+    #expect(h.sink.saves.first?.to.pathExtension == "mp4")
+    #expect(h.sink.saves.first?.to.lastPathComponent.hasPrefix("Recording ") == true)
+    #expect(h.ui.finished == h.sink.saves.map(\.to))
+    #expect(h.ui.states == [.recording, .stopping, .finished(URL(fileURLWithPath: "/tmp/scratch/take.mp4"))])
+}
+
+@Test @MainActor func aSecondStartWhileActiveAndAStopWhileIdleAreNoOps() async {
+    let h = Harness()
+    await h.coordinator.stopRecording()
+    #expect(h.service.stopCount == 0)
+
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.startRecording(region: display)
+    #expect(h.service.starts.count == 1)
+}
+
+@Test @MainActor func elapsedTimeFollowsTheClockWhileRecording() async {
+    let h = Harness()
+    await h.coordinator.startRecording(region: display)
+    h.now = 112.5
+    #expect(h.coordinator.recordingElapsed() == 12.5)
+}
+
+// MARK: - Countdown (story 10, until the overlay lands)
+
+@Test @MainActor func aConfiguredCountdownWaitsThenBeginsRecording() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3)
+    await h.coordinator.startRecording(region: display)
+
+    #expect(h.waits == [3])
+    #expect(h.ui.states == [.countdown, .recording])
+    #expect(h.service.starts.count == 1)
+    #expect(h.service.starts.first?.options.countdownSeconds == 3)
+    #expect(h.coordinator.recordingElapsed() == 0)   // the countdown itself is not footage
+}
+
+// MARK: - Error routing (stories 57–58)
+
+@Test @MainActor func permissionDeniedOnStartRoutesToRecoveryAndFailsTheSession() async {
+    let h = Harness()
+    h.service.startResult = .failure(.permissionDenied(.screenRecording))
+    await h.coordinator.startRecording(region: display)
+
+    #expect(h.ui.permissionDeniedCount == 1)
+    #expect(h.ui.recordingFailures.isEmpty)
+    #expect(h.coordinator.recordingSession.state == .failed(.permissionDenied(.screenRecording)))
+    #expect(!h.coordinator.isRecording)
+    #expect(h.sink.saves.isEmpty)
+}
+
+@Test @MainActor func userCancelledIsSilentAndOtherFailuresGetADistinctMessage() async {
+    let cancelled = Harness()
+    cancelled.service.startResult = .failure(.userCancelled)
+    await cancelled.coordinator.startRecording(region: display)
+    #expect(cancelled.ui.recordingFailures.isEmpty)
+    #expect(cancelled.ui.permissionDeniedCount == 0)
+
+    let broken = Harness()
+    broken.service.startResult = .failure(.noDisplayAvailable)
+    await broken.coordinator.startRecording(region: display)
+    #expect(broken.ui.recordingFailures == [.noDisplayAvailable])
+    #expect(broken.coordinator.recordingSession.state == .failed(.noDisplayAvailable))
+}
+
+@Test @MainActor func aStopFailureFailsTheSessionWithAMessageAndSavesNothing() async {
+    let h = Harness(service: FakeRecordingService(stopResult: .failure(.diskFull)))
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.stopRecording()
+
+    #expect(h.ui.recordingFailures == [.diskFull])
+    #expect(h.coordinator.recordingSession.state == .failed(.diskFull))
+    #expect(h.sink.saves.isEmpty)
+    #expect(h.ui.finished.isEmpty)
+}
+
+@Test @MainActor func aSaveFailureIsSurfacedAndTheTakeStaysFinished() async {
+    let h = Harness()
+    h.sink.saveFails = true
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.stopRecording()
+
+    #expect(h.ui.finished.isEmpty)
+    #expect(h.ui.recordingFailures.count == 1)
+    if case .systemFailure = h.ui.recordingFailures.first {} else {
+        Issue.record("expected a systemFailure describing the save error")
+    }
+    if case .finished = h.coordinator.recordingSession.state {} else {
+        Issue.record("the file exists; the session should still be finished")
+    }
+}
+
+// MARK: - First-run onboarding (story 57)
+
+@Test @MainActor func firstRunPromptsThroughTheRecorderBeforeStarting() async {
+    let h = Harness()
+    h.service.status = .notDetermined
+    h.service.requestResult = .denied   // the OS prompt is on screen; the grant happens later
+    await h.coordinator.startRecording(region: display)
+
+    #expect(h.service.requestAuthorizationCount == 1)
+    #expect(h.service.starts.isEmpty)
+    #expect(!h.coordinator.isRecording)
+}
+
+@Test @MainActor func aStandingGrantOrDenialNeverRePrompts() async {
+    for status in [CaptureAuthorizationStatus.authorized, .denied] {
+        let h = Harness()
+        h.service.status = status
+        await h.coordinator.startRecording(region: display)
+        #expect(h.service.requestAuthorizationCount == 0)
+        #expect(h.service.starts.count == 1)
+    }
+}
+
+// MARK: - Settings destination
+
+@Test @MainActor func recordingDestinationUsesTheSaveLocationPatternAndContainerExtension() {
+    let settings = StubSettings()
+    let date = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 22))!
+    #expect(settings.recordingDestination(kind: .video, at: date).path == "/tmp/movies/Recording 2026.mp4")
+    #expect(settings.recordingDestination(kind: .gif, at: date).path == "/tmp/movies/Recording 2026.gif")
+}

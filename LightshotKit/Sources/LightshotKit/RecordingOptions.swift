@@ -177,7 +177,7 @@ public struct RecordingOptions: Equatable, Sendable {
 
 /// The Settings-owned baseline for every recording (story 40). `SettingsStore` persists these;
 /// the recorder toolbar seeds its toggles from them and overrides per recording.
-public struct RecordingDefaults: Equatable, Sendable {
+public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var video: VideoSettings
     public var gif: GIFSettings
     public var recordMicrophone: Bool
