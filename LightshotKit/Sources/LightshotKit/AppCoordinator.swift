@@ -25,6 +25,9 @@ public protocol CaptureUI: AnyObject {
     /// a stop glyph plus the elapsed time while active, the normal icon otherwise. Called on every
     /// transition, including the ones that end a take.
     func presentRecordingState(_ session: RecordingSession)
+    /// Show the 3-2-1 countdown (story 10) and return once it reaches zero — or `false` if the user
+    /// pressed Escape, in which case the take is discarded before anything is recorded.
+    func runRecordingCountdown(seconds: Int) async -> Bool
     /// A recording was saved at `url` (R2's outcome until the post-recording overlay lands, R12).
     func presentRecordingFinished(at url: URL)
     /// Surface a distinct, non-blank message for a recording failure other than permission/cancel.
@@ -292,39 +295,51 @@ public final class AppCoordinator {
         }
     }
 
-    /// Record Screen from idle (stories 3–7): the recording overlay runs **first** to resolve a
-    /// `CaptureRegion` — a rect, a window or a display, pre-filled with the last one when
-    /// "remember last recording area" is on — and then the take starts on it. Escape (`nil`) is a
-    /// silent no-op. The chosen region is remembered for next time.
+    /// Record Screen from idle (stories 3–9): the recording overlay runs **first** to resolve a
+    /// `RecordingChoice` — a rect, a window or a display (pre-filled with the last one when
+    /// "remember last recording area" is on), which Start button was pressed, and the toolbar's
+    /// per-recording toggles — and then the take starts on it. Escape (`nil`) is a silent no-op.
+    /// The chosen region is remembered for next time.
     public func recordScreen() async {
         guard recordingService != nil, !isRecording, !isStartingRecording else { return }
         let initial = settings.rememberLastRecordingArea ? settings.lastRecordingRegion : nil
-        guard let region = await overlay.selectRecordingRegion(initial: initial) else { return }
-        settings.lastRecordingRegion = region
-        await startRecording(region: region)
+        guard let choice = await overlay.selectRecording(initial: initial, defaults: settings.recordingDefaults) else {
+            return
+        }
+        settings.lastRecordingRegion = choice.region
+        await startRecording(region: choice.region, output: choice.output, overrides: choice.overrides)
     }
 
-    /// Start a video recording of `region` (stories 1, 6). First-run onboarding gates it exactly as
-    /// capture does; the Settings defaults resolve into this take's `RecordingOptions`; the session
-    /// moves first (countdown when configured, else straight to recording), then the service starts
-    /// the stream. A failure fails the session and routes like capture: `permissionDenied` to the
-    /// recovery path, `userCancelled` silent, the rest to a distinct message. A no-op while a take
-    /// is already active or when no recorder is wired.
-    public func startRecording(region: CaptureRegion) async {
+    /// Start a recording of `region` (stories 1, 6, 8–10). First-run onboarding gates it exactly as
+    /// capture does; the Settings defaults plus the toolbar's overrides resolve into this take's
+    /// `RecordingOptions`; the session moves first (countdown when configured, else straight to
+    /// recording), then the service starts the stream. The countdown is a UI step the user can
+    /// Escape out of, which discards the take before anything is recorded. A failure fails the
+    /// session and routes like capture: `permissionDenied` to the recovery path, `userCancelled`
+    /// silent, the rest to a distinct message. A no-op while a take is already active or when no
+    /// recorder is wired.
+    public func startRecording(
+        region: CaptureRegion, output: RecordingOutputKind = .video, overrides: RecordingOverrides = .none
+    ) async {
         guard let recordingService, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
 
-        let options = RecordingOptions.resolve(region: region, output: .video, defaults: settings.recordingDefaults)
+        let options = RecordingOptions.resolve(
+            region: region, output: output, defaults: settings.recordingDefaults, overrides: overrides
+        )
         let url = scratchURL(for: options.output.kind)
         guard (try? recordingSession.start(options, writingTo: url, at: clock())) != nil else { return }
         ui.presentRecordingState(recordingSession)
 
         if recordingSession.state == .countdown {
-            // The countdown overlay + sound arrive with R4; until then the wait is the countdown.
-            await sleep(TimeInterval(options.countdownSeconds))
-            guard recordingSession.state == .countdown,
-                  (try? recordingSession.beginRecording(at: clock())) != nil
-            else { return }
+            let completed = await ui.runRecordingCountdown(seconds: options.countdownSeconds)
+            // A stop during the countdown already discarded the take (see `stopRecording`).
+            guard recordingSession.state == .countdown else { return }
+            guard completed, (try? recordingSession.beginRecording(at: clock())) != nil else {
+                if let partialFile = try? recordingSession.discard() { mediaSink?.removeFile(at: partialFile) }
+                ui.presentRecordingState(recordingSession)
+                return
+            }
             ui.presentRecordingState(recordingSession)
         }
 
@@ -362,7 +377,9 @@ public final class AppCoordinator {
             case let .success(file):
                 try? recordingSession.finish(file)
                 ui.presentRecordingState(recordingSession)
-                deliver(file, kind: recordingSession.options?.output.kind ?? .video)
+                // The writer always produces an MP4; a GIF take is converted from it by R13, so
+                // until then it is delivered as the video it is.
+                deliver(file, kind: .video)
             case let .failure(error):
                 failRecording(with: error)
             }

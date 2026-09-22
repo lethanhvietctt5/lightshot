@@ -192,6 +192,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var showCursor: Bool
     public var countdownEnabled: Bool
     public var countdownSeconds: Int
+    /// Play the countdown ticks and the start / stop / pause sounds (story 10 and R4).
+    public var playSounds: Bool
 
     public init(
         video: VideoSettings = .standard,
@@ -204,8 +206,9 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         highlightClicks: Bool = false,
         showKeystrokes: Bool = false,
         showCursor: Bool = true,
-        countdownEnabled: Bool = false,
-        countdownSeconds: Int = 3
+        countdownEnabled: Bool = true,
+        countdownSeconds: Int = 3,
+        playSounds: Bool = true
     ) {
         self.video = video
         self.gif = gif
@@ -219,11 +222,65 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.showCursor = showCursor
         self.countdownEnabled = countdownEnabled
         self.countdownSeconds = max(0, countdownSeconds)
+        self.playSounds = playSounds
     }
 
-    /// The shipped defaults. The countdown is off until its overlay and sound exist (R4) — a
-    /// silent three-second wait would read as the hotkey not working.
+    /// The shipped defaults: a 3-second countdown with sounds, everything else off.
     public static let standard = RecordingDefaults()
+
+    /// Fields added after the first release decode with their default when an older stored blob
+    /// lacks them, so a settings file never silently resets to `.standard`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            video: try c.decode(VideoSettings.self, forKey: .video),
+            gif: try c.decode(GIFSettings.self, forKey: .gif),
+            recordMicrophone: try c.decode(Bool.self, forKey: .recordMicrophone),
+            microphoneDeviceID: try c.decodeIfPresent(String.self, forKey: .microphoneDeviceID),
+            recordComputerAudio: try c.decode(Bool.self, forKey: .recordComputerAudio),
+            recordCamera: try c.decode(Bool.self, forKey: .recordCamera),
+            cameraDeviceID: try c.decodeIfPresent(String.self, forKey: .cameraDeviceID),
+            highlightClicks: try c.decode(Bool.self, forKey: .highlightClicks),
+            showKeystrokes: try c.decode(Bool.self, forKey: .showKeystrokes),
+            showCursor: try c.decode(Bool.self, forKey: .showCursor),
+            countdownEnabled: try c.decode(Bool.self, forKey: .countdownEnabled),
+            countdownSeconds: try c.decode(Int.self, forKey: .countdownSeconds),
+            playSounds: try c.decodeIfPresent(Bool.self, forKey: .playSounds) ?? true
+        )
+    }
+}
+
+/// The five per-recording toggles the recorder toolbar offers (story 8).
+public enum RecordingToggle: String, CaseIterable, Codable, Sendable {
+    case microphone
+    case computerAudio
+    case camera
+    case highlightClicks
+    case showKeystrokes
+
+    public var title: String {
+        switch self {
+        case .microphone: return "Microphone"
+        case .computerAudio: return "Computer Audio"
+        case .camera: return "Camera"
+        case .highlightClicks: return "Highlight Clicks"
+        case .showKeystrokes: return "Show Keystrokes"
+        }
+    }
+}
+
+/// What the recorder toolbar resolves to (stories 3–9): the region, which Start button was pressed,
+/// and the per-recording toggle overrides. `AppCoordinator` turns it into `RecordingOptions`.
+public struct RecordingChoice: Equatable, Sendable {
+    public var region: CaptureRegion
+    public var output: RecordingOutputKind
+    public var overrides: RecordingOverrides
+
+    public init(region: CaptureRegion, output: RecordingOutputKind, overrides: RecordingOverrides = .none) {
+        self.region = region
+        self.output = output
+        self.overrides = overrides
+    }
 }
 
 /// Per-recording toggles from the recorder toolbar (stories 8–9): exactly the five the toolbar
@@ -253,4 +310,39 @@ public struct RecordingOverrides: Equatable, Sendable {
 
     /// No overrides — every value comes from Settings.
     public static let none = RecordingOverrides()
+
+    /// The override for one toolbar toggle, so the toolbar can flip toggles generically.
+    public subscript(toggle: RecordingToggle) -> Bool? {
+        get {
+            switch toggle {
+            case .microphone: return microphone
+            case .computerAudio: return computerAudio
+            case .camera: return camera
+            case .highlightClicks: return highlightClicks
+            case .showKeystrokes: return showKeystrokes
+            }
+        }
+        set {
+            switch toggle {
+            case .microphone: microphone = newValue
+            case .computerAudio: computerAudio = newValue
+            case .camera: camera = newValue
+            case .highlightClicks: highlightClicks = newValue
+            case .showKeystrokes: showKeystrokes = newValue
+            }
+        }
+    }
+}
+
+public extension RecordingDefaults {
+    /// The Settings default for one toolbar toggle — what the toggle shows before any override.
+    subscript(toggle: RecordingToggle) -> Bool {
+        switch toggle {
+        case .microphone: return recordMicrophone
+        case .computerAudio: return recordComputerAudio
+        case .camera: return recordCamera
+        case .highlightClicks: return highlightClicks
+        case .showKeystrokes: return showKeystrokes
+        }
+    }
 }

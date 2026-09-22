@@ -83,7 +83,29 @@ private let allOnDefaults = RecordingDefaults(
     )
     #expect(defaults == .standard)
     #expect(RecordingOverrides.none == RecordingOverrides())
-    #expect(!RecordingDefaults.standard.countdownEnabled)   // off until the overlay exists (R4)
+    #expect(RecordingDefaults.standard.countdownEnabled)    // 3-2-1 with sounds by default
+    #expect(RecordingDefaults.standard.playSounds)
+}
+
+@Test func aStoredBlobFromBeforePlaySoundsStillDecodes() throws {
+    // Encode the current shape, strip the newer key, decode: the field takes its default.
+    var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RecordingDefaults(playSounds: false))) as! [String: Any]
+    json.removeValue(forKey: "playSounds")
+    let decoded = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
+    #expect(decoded.playSounds)
+    #expect(decoded == RecordingDefaults())
+}
+
+@Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {
+    let defaults = RecordingDefaults(recordMicrophone: true, recordCamera: true)
+    #expect(defaults[.microphone] && defaults[.camera] && !defaults[.computerAudio])
+    var overrides = RecordingOverrides.none
+    overrides[.microphone] = false
+    overrides[.showKeystrokes] = true
+    #expect(overrides == RecordingOverrides(microphone: false, showKeystrokes: true))
+    #expect(overrides[.camera] == nil)
+    let choice = RecordingChoice(region: .display(id: 1), output: .gif, overrides: overrides)
+    #expect(RecordingOptions.resolve(region: choice.region, output: choice.output, defaults: defaults, overrides: choice.overrides).microphone == .off)
 }
 
 @Test func countdownOffInDefaultsMeansNoCountdownEvenWithSeconds() {

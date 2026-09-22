@@ -16,6 +16,7 @@ import LightshotKit
 final class OverlaySelectionController: OverlayController {
     private var window: OverlayKeyWindow?
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
+    private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
 
     func selectRegion() async -> CaptureRegion? {
         resolveStaleContinuation()
@@ -36,12 +37,12 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
-    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? {
+    func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         resolveStaleContinuation()
         let windows = await Self.hoverableWindows()
         return await withCheckedContinuation { continuation in
-            self.continuation = continuation
-            presentRecordingOverlay(windows: windows, initial: initial)
+            self.recordingContinuation = continuation
+            presentRecordingOverlay(windows: windows, initial: initial, defaults: defaults)
         }
     }
 
@@ -50,6 +51,10 @@ final class OverlaySelectionController: OverlayController {
     private func resolveStaleContinuation() {
         if let stale = continuation {
             continuation = nil
+            stale.resume(returning: nil)
+        }
+        if let stale = recordingContinuation {
+            recordingContinuation = nil
             stale.resume(returning: nil)
         }
     }
@@ -102,7 +107,9 @@ final class OverlaySelectionController: OverlayController {
 
     /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
     /// v1 covers the main screen, like the other two modes.
-    private func presentRecordingOverlay(windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?) {
+    private func presentRecordingOverlay(
+        windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?, defaults: RecordingDefaults
+    ) {
         let geometry = Self.mainScreen()
         let frame = geometry.frame
 
@@ -111,9 +118,10 @@ final class OverlaySelectionController: OverlayController {
             pixelScale: geometry.scale,
             displayID: geometry.displayID,
             windows: windows,
-            initial: initial
-        ) { [weak self] region in
-            self?.finish(with: region)
+            initial: initial,
+            defaults: defaults
+        ) { [weak self] choice in
+            self?.finishRecording(with: choice)
         }
 
         let window = makeOverlayWindow(frame: frame)
@@ -187,6 +195,14 @@ final class OverlaySelectionController: OverlayController {
         window?.orderOut(nil)
         window = nil
         continuation.resume(returning: region)
+    }
+
+    private func finishRecording(with choice: RecordingChoice?) {
+        guard let recordingContinuation else { return }
+        self.recordingContinuation = nil
+        window?.orderOut(nil)
+        window = nil
+        recordingContinuation.resume(returning: choice)
     }
 }
 

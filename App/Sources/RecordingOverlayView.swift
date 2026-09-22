@@ -1,10 +1,10 @@
 import SwiftUI
 import LightshotKit
 
-/// The recording overlay surface (spec 0006, stories 3–7): a dimmed full-screen canvas with the
+/// The recording overlay surface (spec 0006, stories 3–9): a dimmed full-screen canvas with the
 /// editable selection — border, eight handles, live pixel readout — the hovered window's highlight
-/// before anything is selected, and a small control strip: aspect ratio, typed width/height,
-/// Fullscreen, and the keys that start or cancel.
+/// before anything is selected, and the recorder toolbar at the selection: Start Video, Start GIF,
+/// the per-recording toggles whose feature exists, aspect ratio, typed width/height, Fullscreen.
 ///
 /// A thin projection of `RecordingOverlayModel`: drawing reads the model, gestures write to it.
 /// Escape/Return/arrows are handled by the hosting window. Coordinates are screen points at 1:1.
@@ -45,11 +45,43 @@ struct RecordingOverlayView: View {
 
     // MARK: - Control strip
 
-    /// Ratio / size / Fullscreen, placed just below the selection (above it near the bottom of the
+    /// The recorder toolbar, placed just below the selection (above it near the bottom of the
     /// screen), or top-centre while nothing is selected.
     private var controls: some View {
         GeometryReader { geometry in
             HStack(spacing: 10) {
+                Button {
+                    model.startVideo()
+                } label: {
+                    Label("Start Video", systemImage: "record.circle")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(!model.hasSelection)
+                .keyboardShortcut(.defaultAction)
+
+                Button {
+                    model.startGIF()
+                } label: {
+                    Label("Start GIF", systemImage: "photo.stack")
+                }
+                .disabled(!model.hasSelection)
+
+                if !model.toggles.isEmpty {
+                    Divider().frame(height: 18)
+                    ForEach(model.toggles, id: \.self) { toggle in
+                        Button {
+                            model.toggle(toggle)
+                        } label: {
+                            Image(systemName: Self.symbol(for: toggle))
+                                .foregroundStyle(model.isOn(toggle) ? Color.accentColor : Color.secondary)
+                        }
+                        .help(toggle.title)
+                    }
+                }
+
+                Divider().frame(height: 18)
+
                 Picker("Ratio", selection: Binding(get: { model.ratio }, set: { model.setRatio($0) })) {
                     ForEach(AspectRatio.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
@@ -64,7 +96,7 @@ struct RecordingOverlayView: View {
 
                 Button("Fullscreen") { model.chooseFullscreen() }
 
-                Text(model.hasSelection ? "Return to start · Esc to cancel" : "Drag an area or click a window · Esc to cancel")
+                Text(model.hasSelection ? "Esc to cancel" : "Drag an area or click a window · Esc to cancel")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -72,6 +104,16 @@ struct RecordingOverlayView: View {
             .padding(8)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
             .position(controlsCenter(in: geometry.size))
+        }
+    }
+
+    private static func symbol(for toggle: RecordingToggle) -> String {
+        switch toggle {
+        case .microphone: return "mic"
+        case .computerAudio: return "speaker.wave.2"
+        case .camera: return "video"
+        case .highlightClicks: return "cursorarrow.click.2"
+        case .showKeystrokes: return "keyboard"
         }
     }
 
@@ -101,7 +143,7 @@ struct RecordingOverlayView: View {
         }
         let below = rect.maxY + 12 + stripHeight / 2
         let y = below + stripHeight / 2 <= size.height ? below : rect.minY - 12 - stripHeight / 2
-        return CGPoint(x: min(max(rect.midX, 240), size.width - 240), y: y)
+        return CGPoint(x: min(max(rect.midX, 360), size.width - 360), y: y)
     }
 
     // MARK: - Canvas

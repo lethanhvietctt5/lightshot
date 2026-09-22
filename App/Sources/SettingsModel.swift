@@ -33,6 +33,8 @@ final class SettingsModel {
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
     var captureDelay: TimeInterval { didSet { store.captureDelay = captureDelay } }
     var rememberLastRecordingArea: Bool { didSet { store.rememberLastRecordingArea = rememberLastRecordingArea } }
+    /// The recording baseline (spec 0006), edited as a unit; each row binds one field of it.
+    var recordingDefaults: RecordingDefaults { didSet { store.recordingDefaults = recordingDefaults } }
     var historyRetention: Int {
         didSet {
             let clamped = max(0, historyRetention)
@@ -86,6 +88,7 @@ final class SettingsModel {
         self.includeCursor = store.includeCursor
         self.captureDelay = store.captureDelay
         self.rememberLastRecordingArea = store.rememberLastRecordingArea
+        self.recordingDefaults = store.recordingDefaults
         self.historyRetention = store.historyRetention
         self.launchAtLogin = store.launchAtLogin
     }

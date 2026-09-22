@@ -72,7 +72,7 @@ private final class StubOverlay: OverlayController {
     }
     func selectRegion() async -> CaptureRegion? { callCount += 1; return region }
     func selectWindow() async -> CaptureRegion? { windowCallCount += 1; return windowRegion }
-    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? { nil }
+    func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? { nil }
 }
 
 // Feeds a canned open-file result and records how often the panel was opened. `loadImage(from:)`
@@ -136,6 +136,7 @@ private final class SpyUI: CaptureUI {
     func presentCaptureFailure(_ error: CaptureError) { failures.append(error) }
     func presentImageLoadFailure(_ error: ImageLoadError) { imageLoadFailures.append(error) }
     func presentRecordingState(_ session: RecordingSession) {}
+    func runRecordingCountdown(seconds: Int) async -> Bool { true }
     func presentRecordingFinished(at url: URL) {}
     func presentRecordingFailure(_ error: RecordingError) {}
 }
