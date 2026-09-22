@@ -118,6 +118,10 @@ public struct RecordingOptions: Equatable, Sendable {
     public var microphoneVolume: Double
     /// Write one audio channel instead of two (story 25).
     public var monoAudio: Bool
+    /// Gain applied to computer audio, `0...2` (story 25).
+    public var computerAudioVolume: Double
+    /// Microphone and computer audio on separate tracks instead of one mix (story 22).
+    public var separateAudioTracks: Bool
     /// The webcam bubble's source (story 26), or off.
     public var camera: InputDeviceSelection
     /// Draw a highlight at the pointer and animate clicks (story 29).
@@ -136,6 +140,8 @@ public struct RecordingOptions: Equatable, Sendable {
         computerAudio: Bool = false,
         microphoneVolume: Double = 1,
         monoAudio: Bool = false,
+        computerAudioVolume: Double = 1,
+        separateAudioTracks: Bool = false,
         camera: InputDeviceSelection = .off,
         highlightClicks: Bool = false,
         showKeystrokes: Bool = false,
@@ -148,6 +154,8 @@ public struct RecordingOptions: Equatable, Sendable {
         self.computerAudio = computerAudio
         self.microphoneVolume = min(max(microphoneVolume, 0), 2)
         self.monoAudio = monoAudio
+        self.computerAudioVolume = min(max(computerAudioVolume, 0), 2)
+        self.separateAudioTracks = separateAudioTracks
         self.camera = camera
         self.highlightClicks = highlightClicks
         self.showKeystrokes = showKeystrokes
@@ -176,6 +184,8 @@ public struct RecordingOptions: Equatable, Sendable {
             computerAudio: overrides.computerAudio ?? defaults.recordComputerAudio,
             microphoneVolume: defaults.microphoneVolume,
             monoAudio: defaults.monoAudio,
+            computerAudioVolume: defaults.computerAudioVolume,
+            separateAudioTracks: defaults.separateAudioTracks,
             camera: cameraOn ? .device(id: defaults.cameraDeviceID) : .off,
             highlightClicks: overrides.highlightClicks ?? defaults.highlightClicks,
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
@@ -204,6 +214,10 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     /// Write mono audio (story 25).
     public var monoAudio: Bool
     public var recordComputerAudio: Bool
+    /// Computer-audio gain, `0...2` (story 25).
+    public var computerAudioVolume: Double
+    /// "Record on separate tracks" instead of one mix (story 22).
+    public var separateAudioTracks: Bool
     public var recordCamera: Bool
     /// `nil` means the system default camera.
     public var cameraDeviceID: String?
@@ -233,6 +247,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         microphoneVolume: Double = 1,
         monoAudio: Bool = false,
         recordComputerAudio: Bool = false,
+        computerAudioVolume: Double = 1,
+        separateAudioTracks: Bool = false,
         recordCamera: Bool = false,
         cameraDeviceID: String? = nil,
         highlightClicks: Bool = false,
@@ -254,6 +270,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.microphoneVolume = min(max(microphoneVolume, 0), 2)
         self.monoAudio = monoAudio
         self.recordComputerAudio = recordComputerAudio
+        self.computerAudioVolume = min(max(computerAudioVolume, 0), 2)
+        self.separateAudioTracks = separateAudioTracks
         self.recordCamera = recordCamera
         self.cameraDeviceID = cameraDeviceID
         self.highlightClicks = highlightClicks
@@ -284,6 +302,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             microphoneVolume: try c.decodeIfPresent(Double.self, forKey: .microphoneVolume) ?? 1,
             monoAudio: try c.decodeIfPresent(Bool.self, forKey: .monoAudio) ?? false,
             recordComputerAudio: try c.decode(Bool.self, forKey: .recordComputerAudio),
+            computerAudioVolume: try c.decodeIfPresent(Double.self, forKey: .computerAudioVolume) ?? 1,
+            separateAudioTracks: try c.decodeIfPresent(Bool.self, forKey: .separateAudioTracks) ?? false,
             recordCamera: try c.decode(Bool.self, forKey: .recordCamera),
             cameraDeviceID: try c.decodeIfPresent(String.self, forKey: .cameraDeviceID),
             highlightClicks: try c.decode(Bool.self, forKey: .highlightClicks),
