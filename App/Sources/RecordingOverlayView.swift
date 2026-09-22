@@ -58,7 +58,6 @@ struct RecordingOverlayView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
                 .disabled(!model.hasSelection)
-                .keyboardShortcut(.defaultAction)
 
                 Button {
                     model.startGIF()
@@ -96,7 +95,14 @@ struct RecordingOverlayView: View {
 
                 Button("Fullscreen") { model.chooseFullscreen() }
 
-                Text(model.hasSelection ? "Esc to cancel" : "Drag an area or click a window · Esc to cancel")
+                Button {
+                    model.openSettings()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .help("Recording settings")
+
+                Text(model.hasSelection ? "Return to start · Esc to cancel" : "Drag an area or click a window · Esc to cancel")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }

@@ -28,6 +28,8 @@ final class RecordingOverlayModel {
     /// The toggles whose feature exists — the only ones the toolbar shows.
     let availableToggles: Set<RecordingToggle>
     private let finish: (RecordingChoice?) -> Void
+    /// The toolbar's settings shortcut (story 8).
+    let openSettings: () -> Void
 
     /// This take's toggle overrides; `nil` per toggle means "as in Settings".
     private(set) var overrides = RecordingOverrides.none
@@ -45,6 +47,7 @@ final class RecordingOverlayModel {
         bounds: Rect, pixelScale: Double, displayID: UInt32, windows: [HoverWindow],
         initial: CaptureRegion?, defaults: RecordingDefaults,
         availableToggles: Set<RecordingToggle> = RecordingFeatures.availableToggles,
+        openSettings: @escaping () -> Void = {},
         finish: @escaping (RecordingChoice?) -> Void
     ) {
         self.windows = windows
@@ -52,6 +55,7 @@ final class RecordingOverlayModel {
         self.pixelScale = pixelScale
         self.defaults = defaults
         self.availableToggles = availableToggles
+        self.openSettings = openSettings
         self.finish = finish
 
         // Pre-fill the remembered region (story 7) when it still makes sense on this display: a
@@ -201,14 +205,11 @@ final class RecordingOverlayModel {
         return rect == selection.bounds ? .display(id: displayID) : .rect(rect)
     }
 
-    /// Start Video (also Return).
+    /// Start Video (also Return, via the hosting window).
     func startVideo() { start(.video) }
 
     /// Start GIF: recorded as video, converted afterwards (R13).
     func startGIF() { start(.gif) }
-
-    /// Return confirms as Start Video.
-    func confirm() { startVideo() }
 
     private func start(_ output: RecordingOutputKind) {
         guard let region else { return }

@@ -228,8 +228,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     /// The shipped defaults: a 3-second countdown with sounds, everything else off.
     public static let standard = RecordingDefaults()
 
-    /// Fields added after the first release decode with their default when an older stored blob
-    /// lacks them, so a settings file never silently resets to `.standard`.
+    /// Fields added later decode with their default when a stored blob lacks them, so a settings
+    /// file written by an earlier build never silently resets to `.standard`.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(

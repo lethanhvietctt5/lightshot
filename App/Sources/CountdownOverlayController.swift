@@ -7,7 +7,8 @@ import LightshotKit
 /// zero — or until Escape, which resolves `false` so the coordinator discards the take.
 ///
 /// A thin OS wrapper. The window is Lightshot's own, so the content filter keeps it out of the
-/// recording (story 15).
+/// recording (story 15). It ignores the mouse, so the user can click into the app they are about
+/// to record while it counts; it is key only for Escape, and hands activation back when it ends.
 @MainActor
 final class CountdownOverlayController {
     private var window: OverlayKeyWindow?
@@ -21,12 +22,8 @@ final class CountdownOverlayController {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        let window = OverlayKeyWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.level = .screenSaver
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        let window = OverlayKeyWindow.fullScreen(frame: frame)
+        window.ignoresMouseEvents = true
         window.onCancel = { [weak self] in self?.finish(false) }
         window.contentView = NSHostingView(rootView: CountdownView(model: model))
         window.setFrame(frame, display: true)
@@ -48,11 +45,21 @@ final class CountdownOverlayController {
         }
     }
 
+    /// Dismiss a countdown that something else ended (the hotkey stopping the take). Resolves
+    /// `false`; a no-op when none is running.
+    func cancel() {
+        finish(false)
+    }
+
     private func finish(_ completed: Bool) {
         task?.cancel()
         task = nil
-        window?.orderOut(nil)
-        window = nil
+        guard let window else { return }
+        window.orderOut(nil)
+        self.window = nil
+        // Give activation back to whatever the user was in, so the take starts with their app
+        // frontmost rather than Lightshot.
+        NSApp.deactivate()
         guard let continuation else { return }
         self.continuation = nil
         continuation.resume(returning: completed)

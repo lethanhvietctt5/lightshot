@@ -149,7 +149,11 @@ struct SettingsView: View {
     private var recordingSection: some View {
         Section("Recording") {
             Picker("Countdown", selection: Binding(
-                get: { model.recordingDefaults.countdownEnabled ? model.recordingDefaults.countdownSeconds : 0 },
+                get: {
+                    guard model.recordingDefaults.countdownEnabled else { return 0 }
+                    // Snap a hand-edited value to the offered choices so the picker always matches a tag.
+                    return [3, 5, 10].contains(model.recordingDefaults.countdownSeconds) ? model.recordingDefaults.countdownSeconds : 3
+                },
                 set: { seconds in
                     model.recordingDefaults.countdownEnabled = seconds > 0
                     if seconds > 0 { model.recordingDefaults.countdownSeconds = seconds }

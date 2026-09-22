@@ -52,7 +52,7 @@ final class AppController: NSObject, CaptureUI {
         super.init()
         coordinator = AppCoordinator(
             captureService: captureService,
-            overlay: OverlaySelectionController(),
+            overlay: OverlaySelectionController(openSettings: { [weak self] in self?.showSettings() }),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
             settings: settings,
@@ -349,10 +349,10 @@ final class AppController: NSObject, CaptureUI {
         let sounds = settings.recordingDefaults.playSounds
         switch (lastRecordingState, session.state) {
         case (.recording, .recording), (.paused, .paused): break
-        case (_, .recording) where lastRecordingState != .paused: RecordingSounds.play(.start, enabled: sounds)
-        case (.paused, .recording): RecordingSounds.play(.start, enabled: sounds)
+        case (_, .recording): RecordingSounds.play(.start, enabled: sounds)   // start, and resume
         case (.recording, .paused): RecordingSounds.play(.pause, enabled: sounds)
         case (_, .stopping): RecordingSounds.play(.stop, enabled: sounds)
+        case (.countdown, _): countdown.cancel()   // the hotkey stopped the take mid-countdown
         default: break
         }
         lastRecordingState = session.state
