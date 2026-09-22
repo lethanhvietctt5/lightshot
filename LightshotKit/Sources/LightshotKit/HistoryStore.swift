@@ -10,6 +10,15 @@ public enum CaptureSource: String, Codable, Equatable, Sendable {
     case area
     case window
     case file
+    /// A screen recording (spec 0006, story 39).
+    case recording
+}
+
+/// What a history entry holds (spec 0006, story 39): a screenshot, a video, or a GIF.
+public enum CaptureKind: String, Codable, Equatable, Sendable {
+    case screenshot
+    case video
+    case gif
 }
 
 /// One entry in the local capture history (stories 50–53): a screenshot the user took, with
@@ -25,11 +34,16 @@ public struct CaptureRecord: Identifiable, Equatable, Sendable {
     public let timestamp: Date
     /// Which capture mode produced it.
     public let source: CaptureSource
-    /// Native (Retina) pixel dimensions of the full-resolution image, so reopening rebuilds an
-    /// exact `CapturedImage` without re-decoding to measure.
+    /// Screenshot, video or GIF (spec 0006, story 39); decides how it reopens.
+    public let kind: CaptureKind
+    /// Native (Retina) pixel dimensions of the full-resolution media — for a screenshot, so that
+    /// reopening rebuilds an exact `CapturedImage` without re-decoding; for a recording, the
+    /// frame size read from the asset itself, never from the thumbnail.
     public let pixelWidth: Int
     public let pixelHeight: Int
-    /// The full-resolution image on disk (reopen / reveal-in-Finder use this).
+    /// The recording's length; `nil` for a screenshot.
+    public let duration: TimeInterval?
+    /// The full-resolution media on disk (reopen / reveal-in-Finder use this).
     public let fileURL: URL
     /// The small preview on disk (the history list shows this).
     public let thumbnailURL: URL
@@ -38,16 +52,20 @@ public struct CaptureRecord: Identifiable, Equatable, Sendable {
         id: UUID,
         timestamp: Date,
         source: CaptureSource,
+        kind: CaptureKind = .screenshot,
         pixelWidth: Int,
         pixelHeight: Int,
+        duration: TimeInterval? = nil,
         fileURL: URL,
         thumbnailURL: URL
     ) {
         self.id = id
         self.timestamp = timestamp
         self.source = source
+        self.kind = kind
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.duration = duration
         self.fileURL = fileURL
         self.thumbnailURL = thumbnailURL
     }
@@ -118,8 +136,14 @@ public final class HistoryStore {
     /// result is byte-for-byte the same value that would flow from a fresh capture. Returns `nil` if
     /// the file is missing or unreadable (e.g. deleted underneath us).
     public func capturedImage(for record: CaptureRecord) -> CapturedImage? {
-        guard let data = try? Data(contentsOf: record.fileURL) else { return nil }
+        // A recording is not an image: it reopens by `fileURL` (video editor / overlay).
+        guard record.kind == .screenshot, let data = try? Data(contentsOf: record.fileURL) else { return nil }
         return CapturedImage(pixelWidth: record.pixelWidth, pixelHeight: record.pixelHeight, data: data)
+    }
+
+    /// The record for an id, if it is still in history.
+    public func record(id: UUID) -> CaptureRecord? {
+        entries.first { $0.id == id }.map(record(from:))
     }
 
     // MARK: - Recording & removing
@@ -147,11 +171,76 @@ public final class HistoryStore {
             id: id,
             timestamp: date,
             source: source,
+            kind: .screenshot,
             pixelWidth: image.pixelWidth,
             pixelHeight: image.pixelHeight,
+            duration: nil,
             imageFile: imageFile,
             thumbnailFile: thumbnailFile
         )
+        return try append(entry)
+    }
+
+    /// Records a finished recording (spec 0006, story 39): **moves** the media file into the
+    /// store (keeping its extension — a long take is never duplicated on disk) and writes the
+    /// caller-supplied thumbnail; the copy at the save location is the user's, this one is history's. The dimensions and duration come from the caller too, because
+    /// only the app can read a video's frame size and first frame (AVFoundation); for a GIF use
+    /// `addGIF(at:source:at:)`, which reads them itself through ImageIO.
+    ///
+    /// The move is the last irreversible step and is undone if the index cannot be written, so a
+    /// failure never strands the only copy of a take: either the record exists and owns the file,
+    /// or the file is back where it was and the error says so. With retention at 0 the store
+    /// would delete the file the moment it arrived, so it refuses instead (`historyOff`) and the
+    /// caller keeps the take.
+    @discardableResult
+    public func add(
+        mediaAt url: URL, kind: CaptureKind, pixelWidth: Int, pixelHeight: Int, duration: TimeInterval?,
+        thumbnail: Data, source: CaptureSource, at date: Date = Date()
+    ) throws -> CaptureRecord {
+        guard retention > 0 else { throw HistoryError.historyOff }
+        try ensureDirectory()
+        let id = UUID()
+        let mediaFile = url.pathExtension.isEmpty ? id.uuidString : "\(id.uuidString).\(url.pathExtension)"
+        let thumbnailFile = "\(id.uuidString)-thumb.png"
+        let mediaURL = directory.appendingPathComponent(mediaFile)
+        let thumbnailURL = directory.appendingPathComponent(thumbnailFile)
+        try thumbnail.write(to: thumbnailURL, options: .atomic)
+        do {
+            try fileManager.moveItem(at: url, to: mediaURL)
+        } catch {
+            try? fileManager.removeItem(at: thumbnailURL)
+            throw error
+        }
+        let entry = StoredEntry(
+            id: id, timestamp: date, source: source, kind: kind,
+            pixelWidth: pixelWidth, pixelHeight: pixelHeight, duration: duration,
+            imageFile: mediaFile, thumbnailFile: thumbnailFile
+        )
+        do {
+            return try append(entry)
+        } catch {
+            entries.removeAll { $0.id == id }
+            try? fileManager.moveItem(at: mediaURL, to: url)
+            try? fileManager.removeItem(at: thumbnailURL)
+            throw error
+        }
+    }
+
+    /// Records a GIF (story 39): dimensions from the file's properties, the thumbnail from frame
+    /// 0, the duration as the sum of the frame delays — all through ImageIO, so the store needs
+    /// nothing from the app. Throws if the file is not a readable GIF.
+    @discardableResult
+    public func addGIF(at url: URL, source: CaptureSource, at date: Date = Date()) throws -> CaptureRecord {
+        guard let metadata = gifMetadata(at: url) else {
+            throw HistoryError.unreadableMedia(url)
+        }
+        return try add(
+            mediaAt: url, kind: .gif, pixelWidth: metadata.width, pixelHeight: metadata.height,
+            duration: metadata.duration, thumbnail: metadata.thumbnail, source: source, at: date
+        )
+    }
+
+    private func append(_ entry: StoredEntry) throws -> CaptureRecord {
         entries.append(entry)
         // Keep oldest-first even if records arrive with out-of-order timestamps, so trimming and
         // the newest-first listing stay correct.
@@ -200,8 +289,10 @@ public final class HistoryStore {
             id: entry.id,
             timestamp: entry.timestamp,
             source: entry.source,
+            kind: entry.kind,
             pixelWidth: entry.pixelWidth,
             pixelHeight: entry.pixelHeight,
+            duration: entry.duration,
             fileURL: directory.appendingPathComponent(entry.imageFile),
             thumbnailURL: directory.appendingPathComponent(entry.thumbnailFile)
         )
@@ -237,14 +328,90 @@ private struct StoredIndex: Codable {
     var records: [StoredEntry]
 }
 
+/// `imageFile` keeps its pre-0006 name in the index: for a recording it is the media file.
 private struct StoredEntry: Codable {
     var id: UUID
     var timestamp: Date
     var source: CaptureSource
+    var kind: CaptureKind
     var pixelWidth: Int
     var pixelHeight: Int
+    var duration: TimeInterval?
     var imageFile: String
     var thumbnailFile: String
+
+    init(
+        id: UUID, timestamp: Date, source: CaptureSource, kind: CaptureKind, pixelWidth: Int, pixelHeight: Int,
+        duration: TimeInterval?, imageFile: String, thumbnailFile: String
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.source = source
+        self.kind = kind
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.duration = duration
+        self.imageFile = imageFile
+        self.thumbnailFile = thumbnailFile
+    }
+
+    /// An `index.json` written before spec 0006 has no `kind` / `duration`: every such record is
+    /// a screenshot, so a pre-0006 history still loads in full (an explicit rule, not a hope).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        source = try c.decode(CaptureSource.self, forKey: .source)
+        kind = try c.decodeIfPresent(CaptureKind.self, forKey: .kind) ?? .screenshot
+        pixelWidth = try c.decode(Int.self, forKey: .pixelWidth)
+        pixelHeight = try c.decode(Int.self, forKey: .pixelHeight)
+        duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration)
+        imageFile = try c.decode(String.self, forKey: .imageFile)
+        thumbnailFile = try c.decode(String.self, forKey: .thumbnailFile)
+    }
+}
+
+public enum HistoryError: Error, Equatable {
+    /// The file is not media the store can read (a GIF ImageIO cannot open).
+    case unreadableMedia(URL)
+    /// Retention is 0: history keeps nothing, so it will not take a file it would delete at once.
+    case historyOff
+}
+
+/// One PNG encoder for every thumbnail the store writes.
+public enum PNGEncoder {
+    public static func data(from image: CGImage) -> Data? {
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return out as Data
+    }
+}
+
+/// A GIF's dimensions, first-frame thumbnail and total duration, through ImageIO.
+private func gifMetadata(at url: URL) -> (width: Int, height: Int, duration: TimeInterval, thumbnail: Data)? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), CGImageSourceGetCount(source) > 0,
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? Int,
+          let height = properties[kCGImagePropertyPixelHeight] as? Int
+    else { return nil }
+    var duration: TimeInterval = 0
+    for index in 0..<CGImageSourceGetCount(source) {
+        let frame = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+        let gif = frame?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+        let unclamped = gif?[kCGImagePropertyGIFUnclampedDelayTime] as? TimeInterval ?? 0
+        let clamped = gif?[kCGImagePropertyGIFDelayTime] as? TimeInterval ?? 0
+        // A zero delay is shown for 0.1 s by browsers and ImageIO alike; count it as they do.
+        duration += unclamped > 0 ? unclamped : (clamped > 0 ? clamped : 0.1)
+    }
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceThumbnailMaxPixelSize: 320,
+    ]
+    guard let thumbnailImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+          let png = PNGEncoder.data(from: thumbnailImage) else { return nil }
+    return (width, height, duration, png)
 }
 
 /// Generates a small PNG preview from full-resolution image bytes, longest edge capped at
@@ -260,11 +427,5 @@ private func makeThumbnail(from data: Data, maxPixelSize: Int) -> Data? {
     guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
         return nil
     }
-    let out = NSMutableData()
-    guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else {
-        return nil
-    }
-    CGImageDestinationAddImage(destination, thumbnail, nil)
-    guard CGImageDestinationFinalize(destination) else { return nil }
-    return out as Data
+    return PNGEncoder.data(from: thumbnail)
 }

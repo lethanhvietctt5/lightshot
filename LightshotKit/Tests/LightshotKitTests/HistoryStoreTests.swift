@@ -164,3 +164,131 @@ private func instant(_ offset: TimeInterval) -> Date {
     try reloaded.setRetention(2)
     #expect(reloaded.all().map(\.source) == [.window, .area])
 }
+
+
+// MARK: - Recordings (spec 0006, story 39)
+
+/// A two-frame GIF fixture with known delays, built with ImageIO.
+private func gifFixture(in dir: TempDir, width: Int = 60, height: Int = 40, delays: [Double] = [0.1, 0.25]) -> URL {
+    let url = dir.url.appendingPathComponent("take.gif")
+    try? FileManager.default.createDirectory(at: dir.url, withIntermediateDirectories: true)
+    let destination = CGImageDestinationCreateWithURL(url as CFURL, "com.compuserve.gif" as CFString, delays.count, nil)!
+    for (i, delay) in delays.enumerated() {
+        let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        context.setFillColor(CGColor(red: i == 0 ? 1 : 0, green: 0, blue: i == 0 ? 0 : 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let properties = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]] as CFDictionary
+        CGImageDestinationAddImage(destination, context.makeImage()!, properties)
+    }
+    CGImageDestinationFinalize(destination)
+    return url
+}
+
+private func movieFixture(in dir: TempDir, bytes: [UInt8] = [0, 1, 2, 3]) -> URL {
+    try? FileManager.default.createDirectory(at: dir.url, withIntermediateDirectories: true)
+    let url = dir.url.appendingPathComponent("take.mp4")
+    try! Data(bytes).write(to: url)
+    return url
+}
+
+@Test func addMediaMovesTheFileInKeepsItsExtensionAndRecordsWhatTheCallerKnows() throws {
+    let dir = TempDir()
+    let store = HistoryStore(directory: dir.url.appendingPathComponent("history"))
+    let take = movieFixture(in: dir)
+    let thumbnail = solidImage(width: 8, height: 6).data
+    let record = try store.add(mediaAt: take, kind: .video, pixelWidth: 1920, pixelHeight: 1080, duration: 12.5, thumbnail: thumbnail, source: .recording, at: instant(1))
+
+    #expect(!FileManager.default.fileExists(atPath: take.path))              // moved, not copied
+    #expect(record.fileURL.pathExtension == "mp4" && FileManager.default.fileExists(atPath: record.fileURL.path))
+    #expect(record.kind == .video && record.duration == 12.5 && record.source == .recording)
+    #expect(record.pixelWidth == 1920 && record.pixelHeight == 1080)
+    #expect(try Data(contentsOf: record.thumbnailURL) == thumbnail)         // served back as supplied
+    #expect(store.capturedImage(for: record) == nil)                         // not an image
+    #expect(store.all().map(\.id) == [record.id])
+}
+
+@Test func addGIFReadsDimensionsThumbnailAndDurationThroughImageIO() throws {
+    let dir = TempDir()
+    let store = HistoryStore(directory: dir.url.appendingPathComponent("history"))
+    let gif = gifFixture(in: dir)
+    let record = try store.addGIF(at: gif, source: .recording)
+    #expect(record.kind == .gif)
+    #expect(record.pixelWidth == 60 && record.pixelHeight == 40)
+    #expect(abs((record.duration ?? 0) - 0.35) < 0.001)
+    #expect(record.fileURL.pathExtension == "gif" && !FileManager.default.fileExists(atPath: gif.path))
+    // Frame 0 is red: the thumbnail decodes to that size and colour.
+    let thumbnailData = try Data(contentsOf: record.thumbnailURL)
+    let source = CGImageSourceCreateWithData(thumbnailData as CFData, nil)!
+    let image = CGImageSourceCreateImageAtIndex(source, 0, nil)!
+    #expect(image.width == 60 && image.height == 40)
+    let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    let pixel = context.data!.assumingMemoryBound(to: UInt8.self)
+    #expect(pixel[0] > 200 && pixel[2] < 50)
+    #expect(store.capturedImage(for: record) == nil)
+
+    let notAGIF = movieFixture(in: dir)
+    #expect(throws: HistoryError.unreadableMedia(notAGIF)) { try store.addGIF(at: notAGIF, source: .recording) }
+    #expect(FileManager.default.fileExists(atPath: notAGIF.path))            // left where it was
+}
+
+@Test func removeClearAndRetentionDeleteRecordingsExactlyLikeScreenshots() throws {
+    let dir = TempDir()
+    let store = HistoryStore(directory: dir.url.appendingPathComponent("history"), retention: 2)
+    let video = try store.add(mediaAt: movieFixture(in: dir), kind: .video, pixelWidth: 10, pixelHeight: 10, duration: 1, thumbnail: solidImage().data, source: .recording, at: instant(1))
+    let shot = try store.add(solidImage(), source: .area, at: instant(2))
+    let gif = try store.addGIF(at: gifFixture(in: dir), source: .recording, at: instant(3))   // retention 2: the video goes
+    #expect(store.all().map(\.id) == [gif.id, shot.id])
+    #expect(!FileManager.default.fileExists(atPath: video.fileURL.path) && !FileManager.default.fileExists(atPath: video.thumbnailURL.path))
+
+    try store.remove(gif)
+    #expect(!FileManager.default.fileExists(atPath: gif.fileURL.path) && !FileManager.default.fileExists(atPath: gif.thumbnailURL.path))
+    #expect(store.record(id: gif.id) == nil && store.record(id: shot.id) != nil)
+    try store.clear()
+    #expect(store.all().isEmpty && !FileManager.default.fileExists(atPath: shot.fileURL.path))
+}
+
+@Test func aPre0006IndexDecodesEveryRecordAsAScreenshot() throws {
+    let dir = TempDir()
+    let history = dir.url.appendingPathComponent("history")
+    try FileManager.default.createDirectory(at: history, withIntermediateDirectories: true)
+    let id = UUID()
+    let index = """
+    {"records":[{"id":"\(id.uuidString)","timestamp":700000000,"source":"area","pixelWidth":40,"pixelHeight":30,"imageFile":"a.png","thumbnailFile":"a-thumb.png"}]}
+    """
+    try index.write(to: history.appendingPathComponent("index.json"), atomically: true, encoding: .utf8)
+    try solidImage().data.write(to: history.appendingPathComponent("a.png"))
+    let store = HistoryStore(directory: history)
+    let records = store.all()
+    #expect(records.count == 1)
+    #expect(records[0].id == id && records[0].kind == .screenshot && records[0].duration == nil)
+    #expect(store.capturedImage(for: records[0])?.pixelWidth == 40)
+    // Once re-persisted, the new fields are present and the old ones untouched.
+    try store.setRetention(10)
+    let reloaded = HistoryStore(directory: history).all()
+    #expect(reloaded.first?.kind == .screenshot && reloaded.first?.fileURL.lastPathComponent == "a.png")
+}
+
+@Test func addMediaRefusesWhenRetentionIsOffAndRollsBackAFailedIndexWrite() throws {
+    let dir = TempDir()
+    let off = HistoryStore(directory: dir.url.appendingPathComponent("history"), retention: 0)
+    let take = movieFixture(in: dir)
+    #expect(throws: HistoryError.historyOff) {
+        try off.add(mediaAt: take, kind: .video, pixelWidth: 1, pixelHeight: 1, duration: 1, thumbnail: solidImage().data, source: .recording)
+    }
+    #expect(FileManager.default.fileExists(atPath: take.path))              // left where it was
+
+    // The index cannot be written (its path is a directory): the file comes back, no record.
+    let blocked = dir.url.appendingPathComponent("blocked")
+    try FileManager.default.createDirectory(at: blocked.appendingPathComponent("index.json"), withIntermediateDirectories: true)
+    let store = HistoryStore(directory: blocked)
+    #expect(throws: (any Error).self) {
+        try store.add(mediaAt: take, kind: .video, pixelWidth: 1, pixelHeight: 1, duration: 1, thumbnail: solidImage().data, source: .recording)
+    }
+    #expect(FileManager.default.fileExists(atPath: take.path))
+    #expect(store.all().isEmpty)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: blocked.path).filter { $0.hasSuffix("-thumb.png") }.isEmpty)
+}

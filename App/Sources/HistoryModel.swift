@@ -16,6 +16,11 @@ final class HistoryModel {
     private let store: HistoryStore
     private let onReopen: (CapturedImage) -> Void
     private let onCopy: (CapturedImage) -> Void
+    /// A recording reopens by kind through the coordinator (spec 0006, story 39): a video in the
+    /// video editor, a GIF in the post-recording overlay; its Copy puts the file on the pasteboard
+    /// through the media sink.
+    private let onReopenRecording: (CaptureRecord) -> Void
+    private let onCopyFile: (URL) -> Void
 
     /// The current history, newest first — refreshed after every mutation.
     private(set) var records: [CaptureRecord]
@@ -23,11 +28,15 @@ final class HistoryModel {
     init(
         store: HistoryStore,
         onReopen: @escaping (CapturedImage) -> Void,
-        onCopy: @escaping (CapturedImage) -> Void
+        onCopy: @escaping (CapturedImage) -> Void,
+        onReopenRecording: @escaping (CaptureRecord) -> Void = { _ in },
+        onCopyFile: @escaping (URL) -> Void = { _ in }
     ) {
         self.store = store
         self.onReopen = onReopen
         self.onCopy = onCopy
+        self.onReopenRecording = onReopenRecording
+        self.onCopyFile = onCopyFile
         self.records = store.all()
     }
 
@@ -37,14 +46,24 @@ final class HistoryModel {
         records = store.all()
     }
 
-    /// Re-open a history item in the editor to annotate or re-export it (story 51).
+    /// Re-open a history item (story 51): a screenshot in the annotation editor, a recording by
+    /// its kind (spec 0006, story 39).
     func reopen(_ record: CaptureRecord) {
+        guard record.kind == .screenshot else {
+            onReopenRecording(record)
+            return
+        }
         guard let image = store.capturedImage(for: record) else { return }
         onReopen(image)
     }
 
-    /// Copy a history item to the clipboard, ready to paste (story 52).
+    /// Copy a history item to the clipboard, ready to paste (story 52): a screenshot as an image,
+    /// a recording as its file.
     func copy(_ record: CaptureRecord) {
+        guard record.kind == .screenshot else {
+            onCopyFile(record.fileURL)
+            return
+        }
         guard let image = store.capturedImage(for: record) else { return }
         onCopy(image)
     }

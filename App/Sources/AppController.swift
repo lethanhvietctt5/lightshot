@@ -87,6 +87,7 @@ final class AppController: NSObject, CaptureUI {
             recordingService: recordingService,
             mediaSink: SystemMediaSink(),
             gifEncoder: ImageIOGIFEncoder(),
+            mediaMetadata: AVMediaMetadata(),
             scratchDirectory: Self.supportDirectory,
             ui: self
         )
@@ -199,17 +200,23 @@ final class AppController: NSObject, CaptureUI {
     }
 
     /// Crash recovery at launch (story 18): finalise any take a previous session left behind in the
-    /// scratch directory, deliver it through the same sink as a normal take (never overwriting —
-    /// a name clash gets a numbered suffix), and surface it.
+    /// scratch directory, file it into history like any finished take (story 39), deliver it
+    /// through the same sink as a normal take (never overwriting — a name clash gets a numbered
+    /// suffix), and surface it.
     func recoverOrphanedRecordings() {
         Task {
             let files = await RecordingRecovery.recover(in: coordinator.recordingScratchDirectory)
             let sink = SystemMediaSink()
             var recovered: [URL] = []
             for file in files {
+                let recording = await coordinator.archiveRecoveredRecording(at: file)
                 let destination = settings.recordingDestination(pathExtension: file.pathExtension).uniqueForFileSystem()
                 do {
-                    try sink.save(file, to: destination)
+                    if recording.historyRecordID != nil {
+                        try sink.copy(recording.file, to: destination)
+                    } else {
+                        try sink.save(recording.file, to: destination)
+                    }
                     recovered.append(destination)
                 } catch {
                     presentRecordingFailure(.systemFailure("A recovered recording could not be saved: \(error.localizedDescription)"))
@@ -280,7 +287,9 @@ final class AppController: NSObject, CaptureUI {
             let model = HistoryModel(
                 store: history,
                 onReopen: { [weak self] in self?.openEditor(with: $0) },
-                onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) }
+                onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) },
+                onReopenRecording: { [weak self] in self?.coordinator.reopenRecording($0) },
+                onCopyFile: { SystemMediaSink().copyFile(at: $0) }
             )
             window.contentViewController = NSHostingController(rootView: HistoryView(model: model))
         }

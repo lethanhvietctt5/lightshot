@@ -32,4 +32,11 @@ final class SystemMediaSink: MediaSink {
     func delete(_ url: URL) throws {
         try FileManager.default.removeItem(at: url)
     }
+
+    /// A copy for a history-owned recording (story 39); like `save`, never over an existing file.
+    func copy(_ url: URL, to destination: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.copyItem(at: url, to: destination)
+    }
 }

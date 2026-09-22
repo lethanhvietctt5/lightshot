@@ -69,18 +69,75 @@ public protocol MediaSink {
     /// Remove a scratch file the user never saw (the MP4 behind a converted GIF, a partial): gone
     /// for good, not to the Trash.
     func delete(_ url: URL) throws
+
+    /// Copy a history-owned recording to its destination (story 39: history keeps the original),
+    /// replacing nothing silently — a collision is an error.
+    func copy(_ url: URL, to destination: URL) throws
+}
+
+/// What only the app can read about a finished video (spec 0006, story 39): its frame size from
+/// the asset's video track, its length, and a first-frame thumbnail — the store never guesses
+/// these from the thumbnail.
+public struct VideoMetadata: Equatable, Sendable {
+    public let pixelWidth: Int
+    public let pixelHeight: Int
+    public let duration: TimeInterval
+    public let thumbnailPNG: Data
+
+    public init(pixelWidth: Int, pixelHeight: Int, duration: TimeInterval, thumbnailPNG: Data) {
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.duration = duration
+        self.thumbnailPNG = thumbnailPNG
+    }
+}
+
+/// The AVFoundation seam behind history's video records (story 39).
+public protocol MediaMetadataSource: Sendable {
+    /// `nil` when the file cannot be read as a video.
+    func videoMetadata(for url: URL) async -> VideoMetadata?
 }
 
 /// A finished take waiting in the post-recording overlay (stories 32–34): still in the scratch
 /// directory until Save, a dismissal (which saves) or Delete decides where it goes.
 public struct PendingRecording: Equatable, Sendable {
+    /// Where the file lives and what a dismissal owes it (story 39).
+    public enum Origin: Equatable, Sendable {
+        /// A take still in the scratch directory: Save moves it, a dismissal keeps it by saving.
+        case scratch
+        /// A take that just finished and is now history's: Save copies it out, a dismissal keeps
+        /// it by saving, Delete removes the record.
+        case freshInHistory(id: UUID)
+        /// A history item reopened in the overlay: already kept, so a dismissal owes nothing.
+        case historyItem(id: UUID)
+    }
+
     public let file: URL
     public let kind: RecordingOutputKind
     public let duration: TimeInterval
+    public let origin: Origin
+    /// What the overlay's Rename field starts with; the file's own stem when `nil`.
+    public let suggestedName: String?
 
-    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval) {
+    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval, origin: Origin = .scratch, suggestedName: String? = nil) {
         self.file = file
         self.kind = kind
         self.duration = duration
+        self.origin = origin
+        self.suggestedName = suggestedName
+    }
+
+    /// The history record that owns the file, if any.
+    public var historyRecordID: UUID? {
+        switch origin {
+        case .scratch: return nil
+        case let .freshInHistory(id), let .historyItem(id): return id
+        }
+    }
+
+    /// A dismissal saves a take that has not been kept anywhere the user chose yet.
+    public var isNew: Bool {
+        if case .historyItem = origin { return false }
+        return true
     }
 }

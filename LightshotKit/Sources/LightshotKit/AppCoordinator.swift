@@ -74,6 +74,7 @@ public final class AppCoordinator {
     private let recordingService: RecordingService?
     private let mediaSink: MediaSink?
     private let gifEncoder: GIFEncoding?
+    private let mediaMetadata: MediaMetadataSource?
     private let scratchDirectory: URL
     private let sleep: (TimeInterval) async -> Void
     private let clock: () -> TimeInterval
@@ -109,6 +110,7 @@ public final class AppCoordinator {
         recordingService: RecordingService? = nil,
         mediaSink: MediaSink? = nil,
         gifEncoder: GIFEncoding? = nil,
+        mediaMetadata: MediaMetadataSource? = nil,
         scratchDirectory: URL = FileManager.default.temporaryDirectory,
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
@@ -124,6 +126,7 @@ public final class AppCoordinator {
         self.history = history
         self.recordingService = recordingService
         self.gifEncoder = gifEncoder
+        self.mediaMetadata = mediaMetadata
         self.mediaSink = mediaSink
         self.scratchDirectory = scratchDirectory
         self.sleep = sleep
@@ -358,8 +361,9 @@ public final class AppCoordinator {
     public func startRecording(
         region: CaptureRegion, output: RecordingOutputKind = .video, overrides: RecordingOverrides = .none
     ) async {
-        // A GIF still converting owns the popup and the scratch file; a new take waits for it.
-        guard let recordingService, !isRecording, !isStartingRecording, gifConversion == nil else { return }
+        // A GIF still converting (or a take still being filed into history) owns the popup and
+        // the scratch file; a new take waits for it.
+        guard let recordingService, !isRecording, !isStartingRecording, gifConversion == nil, !isArchiving else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
         // A take still waiting in the overlay is kept (saved under the pattern) before a new one
         // can replace it — the app moving on is a dismissal (story 32).
@@ -506,15 +510,17 @@ public final class AppCoordinator {
 
     /// The GIF conversion in flight, so Cancel can reach it.
     private var gifConversion: Task<Void, Error>?
+    /// True while a finished take is being filed into history (reading its metadata suspends).
+    private var isArchiving = false
 
     /// A take finished. A GIF take is converted first (stories 37–38): the video is what was
     /// recorded, the GIF is what the user asked for; cancelling offers the video instead. Then
     /// the result is routed by the after-recording setting.
     private func finished(_ file: URL) async {
         let duration = recordingSession.elapsed(at: clock())
-        let routeVideo = { self.route(PendingRecording(file: file, kind: .video, duration: duration)) }
+        let routeVideo = { await self.archiveAndRoute(PendingRecording(file: file, kind: .video, duration: duration)) }
         guard case let .gif(gifSettings)? = recordingSession.options?.output, let gifEncoder, let mediaSink else {
-            routeVideo()
+            await routeVideo()
             return
         }
         let gif = file.deletingPathExtension().appendingPathExtension("gif")
@@ -534,47 +540,129 @@ public final class AppCoordinator {
             // The intermediate video is not a file the user ever saw (spec: deleted after a
             // successful conversion); a delete failure only leaves it in scratch.
             try? mediaSink.delete(file)
-            route(PendingRecording(file: gif, kind: .gif, duration: duration))
+            await archiveAndRoute(PendingRecording(file: gif, kind: .gif, duration: duration))
         case .failure(is CancellationError):
             if await ui.resolveCancelledGIFConversion() {
-                routeVideo()
+                await routeVideo()
             } else {
                 try? mediaSink.delete(file)
             }
         case let .failure(error):
             ui.presentRecordingFailure(.systemFailure("The GIF could not be made: \(error.localizedDescription)"))
-            routeVideo()
+            await routeVideo()
+        }
+    }
+
+    /// Story 39: the finished take joins history first — the store takes the file over (moved,
+    /// never duplicated), so what the overlay then copies, saves or deletes is history's record.
+    /// A history failure is best-effort like a screenshot's: the take stays in scratch and is
+    /// routed as before.
+    private func archiveAndRoute(_ recording: PendingRecording) async {
+        route(await archive(recording))
+    }
+
+    /// File a finished take into history (story 39); the result is history's copy, or the take
+    /// unchanged when history cannot take it (retention off, unreadable, disk trouble).
+    private func archive(_ recording: PendingRecording) async -> PendingRecording {
+        guard let history else { return recording }
+        isArchiving = true
+        defer { isArchiving = false }
+        let record: CaptureRecord?
+        switch recording.kind {
+        case .gif:
+            record = try? history.addGIF(at: recording.file, source: .recording)
+        case .video:
+            if let metadata = await mediaMetadata?.videoMetadata(for: recording.file) {
+                record = try? history.add(
+                    mediaAt: recording.file, kind: .video,
+                    pixelWidth: metadata.pixelWidth, pixelHeight: metadata.pixelHeight, duration: metadata.duration,
+                    thumbnail: metadata.thumbnailPNG, source: .recording
+                )
+            } else {
+                record = nil
+            }
+        }
+        guard let record else { return recording }
+        return PendingRecording(
+            file: record.fileURL, kind: recording.kind, duration: recording.duration,
+            origin: .freshInHistory(id: record.id), suggestedName: suggestedName(for: recording.file)
+        )
+    }
+
+    /// History's files are named by id; the overlay should still offer the pattern's name.
+    private func suggestedName(for file: URL) -> String {
+        settings.recordingDestination(pathExtension: file.pathExtension).deletingPathExtension().lastPathComponent
+    }
+
+    /// A take a crashed session left behind (story 18) joins history like any other (story 39)
+    /// and comes back for the app to deliver: history's copy when it could be filed, else the
+    /// file as found.
+    public func archiveRecoveredRecording(at file: URL) async -> PendingRecording {
+        let kind: RecordingOutputKind = file.pathExtension.lowercased() == "gif" ? .gif : .video
+        let duration: TimeInterval
+        if kind == .video, let metadata = await mediaMetadata?.videoMetadata(for: file) {
+            duration = metadata.duration
+        } else {
+            duration = 0
+        }
+        return await archive(PendingRecording(file: file, kind: kind, duration: duration))
+    }
+
+    /// Reopen a history item (story 39). A video is copied out to the save location and the copy
+    /// opens in the editor, so the editor's Replace / Save as new never touch history's directory
+    /// (the same path the overlay's Open Video Editor takes). A GIF opens in the overlay, which
+    /// hides the editor actions for it. A screenshot is the history window's own business. A take
+    /// still waiting in the overlay is kept first.
+    public func reopenRecording(_ record: CaptureRecord) {
+        dismissPendingRecording()
+        let recording = PendingRecording(
+            file: record.fileURL, kind: record.kind == .gif ? .gif : .video, duration: record.duration ?? 0,
+            origin: .historyItem(id: record.id), suggestedName: suggestedName(for: record.fileURL)
+        )
+        switch record.kind {
+        case .video:
+            if let copy = deliver(recording, as: nil) { ui.openVideoEditor(at: copy) }
+        case .gif:
+            pendingRecording = recording
+            ui.presentPostRecordingOverlay(recording)
+        case .screenshot:
+            break
         }
     }
 
     /// Route a finished take by the after-recording setting (story 33). The overlay path keeps
     /// the file in scratch until the overlay decides; the other two save at once.
     private func route(_ recording: PendingRecording) {
-        let file = recording.file
         switch settings.recordingDefaults.afterRecording {
         case .showOverlay:
             pendingRecording = recording
             ui.presentPostRecordingOverlay(recording)
         case .saveSilently:
-            if let saved = deliver(file, as: nil) { ui.presentRecordingFinished(at: saved) }
+            if let saved = deliver(recording, as: nil) { ui.presentRecordingFinished(at: saved) }
         case .openEditor:
-            guard let saved = deliver(file, as: nil) else { return }
+            guard let saved = deliver(recording, as: nil) else { return }
             // A GIF is never edited in v1 (spec: out of scope): the setting degrades to a silent save.
             if recording.kind == .gif { ui.presentRecordingFinished(at: saved) } else { ui.openVideoEditor(at: saved) }
         }
     }
 
-    /// Move the finished file to its destination — the save location + filename pattern, or the
-    /// name the overlay's Rename gave it — and return where it landed. A save failure is a
-    /// recording failure with a distinct message; the file stays in the scratch directory rather
-    /// than vanishing.
+    /// Put the finished file at its destination — the save location + filename pattern, or the
+    /// name the overlay's Rename gave it — and return where it landed. A file history owns is
+    /// copied (history keeps the original, story 39); one still in scratch is moved. A failure is
+    /// a recording failure with a distinct message; the file stays where it was rather than
+    /// vanishing.
     @discardableResult
-    private func deliver(_ file: URL, as name: String?) -> URL? {
+    private func deliver(_ recording: PendingRecording, as name: String?) -> URL? {
         guard let mediaSink else { return nil }
+        let file = recording.file
         let destination = name.map { settings.recordingDestination(named: $0, pathExtension: file.pathExtension) }
             ?? settings.recordingDestination(pathExtension: file.pathExtension)
         do {
-            try mediaSink.save(file, to: destination)
+            if recording.historyRecordID != nil {
+                try mediaSink.copy(file, to: destination)
+            } else {
+                try mediaSink.save(file, to: destination)
+            }
             return destination
         } catch {
             ui.presentRecordingFailure(.systemFailure(error.localizedDescription))
@@ -585,8 +673,8 @@ public final class AppCoordinator {
     // MARK: - Post-recording overlay (stories 32–34)
 
     /// Copy file: the take is saved first (under `name`, or the pattern) and the saved file's
-    /// reference goes on the pasteboard — a reference to the scratch file would dangle once the
-    /// overlay went and moved it. Returns where it landed; `nil` on a failed save (still pending).
+    /// reference goes on the pasteboard — what the user pastes is the file where they keep it,
+    /// never a scratch or history path. Returns where it landed; `nil` on a failed save.
     @discardableResult
     public func copyPendingRecordingFile(as name: String? = nil) -> URL? {
         guard let saved = savePendingRecording(as: name) else { return nil }
@@ -600,7 +688,7 @@ public final class AppCoordinator {
     @discardableResult
     public func savePendingRecording(as name: String? = nil) -> URL? {
         guard let pendingRecording else { return nil }
-        guard let saved = deliver(pendingRecording.file, as: name) else { return nil }
+        guard let saved = deliver(pendingRecording, as: name) else { return nil }
         self.pendingRecording = nil
         return saved
     }
@@ -614,10 +702,16 @@ public final class AppCoordinator {
         return saved
     }
 
-    /// The overlay went away without a decision (Escape, timeout, the app moving on): the file is
-    /// kept, under the name typed so far or the pattern (story 32).
+    /// The overlay went away without a decision (Escape, timeout, the app moving on): a fresh
+    /// take is kept, under the name typed so far or the pattern (story 32); a history item
+    /// reopened in the overlay is already kept, so the overlay just goes.
     public func dismissPendingRecording(as name: String? = nil) {
-        savePendingRecording(as: name)
+        guard let pendingRecording else { return }
+        if pendingRecording.isNew {
+            savePendingRecording(as: name)
+        } else {
+            self.pendingRecording = nil
+        }
     }
 
     /// Delete: the take is thrown away. Returns whether it is gone; a failure to trash it surfaces
@@ -626,7 +720,13 @@ public final class AppCoordinator {
     public func deletePendingRecording() -> Bool {
         guard let pendingRecording, let mediaSink else { return false }
         do {
-            try mediaSink.trash(pendingRecording.file)
+            // History's file goes with its record (as the history window's Delete does); a
+            // scratch take goes to the Trash.
+            if let id = pendingRecording.historyRecordID, let history, let record = history.record(id: id) {
+                try history.remove(record)
+            } else {
+                try mediaSink.trash(pendingRecording.file)
+            }
             self.pendingRecording = nil
             return true
         } catch {

@@ -93,8 +93,16 @@ private struct HistoryItemCard: View {
             thumbnail
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(record.source.label)
-                        .font(.caption).bold()
+                    HStack(spacing: 4) {
+                        Text(record.source.label)
+                            .font(.caption).bold()
+                        if let badge = record.kindBadge {
+                            Text(badge)
+                                .font(.caption2).bold()
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentColor.opacity(0.2)))
+                        }
+                    }
                     Text(record.timestamp, format: .dateTime.month().day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -106,8 +114,8 @@ private struct HistoryItemCard: View {
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
         .contextMenu {
-            Button("Open in Editor") { model.reopen(record) }
-            Button("Copy") { model.copy(record) }
+            Button(record.openTitle) { model.reopen(record) }
+            Button(record.copyTitle) { model.copy(record) }
             Button("Reveal in Finder") { model.reveal(record) }
             Divider()
             Button("Delete", role: .destructive) { model.delete(record) }
@@ -135,8 +143,8 @@ private struct HistoryItemCard: View {
 
     private var actions: some View {
         HStack(spacing: 4) {
-            actionButton("square.and.pencil", "Open in Editor") { model.reopen(record) }
-            actionButton("doc.on.doc", "Copy") { model.copy(record) }
+            actionButton(record.openSymbol, record.openTitle) { model.reopen(record) }
+            actionButton("doc.on.doc", record.copyTitle) { model.copy(record) }
             actionButton("folder", "Reveal in Finder") { model.reveal(record) }
             Spacer()
             actionButton("trash", "Delete") { model.delete(record) }
@@ -152,6 +160,32 @@ private struct HistoryItemCard: View {
     }
 }
 
+private extension CaptureRecord {
+    /// "Video · 0:42" / "GIF · 0:05" on a recording (spec 0006, story 39); nothing on a screenshot.
+    var kindBadge: String? {
+        let name: String
+        switch kind {
+        case .screenshot: return nil
+        case .video: name = "Video"
+        case .gif: name = "GIF"
+        }
+        guard let duration else { return name }
+        let total = Int(duration.rounded())
+        return "\(name) · \(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    var openTitle: String {
+        switch kind {
+        case .screenshot: return "Open in Editor"
+        case .video: return "Open in Video Editor"
+        case .gif: return "Open"
+        }
+    }
+
+    var openSymbol: String { kind == .screenshot ? "square.and.pencil" : "play.rectangle" }
+    var copyTitle: String { kind == .screenshot ? "Copy" : "Copy File" }
+}
+
 private extension CaptureSource {
     /// Human-readable label for the history list.
     var label: String {
@@ -160,6 +194,7 @@ private extension CaptureSource {
         case .area: return "Area"
         case .window: return "Window"
         case .file: return "Opened file"
+        case .recording: return "Recording"
         }
     }
 }
