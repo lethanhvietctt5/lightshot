@@ -126,6 +126,8 @@ public struct RecordingOptions: Equatable, Sendable {
     public var camera: InputDeviceSelection
     /// Draw a highlight at the pointer and animate clicks (story 29).
     public var highlightClicks: Bool
+    /// How the highlight looks when `highlightClicks` is on.
+    public var clickHighlight: ClickHighlightSettings
     /// Draw the keystroke overlay (story 30).
     public var showKeystrokes: Bool
     /// Draw the cursor into the frames (story 19).
@@ -144,6 +146,7 @@ public struct RecordingOptions: Equatable, Sendable {
         separateAudioTracks: Bool = false,
         camera: InputDeviceSelection = .off,
         highlightClicks: Bool = false,
+        clickHighlight: ClickHighlightSettings = .standard,
         showKeystrokes: Bool = false,
         showCursor: Bool = true,
         countdownSeconds: Int = 0
@@ -158,6 +161,7 @@ public struct RecordingOptions: Equatable, Sendable {
         self.separateAudioTracks = separateAudioTracks
         self.camera = camera
         self.highlightClicks = highlightClicks
+        self.clickHighlight = clickHighlight
         self.showKeystrokes = showKeystrokes
         self.showCursor = showCursor
         self.countdownSeconds = max(0, countdownSeconds)
@@ -188,6 +192,7 @@ public struct RecordingOptions: Equatable, Sendable {
             separateAudioTracks: defaults.separateAudioTracks,
             camera: cameraOn ? .device(id: defaults.cameraDeviceID) : .off,
             highlightClicks: overrides.highlightClicks ?? defaults.highlightClicks,
+            clickHighlight: defaults.clickHighlight,
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
             showCursor: defaults.showCursor,
             countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0
@@ -222,6 +227,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     /// `nil` means the system default camera.
     public var cameraDeviceID: String?
     public var highlightClicks: Bool
+    /// Style, size, colour and click animation of the highlight (story 29).
+    public var clickHighlight: ClickHighlightSettings
     public var showKeystrokes: Bool
     public var showCursor: Bool
     public var countdownEnabled: Bool
@@ -252,6 +259,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         recordCamera: Bool = false,
         cameraDeviceID: String? = nil,
         highlightClicks: Bool = false,
+        clickHighlight: ClickHighlightSettings = .standard,
         showKeystrokes: Bool = false,
         showCursor: Bool = true,
         countdownEnabled: Bool = true,
@@ -275,6 +283,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.recordCamera = recordCamera
         self.cameraDeviceID = cameraDeviceID
         self.highlightClicks = highlightClicks
+        self.clickHighlight = clickHighlight
         self.showKeystrokes = showKeystrokes
         self.showCursor = showCursor
         self.countdownEnabled = countdownEnabled
@@ -307,6 +316,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             recordCamera: try c.decode(Bool.self, forKey: .recordCamera),
             cameraDeviceID: try c.decodeIfPresent(String.self, forKey: .cameraDeviceID),
             highlightClicks: try c.decode(Bool.self, forKey: .highlightClicks),
+            clickHighlight: try c.decodeIfPresent(ClickHighlightSettings.self, forKey: .clickHighlight) ?? .standard,
             showKeystrokes: try c.decode(Bool.self, forKey: .showKeystrokes),
             showCursor: try c.decode(Bool.self, forKey: .showCursor),
             countdownEnabled: try c.decode(Bool.self, forKey: .countdownEnabled),

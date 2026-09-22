@@ -166,6 +166,25 @@ struct SettingsView: View {
             Toggle("Scale Retina recordings to 1x", isOn: $model.recordingDefaults.video.scaleRetinaTo1x)
                 .help("Record at half the pixel size on a Retina display.")
             Toggle("Show the cursor", isOn: $model.recordingDefaults.showCursor)
+            Toggle("Highlight clicks", isOn: $model.recordingDefaults.highlightClicks)
+                .help("Draw a halo under the pointer in recordings, with a ring on every click.")
+            Picker("Highlight style", selection: $model.recordingDefaults.clickHighlight.style) {
+                ForEach(CursorHighlightStyle.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.highlightClicks)
+            Picker("Highlight size", selection: $model.recordingDefaults.clickHighlight.size) {
+                ForEach(CursorHighlightSize.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.highlightClicks)
+            Picker("Highlight colour", selection: $model.recordingDefaults.clickHighlight.color) {
+                ForEach(CursorHighlightColor.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.recordingDefaults.highlightClicks)
+            Toggle("Animate clicks", isOn: $model.recordingDefaults.clickHighlight.animateClicks)
+                .disabled(!model.recordingDefaults.highlightClicks)
+            ClickHighlightPreview(settings: model.recordingDefaults.clickHighlight)
+                .disabled(!model.recordingDefaults.highlightClicks)
+                .opacity(model.recordingDefaults.highlightClicks ? 1 : 0.5)
             HStack {
                 Text("Microphone volume")
                 Slider(value: $model.recordingDefaults.microphoneVolume, in: 0...2, step: 0.1)

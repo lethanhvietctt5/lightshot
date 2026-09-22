@@ -38,9 +38,15 @@ actor SCRecordingService: RecordingService {
     private var output: StreamOutput?
     private var writer: RecordingWriter?
     private var microphone: MicrophoneCapture?
+    /// The pointer feed for the click highlight (story 29), running only while an overlay needs it.
+    private let pointerEvents: any InputEventSource
     /// The MP4 the caller asked for; the writer's fragmented movie sits beside it.
     private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
+
+    init(pointerEvents: any InputEventSource = MouseEventMonitor()) {
+        self.pointerEvents = pointerEvents
+    }
 
     /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
     static func scratchMovieURL(for url: URL) -> URL {
@@ -117,9 +123,20 @@ actor SCRecordingService: RecordingService {
                     throw error
                 }
             }
+            // Overlays drawn into the frames (decision 4): the click highlight for now.
+            let compositor = RecordingCompositor(
+                mapping: FrameMapping(
+                    regionOrigin: target.regionOrigin,
+                    pixelsPerPointX: Double(size.width) / target.pointSize.width,
+                    pixelsPerPointY: Double(size.height) / target.pointSize.height
+                ),
+                width: size.width, height: size.height,
+                clickHighlight: options.highlightClicks ? options.clickHighlight : nil
+            )
             let systemMeter = systemAudioMeter
             let output = StreamOutput(
                 writer: writer,
+                compositor: compositor.isActive ? compositor : nil,
                 computerAudioGain: Float(options.computerAudioVolume),
                 onSystemAudioLevel: { systemMeter.level = $0 }
             ) { [weak self] error in
@@ -139,6 +156,15 @@ actor SCRecordingService: RecordingService {
                 throw error
             }
             microphone?.start()
+            if compositor.isActive {
+                let queue = self.queue
+                // Seed the halo where the pointer already is: the first frames must not wait for a move.
+                compositor.handle(.moved(MouseEventMonitor.pointer()), at: 0)
+                pointerEvents.start { event in
+                    let now = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()))
+                    queue.async { compositor.handle(event, at: now) }
+                }
+            }
             audioMeter.level = 0
             systemAudioMeter.level = 0
             log.info("Recording started: \(size.width)×\(size.height) @ \(video.fps) fps, mic \(microphone == nil ? "off" : "on", privacy: .public), computer audio \(options.computerAudio ? "on" : "off", privacy: .public) → \(url.lastPathComponent, privacy: .public)")
@@ -235,6 +261,7 @@ actor SCRecordingService: RecordingService {
     }
 
     private func tearDown() {
+        pointerEvents.stop()
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0
@@ -253,6 +280,8 @@ actor SCRecordingService: RecordingService {
         let filter: SCContentFilter
         /// The captured area in points.
         let pointSize: CGSize
+        /// The captured area's top-left in screen points, for mapping pointer events into frames.
+        let regionOrigin: Point
         /// Backing scale of the display it comes from.
         let scale: CGFloat
         /// For a rect: the sub-rect of the display to stream, in display points.
@@ -272,6 +301,7 @@ actor SCRecordingService: RecordingService {
             return Target(
                 filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
                 pointSize: CGSize(width: display.width, height: display.height),
+                regionOrigin: Point(x: display.frame.minX, y: display.frame.minY),
                 scale: SCCaptureService.backingScale(for: display),
                 sourceRect: nil
             )
@@ -285,6 +315,7 @@ actor SCRecordingService: RecordingService {
             return Target(
                 filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
                 pointSize: sourceRect.size,
+                regionOrigin: Point(x: display.frame.minX + sourceRect.minX, y: display.frame.minY + sourceRect.minY),
                 scale: SCCaptureService.backingScale(for: display),
                 sourceRect: sourceRect
             )
@@ -296,6 +327,7 @@ actor SCRecordingService: RecordingService {
             return Target(
                 filter: SCContentFilter(desktopIndependentWindow: window),
                 pointSize: window.frame.size,
+                regionOrigin: Point(x: window.frame.minX, y: window.frame.minY),
                 scale: scale,
                 sourceRect: nil
             )
@@ -358,6 +390,7 @@ actor SCRecordingService: RecordingService {
 /// so `stop()` can report it too.
 private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let writer: RecordingWriter
+    private let compositor: RecordingCompositor?
     private let computerAudioGain: Float
     private let onSystemAudioLevel: @Sendable (Float) -> Void
     private let onFailure: @Sendable (RecordingError) -> Void
@@ -365,11 +398,12 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
     private var storedFailure: RecordingError?
 
     init(
-        writer: RecordingWriter, computerAudioGain: Float,
+        writer: RecordingWriter, compositor: RecordingCompositor?, computerAudioGain: Float,
         onSystemAudioLevel: @escaping @Sendable (Float) -> Void,
         onFailure: @escaping @Sendable (RecordingError) -> Void
     ) {
         self.writer = writer
+        self.compositor = compositor
         self.computerAudioGain = computerAudioGain
         self.onSystemAudioLevel = onSystemAudioLevel
         self.onFailure = onFailure
@@ -385,8 +419,11 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
         guard sampleBuffer.isValid else { return }
         switch type {
         case .screen:
-            guard Self.isComplete(sampleBuffer) else { return }
-            writer.append(sampleBuffer)
+            guard Self.isComplete(sampleBuffer), !writer.isPaused,
+                  let frame = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+            let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let composited = compositor?.composite(frame, at: CMTimeGetSeconds(presentation)) ?? frame
+            writer.append(composited, at: presentation)
         case .audio:
             guard var frames = PCMBuffer.frames(from: sampleBuffer) else { return }
             onSystemAudioLevel(frames.level)
@@ -606,9 +643,9 @@ private final class RecordingWriter: @unchecked Sendable {
         return true
     }
 
-    func append(_ sampleBuffer: CMSampleBuffer) {
-        guard failure == nil, !paused, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+    /// A (possibly composited) frame at its stream presentation time.
+    func append(_ pixelBuffer: CVPixelBuffer, at presentation: CMTime) {
+        guard failure == nil, !paused else { return }
         guard ensureStarted(at: presentation) else { return }
 
         let stamped = CMTimeSubtract(presentation, offset)
@@ -624,6 +661,8 @@ private final class RecordingWriter: @unchecked Sendable {
     }
 
     func pause() { paused = true }
+    /// Whether frames are being dropped; lets the output skip compositing work that would be thrown away.
+    var isPaused: Bool { paused }
 
     /// Re-base the offset at the moment of resuming — against the host clock the frames and
     /// audio share — so both continue one frame after the last thing written, whether or not the
