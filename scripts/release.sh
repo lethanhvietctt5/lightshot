@@ -110,8 +110,7 @@ note "commit $(git rev-parse --short HEAD), build number $BUILD_NUMBER"
 # 2. Test — the domain core must be green
 # ---------------------------------------------------------------------------
 step "Test (swift test in LightshotKit/)"
-(cd LightshotKit && swift test 2>&1 | tail -n 3)
-[[ "${PIPESTATUS[0]:-0}" == "0" ]] || fail "swift test failed"
+(cd LightshotKit && swift test 2>&1 | tail -n 3) || fail "swift test failed"
 
 # ---------------------------------------------------------------------------
 # 3. Build — Release, universal, unsigned; command-line settings win over any
