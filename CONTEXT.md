@@ -61,3 +61,33 @@ _Avoid_: Randomization, noise
 
 **Backdrop**:
 Everything a redaction sits on — the base image plus every element beneath it — flattened. A blur obscures its backdrop, so it hides annotations under it and never those above it.
+
+### Recording
+
+**Recording**:
+One video or GIF produced by a single start→stop session.
+_Avoid_: Capture (that is a screenshot), clip
+
+**Recording region**:
+What a recording targets: a rect, a window, or a display. The same `CaptureRegion` screenshots use, plus the display case.
+
+**Recorder toolbar**:
+The pre-start toolbar at the selection: Start Video, Start GIF and the per-recording toggles.
+_Avoid_: Recorder overlay
+
+**Recording controls**:
+The pause / resume / stop / restart / discard pill shown while recording.
+_Avoid_: Controls overlay, HUD
+
+**Take**:
+One attempt within a session. Restart throws the current take away and begins another with the same options; discard throws it away and ends the session.
+
+**Post-recording overlay**:
+The result popup after stop, with copy / save / trim / delete.
+_Avoid_: Quick Access Overlay (CleanShot's name), QAO
+
+**Video editor**:
+The trim / resize / quality / audio window. Not the annotation editor.
+
+**Input visualisation**:
+Click highlighting and the keystroke overlay, collectively.

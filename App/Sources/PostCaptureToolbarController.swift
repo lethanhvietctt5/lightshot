@@ -26,6 +26,11 @@ final class PostCaptureToolbarController {
         switch region {
         case let .rect(r): rect = r
         case let .window(_, frame): rect = frame
+        case .display:
+            // A display target only comes from recording (spec 0006), which has its own overlay;
+            // place the toolbar as if the whole main screen were the selection so nothing crashes.
+            let screen = NSScreen.main?.frame ?? .zero
+            rect = Rect(x: 0, y: 0, width: screen.width, height: screen.height)
         }
 
         let view = PostCaptureToolbarView(

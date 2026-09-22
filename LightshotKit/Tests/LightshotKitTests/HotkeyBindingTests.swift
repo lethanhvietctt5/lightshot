@@ -29,10 +29,23 @@ import Foundation
     #expect(defaults[.area]?.displayString == "⌃⌘4")
     #expect(defaults[.window] == nil)          // window ships unbound
     #expect(defaults[.repeatLast] == nil)      // repeat-last ships unbound (story 9) — user binds it
+    // Recording actions (spec 0006) ship unbound too — no extra global chords are claimed.
+    #expect(defaults[.recordScreen] == nil)
+    #expect(defaults[.pauseResumeRecording] == nil)
+    #expect(defaults[.restartRecording] == nil)
     #expect(defaults.conflicts.isEmpty)        // shipped defaults never clash
 }
 
 // MARK: - Conflict detection (acceptance criterion 1)
+
+@Test func recordingActionsTakePartInConflictDetection() {
+    var bindings = HotkeyBindings.defaults
+    bindings[.recordScreen] = HotkeyBinding(keyCode: 21, modifiers: [.command, .control], keyLabel: "4")
+    #expect(bindings.conflicts == [
+        HotkeyConflict(binding: bindings[.area]!, actions: [.area, .recordScreen])
+    ])
+    #expect(bindings.conflictingAction(for: bindings[.recordScreen]!, excluding: .recordScreen) == .area)
+}
 
 @Test func distinctChordsProduceNoConflict() {
     var bindings = HotkeyBindings()
