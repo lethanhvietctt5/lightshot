@@ -79,6 +79,17 @@ private final class SpyMediaSink: MediaSink {
     }
     private(set) var deleted: [URL] = []
     func delete(_ url: URL) throws { deleted.append(url) }
+    private(set) var copies: [(from: URL, to: URL)] = []
+    func copy(_ url: URL, to destination: URL) throws {
+        if saveFails { throw Failure() }
+        copies.append((url, destination))
+    }
+}
+
+/// Canned video metadata, as the app's AVFoundation source would read it.
+private struct FakeMetadata: MediaMetadataSource {
+    var result: VideoMetadata? = VideoMetadata(pixelWidth: 1280, pixelHeight: 720, duration: 30, thumbnailPNG: Data([1, 2, 3]))
+    func videoMetadata(for url: URL) async -> VideoMetadata? { result }
 }
 
 /// A GIF encoder the test steers: it can wait at a gate (to be cancelled mid-way), report
@@ -232,6 +243,9 @@ private final class Harness {
     let sink = SpyMediaSink()
     let gif = FakeGIFEncoder()
     let ui = SpyUI()
+    /// Real history in a temp directory when a test wants the archive path (story 39).
+    let history: HistoryStore?
+    let historyDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("coordinator-history-\(UUID().uuidString)")
     let settings = StubSettings()
     let clock = ManualClock()
     let overlay = StubOverlay()
@@ -243,18 +257,21 @@ private final class Harness {
     }
     var waits: [TimeInterval] { clock.waits }
 
-    init(service: FakeRecordingService = FakeRecordingService()) {
+    init(service: FakeRecordingService = FakeRecordingService(), withHistory: Bool = false, metadata: VideoMetadata? = FakeMetadata().result) {
         self.service = service
         let clock = self.clock
+        history = withHistory ? HistoryStore(directory: historyDirectory) : nil
         coordinator = AppCoordinator(
             captureService: IdleCaptureService(),
             overlay: overlay,
             imageSource: IdleImageSource(),
             imageSink: IdleImageSink(),
             settings: settings,
+            history: history,
             recordingService: service,
             mediaSink: sink,
             gifEncoder: gif,
+            mediaMetadata: withHistory ? FakeMetadata(result: metadata) : nil,
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
             sleep: { seconds in await clock.sleep(seconds) },
             clock: { clock.now },
@@ -452,6 +469,83 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(h.ui.editors == [saved])
     #expect(h.coordinator.pendingRecording == nil)
     #expect(h.coordinator.openPendingRecordingInEditor() == nil)   // nothing pending
+}
+
+// MARK: - Recordings in history (story 39)
+
+/// A take that exists on disk (history moves it), unique per test since tests run in parallel.
+@MainActor private func materialisedTake() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("take-\(UUID().uuidString).mp4")
+    try Data([9, 9, 9]).write(to: url)
+    return url
+}
+
+@Test @MainActor func aFinishedVideoJoinsHistoryAndTheOverlayGetsHistorysFile() async throws {
+    let take = try materialisedTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true)
+    defer { try? FileManager.default.removeItem(at: h.historyDirectory) }
+    await finishedTake(h, after: .showOverlay)
+
+    let records = h.history!.all()
+    #expect(records.count == 1)
+    let record = records[0]
+    #expect(record.kind == .video && record.source == .recording && record.duration == 30)
+    #expect(record.pixelWidth == 1280 && record.pixelHeight == 720)          // from the asset, not the thumbnail
+    #expect(try Data(contentsOf: record.thumbnailURL) == Data([1, 2, 3]))
+    #expect(!FileManager.default.fileExists(atPath: take.path))              // moved into history
+    #expect(h.ui.overlays.last?.file == record.fileURL && h.ui.overlays.last?.historyRecordID == record.id)
+
+    // Save copies history's file out — history keeps the original.
+    let saved = h.coordinator.savePendingRecording(as: "kept")
+    #expect(saved?.lastPathComponent == "kept.mp4")
+    #expect(h.sink.copies.map(\.from) == [record.fileURL] && h.sink.saves.isEmpty)
+    #expect(h.history!.record(id: record.id) != nil)
+}
+
+@Test @MainActor func unreadableMetadataLeavesTheTakeInScratchAndRoutesItAnyway() async throws {
+    let take = try materialisedTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true, metadata: nil)
+    defer { try? FileManager.default.removeItem(at: h.historyDirectory) }
+    await finishedTake(h, after: .showOverlay)
+    #expect(h.history!.all().isEmpty)
+    #expect(h.ui.overlays.last?.file == take && h.ui.overlays.last?.historyRecordID == nil)
+    #expect(FileManager.default.fileExists(atPath: take.path))
+    try? FileManager.default.removeItem(at: take)
+}
+
+@Test @MainActor func deletingAHistoryOwnedTakeRemovesItsRecord() async throws {
+    let take = try materialisedTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true)
+    defer { try? FileManager.default.removeItem(at: h.historyDirectory) }
+    await finishedTake(h, after: .showOverlay)
+    let record = h.history!.all()[0]
+    #expect(h.coordinator.deletePendingRecording())
+    #expect(h.history!.all().isEmpty && !FileManager.default.fileExists(atPath: record.fileURL.path))
+    #expect(h.sink.trashed.isEmpty)                                          // history's file, not the Trash
+}
+
+@Test @MainActor func reopeningFromHistoryRoutesByKindAndADismissedGIFStaysPut() async throws {
+    let h = Harness(withHistory: true)
+    defer { try? FileManager.default.removeItem(at: h.historyDirectory) }
+    let video = CaptureRecord(id: UUID(), timestamp: Date(), source: .recording, kind: .video, pixelWidth: 1, pixelHeight: 1, duration: 3,
+                              fileURL: URL(fileURLWithPath: "/tmp/h/v.mp4"), thumbnailURL: URL(fileURLWithPath: "/tmp/h/v.png"))
+    h.coordinator.reopenRecording(video)
+    #expect(h.ui.editors == [video.fileURL] && h.coordinator.pendingRecording == nil)
+
+    let gif = CaptureRecord(id: UUID(), timestamp: Date(), source: .recording, kind: .gif, pixelWidth: 1, pixelHeight: 1, duration: 2,
+                            fileURL: URL(fileURLWithPath: "/tmp/h/g.gif"), thumbnailURL: URL(fileURLWithPath: "/tmp/h/g.png"))
+    h.coordinator.reopenRecording(gif)
+    #expect(h.ui.overlays.last == PendingRecording(file: gif.fileURL, kind: .gif, duration: 2, historyRecordID: gif.id, isNew: false))
+    h.coordinator.dismissPendingRecording()
+    #expect(h.sink.copies.isEmpty && h.sink.saves.isEmpty && h.coordinator.pendingRecording == nil)   // already kept
+    h.coordinator.reopenRecording(gif)
+    #expect(h.coordinator.savePendingRecording(as: "again")?.lastPathComponent == "again.gif")
+    #expect(h.sink.copies.count == 1)                                        // Save copies it out
+
+    let shot = CaptureRecord(id: UUID(), timestamp: Date(), source: .area, pixelWidth: 1, pixelHeight: 1,
+                             fileURL: URL(fileURLWithPath: "/tmp/h/s.png"), thumbnailURL: URL(fileURLWithPath: "/tmp/h/s.png"))
+    h.coordinator.reopenRecording(shot)
+    #expect(h.ui.overlays.count == 2 && h.ui.editors.count == 1)             // not the coordinator's job
 }
 
 @Test @MainActor func aNewTakeKeepsThePendingOneBeforeItStarts() async {

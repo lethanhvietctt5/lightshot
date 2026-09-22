@@ -69,6 +69,33 @@ public protocol MediaSink {
     /// Remove a scratch file the user never saw (the MP4 behind a converted GIF, a partial): gone
     /// for good, not to the Trash.
     func delete(_ url: URL) throws
+
+    /// Copy a history-owned recording to its destination (story 39: history keeps the original),
+    /// replacing nothing silently — a collision is an error.
+    func copy(_ url: URL, to destination: URL) throws
+}
+
+/// What only the app can read about a finished video (spec 0006, story 39): its frame size from
+/// the asset's video track, its length, and a first-frame thumbnail — the store never guesses
+/// these from the thumbnail.
+public struct VideoMetadata: Equatable, Sendable {
+    public let pixelWidth: Int
+    public let pixelHeight: Int
+    public let duration: TimeInterval
+    public let thumbnailPNG: Data
+
+    public init(pixelWidth: Int, pixelHeight: Int, duration: TimeInterval, thumbnailPNG: Data) {
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.duration = duration
+        self.thumbnailPNG = thumbnailPNG
+    }
+}
+
+/// The AVFoundation seam behind history's video records (story 39).
+public protocol MediaMetadataSource: Sendable {
+    /// `nil` when the file cannot be read as a video.
+    func videoMetadata(for url: URL) async -> VideoMetadata?
 }
 
 /// A finished take waiting in the post-recording overlay (stories 32–34): still in the scratch
@@ -77,10 +104,18 @@ public struct PendingRecording: Equatable, Sendable {
     public let file: URL
     public let kind: RecordingOutputKind
     public let duration: TimeInterval
+    /// Set once the take is in history (story 39): the file is history's, so Save copies it out
+    /// and Delete removes the record.
+    public let historyRecordID: UUID?
+    /// A take that just finished (`true`) or a history item reopened in the overlay (`false`, so
+    /// a dismissal keeps nothing more than it already has).
+    public let isNew: Bool
 
-    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval) {
+    public init(file: URL, kind: RecordingOutputKind, duration: TimeInterval, historyRecordID: UUID? = nil, isNew: Bool = true) {
         self.file = file
         self.kind = kind
         self.duration = duration
+        self.historyRecordID = historyRecordID
+        self.isNew = isNew
     }
 }

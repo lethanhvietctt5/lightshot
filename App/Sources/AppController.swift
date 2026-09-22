@@ -87,6 +87,7 @@ final class AppController: NSObject, CaptureUI {
             recordingService: recordingService,
             mediaSink: SystemMediaSink(),
             gifEncoder: ImageIOGIFEncoder(),
+            mediaMetadata: AVMediaMetadata(),
             scratchDirectory: Self.supportDirectory,
             ui: self
         )
@@ -280,7 +281,8 @@ final class AppController: NSObject, CaptureUI {
             let model = HistoryModel(
                 store: history,
                 onReopen: { [weak self] in self?.openEditor(with: $0) },
-                onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) }
+                onCopy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) },
+                onReopenRecording: { [weak self] in self?.coordinator.reopenRecording($0) }
             )
             window.contentViewController = NSHostingController(rootView: HistoryView(model: model))
         }
