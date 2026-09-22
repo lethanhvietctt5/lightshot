@@ -96,7 +96,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
@@ -104,6 +104,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(older.showRecordingTimeInMenuBar)
     #expect(older.microphoneVolume == 1 && !older.monoAudio)
     #expect(older.computerAudioVolume == 1 && !older.separateAudioTracks)
+    #expect(older.clickHighlight == .standard)
 }
 
 @Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {
@@ -123,6 +124,13 @@ private let allOnDefaults = RecordingDefaults(
     let o = RecordingOptions.resolve(region: region, output: .video, defaults: defaults)
     #expect(o.countdownSeconds == 0)
     #expect(!o.hasCountdown)
+}
+
+@Test func clickHighlightSettingsReachTheOptions() {
+    let look = ClickHighlightSettings(style: .outline, size: .large, color: .red, animateClicks: false)
+    let o = RecordingOptions.resolve(region: region, output: .video, defaults: RecordingDefaults(clickHighlight: look),
+                                     overrides: RecordingOverrides(highlightClicks: true))
+    #expect(o.highlightClicks && o.clickHighlight == look)
 }
 
 @Test func computerAudioSettingsReachTheOptions() {
