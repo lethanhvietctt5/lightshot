@@ -20,14 +20,14 @@ import Foundation
 
 @Test func waitsForTheLaggingSourceAndPadsItsGapWithSilence() {
     var m = AudioMixer(channels: 1, sources: [.microphone, .computer])
-    m.push(.computer, frames: [1, 1, 1, 1, 1, 1], at: 0)
+    m.push(.computer, frames: [0.4, 0.4, 0.4, 0.4, 0.4, 0.4], at: 0)
     #expect(m.drain() == nil)                     // the microphone hasn't delivered yet
     m.push(.microphone, frames: [0.5, 0.5], at: 2) // it started late: frames 0–1 are silence
     let out = m.drain()
     #expect(out?.start == 0)
-    #expect(out?.frames == [1, 1, 1, 1])           // up to frame 4, where the mic ends
+    #expect(out?.frames == [0.4, 0.4, 0.9, 0.9])   // up to frame 4, where the mic ends; both audible
     m.push(.microphone, frames: [0.5, 0.5], at: 6) // a gap at 4–5 is silence
-    #expect(m.drain()?.frames == [1, 1])
+    #expect(m.drain()?.frames == [0.4, 0.4]) 
 }
 
 @Test func anInactiveSourceNoLongerHoldsTheMixBack() {
@@ -46,6 +46,26 @@ import Foundation
     m.push(.microphone, frames: [0.8, -0.8, 0.1, 0.1], at: 0)    // 2 frames × 2 channels
     m.push(.computer, frames: [0.5, -0.5, 0.1, 0.1], at: 0)
     #expect(m.drain()?.frames == [1, -1, 0.2, 0.2])
+}
+
+@Test func aStalledSourceStopsHoldingTheMixBackAfterMaxLag() {
+    var m = AudioMixer(channels: 1, sources: [.microphone, .computer], maxLag: 3)
+    m.push(.computer, frames: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2], at: 0)   // the mic never arrives
+    let out = m.drain()
+    #expect(out?.start == 0)
+    #expect(out?.frames == [0.2, 0.2, 0.2, 0.2, 0.2])   // up to frame 8 − 3: the mic's silence is assumed
+    m.push(.microphone, frames: [0.5, 0.5, 0.5], at: 5)  // it catches up
+    #expect(m.drain()?.frames == [0.7, 0.7, 0.7])
+}
+
+@Test func gainScalesAndClips() {
+    var samples: [Float] = [0.25, -0.25, 0.75]
+    AudioMixer.applyGain(2, to: &samples)
+    #expect(samples == [0.5, -0.5, 1])
+    AudioMixer.applyGain(1, to: &samples)
+    #expect(samples == [0.5, -0.5, 1])
+    AudioMixer.applyGain(0, to: &samples)
+    #expect(samples == [0, 0, 0])
 }
 
 @Test func overlappingPushesKeepOnlyTheNewTailAndOldFramesAreDropped() {

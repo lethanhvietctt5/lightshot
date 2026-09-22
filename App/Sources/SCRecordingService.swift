@@ -451,10 +451,18 @@ private final class RecordingWriter: @unchecked Sendable {
         }
     }
 
+    /// An audio track in the file: one per source in separate mode, or the single mix.
+    enum AudioTrack: Hashable {
+        case microphone, computer, mix
+
+        init(_ source: AudioMixer.Source) {
+            self = source == .microphone ? .microphone : .computer
+        }
+    }
+
     private let layout: AudioLayout
-    /// One track per source in separate mode; the single mixed track otherwise, keyed by `.microphone`.
-    private var audioInputs: [AudioMixer.Source: AVAssetWriterInput] = [:]
-    private var lastAudioWritten: [AudioMixer.Source: CMTime] = [:]
+    private var audioInputs: [AudioTrack: AVAssetWriterInput] = [:]
+    private var lastAudioWritten: [AudioTrack: CMTime] = [:]
     /// Single-track mode only: the mixer that sums both sources by sample time.
     private var mixer: AudioMixer?
     private let frameDuration: CMTime
@@ -489,9 +497,9 @@ private final class RecordingWriter: @unchecked Sendable {
         if sources.isEmpty {
             // no audio
         } else if audio.separateTracks || sources.count == 1 {
-            for source in sources { audioInputs[source] = makeAudioInput() }
+            for source in sources { audioInputs[AudioTrack(source)] = makeAudioInput() }
         } else {
-            audioInputs[.microphone] = makeAudioInput()   // the one mixed track
+            audioInputs[.mix] = makeAudioInput()
             mixer = AudioMixer(channels: audio.channels, sources: sources)
         }
 
@@ -536,46 +544,46 @@ private final class RecordingWriter: @unchecked Sendable {
     /// to its own track; in single-track mode both feed the mixer, and whatever both have delivered
     /// is written as one stream.
     func appendAudio(_ source: AudioMixer.Source, _ frames: PCMBuffer.Frames) {
-        guard failure == nil, !paused, !audioInputs.isEmpty else { return }
+        guard failure == nil, !paused, !audioInputs.isEmpty, frames.channels == layout.channels else { return }
         guard ensureStarted(at: frames.presentation) else { return }
-        let stamped = CMTimeSubtract(frames.presentation, offset)
-        guard CMTimeCompare(stamped, sessionStart) >= 0 else { return }
+        var stamped = frames
+        stamped.presentation = CMTimeSubtract(frames.presentation, offset)
+        guard CMTimeCompare(stamped.presentation, sessionStart) >= 0 else { return }
 
-        if var mixer {
-            let index = Self.frameIndex(of: stamped, rate: frames.sampleRate)
-            mixer.push(source, frames: frames.samples, at: index)
-            if let mixed = mixer.drain() {
-                let start = CMTime(value: CMTimeValue(mixed.start), timescale: CMTimeScale(frames.sampleRate))
-                write(PCMBuffer.Frames(samples: mixed.frames, channels: mixer.channels, sampleRate: frames.sampleRate, presentation: start),
-                      at: start, to: .microphone)
-            }
-            self.mixer = mixer
+        if mixer != nil {
+            mixer?.push(source, frames: stamped.samples, at: Self.frameIndex(of: stamped.presentation))
+            flushMix()
         } else {
-            write(frames, at: stamped, to: source)
+            write(stamped, to: AudioTrack(source))
         }
     }
 
     /// A source stopped delivering mid-take (a lost microphone): the mix stops waiting for it.
     func audioSourceLost(_ source: AudioMixer.Source) {
         mixer?.setInactive(source)
-        if var mixer, let mixed = mixer.drain() {
-            let start = CMTime(value: CMTimeValue(mixed.start), timescale: CMTimeScale(MicrophoneCapture.sampleRate))
-            write(PCMBuffer.Frames(samples: mixed.frames, channels: mixer.channels, sampleRate: MicrophoneCapture.sampleRate, presentation: start),
-                  at: start, to: .microphone)
-            self.mixer = mixer
-        }
+        flushMix()
     }
 
-    private static func frameIndex(of time: CMTime, rate: Double) -> Int64 {
-        Int64((CMTimeGetSeconds(time) * rate).rounded())
+    /// Write whatever the mixer can hand over to the single mixed track.
+    private func flushMix() {
+        guard var mixer, let mixed = mixer.drain() else { return }
+        self.mixer = mixer
+        let rate = MicrophoneCapture.sampleRate
+        let start = CMTime(value: CMTimeValue(mixed.start), timescale: CMTimeScale(rate))
+        write(PCMBuffer.Frames(samples: mixed.frames, channels: mixer.channels, sampleRate: rate, presentation: start), to: .mix)
     }
 
-    private func write(_ frames: PCMBuffer.Frames, at stamped: CMTime, to track: AudioMixer.Source) {
+    private static func frameIndex(of time: CMTime) -> Int64 {
+        Int64((CMTimeGetSeconds(time) * MicrophoneCapture.sampleRate).rounded())
+    }
+
+    /// Append `frames` at their (already re-stamped) presentation time to `track`.
+    private func write(_ frames: PCMBuffer.Frames, to track: AudioTrack) {
         guard let audioInput = audioInputs[track], frames.frameCount > 0 else { return }
-        if let last = lastAudioWritten[track], CMTimeCompare(stamped, last) <= 0 { return }
-        guard audioInput.isReadyForMoreMediaData, let buffer = PCMBuffer.sampleBuffer(frames, at: stamped) else { return }
+        if let last = lastAudioWritten[track], CMTimeCompare(frames.presentation, last) <= 0 { return }
+        guard audioInput.isReadyForMoreMediaData, let buffer = PCMBuffer.sampleBuffer(frames, at: frames.presentation) else { return }
         if audioInput.append(buffer) {
-            lastAudioWritten[track] = stamped
+            lastAudioWritten[track] = frames.presentation
             audioBufferCount += 1
         } else if writer.status == .failed {
             failure = Self.map(writer.error)
@@ -623,7 +631,7 @@ private final class RecordingWriter: @unchecked Sendable {
     func resume() {
         guard paused else { return }
         paused = false
-        let last = ([lastWritten] + lastAudioWritten.values.map { Optional($0) }).compactMap { $0 }.max { CMTimeCompare($0, $1) < 0 }
+        let last = ([lastWritten].compactMap { $0 } + lastAudioWritten.values).max { CMTimeCompare($0, $1) < 0 }
         guard let last else { return }
         let now = CMClockGetTime(CMClockGetHostTimeClock())
         offset = CMTimeSubtract(CMTimeSubtract(now, last), frameDuration)
@@ -655,14 +663,9 @@ private final class RecordingWriter: @unchecked Sendable {
                 if CMTimeCompare(end, lastWritten) > 0 { writer.endSession(atSourceTime: end) }
                 input.markAsFinished()
                 // Flush whatever the mixer still holds from a source that ran ahead, then close the tracks.
-                if var mixer {
-                    for source in mixer.activeSources { mixer.setInactive(source) }
-                    if let mixed = mixer.drain() {
-                        let start = CMTime(value: CMTimeValue(mixed.start), timescale: CMTimeScale(MicrophoneCapture.sampleRate))
-                        write(PCMBuffer.Frames(samples: mixed.frames, channels: mixer.channels, sampleRate: MicrophoneCapture.sampleRate, presentation: start),
-                              at: start, to: .microphone)
-                    }
-                    self.mixer = mixer
+                if let sources = mixer?.activeSources {
+                    for source in sources { mixer?.setInactive(source) }
+                    flushMix()
                 }
                 audioInputs.values.forEach { $0.markAsFinished() }
                 writer.finishWriting { [self] in

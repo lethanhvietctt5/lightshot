@@ -9,7 +9,7 @@ enum PCMBuffer {
         var samples: [Float]      // interleaved, `channels` per frame
         let channels: Int
         let sampleRate: Double
-        let presentation: CMTime
+        var presentation: CMTime
 
         var frameCount: Int { channels > 0 ? samples.count / channels : 0 }
 
@@ -23,10 +23,9 @@ enum PCMBuffer {
             return max(0, min(1, (20 * log10(rms) + 50) / 50))
         }
 
-        /// Scale and clip every sample.
+        /// Scale and clip every sample (the kit's tested rule).
         mutating func apply(gain: Float) {
-            guard gain != 1 else { return }
-            for i in samples.indices { samples[i] = max(-1, min(1, samples[i] * gain)) }
+            AudioMixer.applyGain(gain, to: &samples)
         }
     }
 
@@ -67,7 +66,7 @@ enum PCMBuffer {
             let available = Int(list[0].mDataByteSize) / MemoryLayout<Float>.size
             for i in 0..<min(samples.count, available) { samples[i] = source[i] }
         }
-        _ = block   // the source memory stays alive until the copy is done
+        withExtendedLifetime(block) {}   // the source memory stays alive until the copy is done
         return Frames(samples: samples, channels: channels, sampleRate: asbd.mSampleRate, presentation: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
     }
 
