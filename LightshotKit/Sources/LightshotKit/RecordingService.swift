@@ -65,6 +65,10 @@ public protocol MediaSink {
 
     /// Throw a recording away (story 32's Delete): to the Trash where the OS offers one.
     func trash(_ url: URL) throws
+
+    /// Remove a scratch file the user never saw (the MP4 behind a converted GIF, a partial): gone
+    /// for good, not to the Trash.
+    func delete(_ url: URL) throws
 }
 
 /// A finished take waiting in the post-recording overlay (stories 32–34): still in the scratch

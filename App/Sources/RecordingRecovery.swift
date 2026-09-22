@@ -14,7 +14,7 @@ import LightshotKit
 enum RecordingRecovery {
     private static let log = Logger(subsystem: "dev.lightshot.app", category: "recording")
 
-    /// Recover every orphaned take under `scratchDirectory`, returning MP4s still in scratch.
+    /// Recover every orphaned take under `scratchDirectory`, returning the MP4s and GIFs still in scratch.
     @MainActor
     static func recover(in scratchDirectory: URL) async -> [URL] {
         let fileManager = FileManager.default
@@ -26,6 +26,13 @@ enum RecordingRecovery {
             switch file.pathExtension {
             case "mp4":
                 recovered.append(file)   // finished, never delivered
+            case "gif":
+                recovered.append(file)   // converted, waiting in the overlay when the app died
+            case "partial":
+                // A GIF conversion that never finished (R13): the encoder renames on success and
+                // removes its partial on every path it controls, so one still here belonged to a
+                // crash. Its MP4 is recovered as a video.
+                try? fileManager.removeItem(at: file)
             case "mov":
                 let asset = AVURLAsset(url: file)
                 let playable = (try? await asset.load(.isPlayable)) ?? false

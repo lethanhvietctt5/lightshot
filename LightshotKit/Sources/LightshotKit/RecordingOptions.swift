@@ -76,7 +76,8 @@ public struct VideoSettings: Equatable, Codable, Sendable {
 /// drive the conversion afterwards (R13).
 public struct GIFSettings: Equatable, Codable, Sendable {
     public var fps: Int
-    /// Palette/dither quality, `0...1`.
+    /// Colour fidelity, `0...1`: the colour depth kept before the palette is built (see
+    /// `GIFFramePlan.bitsPerChannel`); lower is smaller and more banded.
     public var quality: Double
     /// Maximum output width in pixels, or `nil` to keep the recording's width.
     public var maxWidth: Int?

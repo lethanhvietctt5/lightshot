@@ -46,6 +46,13 @@ public protocol CaptureUI: AnyObject {
     func presentPostRecordingOverlay(_ recording: PendingRecording)
     /// Open the saved recording in the video editor (story 33; the editor itself is R14).
     func openVideoEditor(at url: URL)
+    /// A GIF take is converting (stories 37–38): show progress with a Cancel that calls `cancel`.
+    func presentGIFConversion(cancel: @escaping () -> Void)
+    func updateGIFConversion(progress: Double)
+    func dismissGIFConversion()
+    /// The user cancelled the conversion (story 38): `true` keeps the video instead, `false`
+    /// deletes the take.
+    func resolveCancelledGIFConversion() async -> Bool
     /// Surface a distinct, non-blank message for a recording failure other than permission/cancel.
     func presentRecordingFailure(_ error: RecordingError)
 }
@@ -66,6 +73,7 @@ public final class AppCoordinator {
     private let history: HistoryStore?
     private let recordingService: RecordingService?
     private let mediaSink: MediaSink?
+    private let gifEncoder: GIFEncoding?
     private let scratchDirectory: URL
     private let sleep: (TimeInterval) async -> Void
     private let clock: () -> TimeInterval
@@ -100,6 +108,7 @@ public final class AppCoordinator {
         history: HistoryStore? = nil,
         recordingService: RecordingService? = nil,
         mediaSink: MediaSink? = nil,
+        gifEncoder: GIFEncoding? = nil,
         scratchDirectory: URL = FileManager.default.temporaryDirectory,
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
@@ -114,6 +123,7 @@ public final class AppCoordinator {
         self.settings = settings
         self.history = history
         self.recordingService = recordingService
+        self.gifEncoder = gifEncoder
         self.mediaSink = mediaSink
         self.scratchDirectory = scratchDirectory
         self.sleep = sleep
@@ -348,7 +358,8 @@ public final class AppCoordinator {
     public func startRecording(
         region: CaptureRegion, output: RecordingOutputKind = .video, overrides: RecordingOverrides = .none
     ) async {
-        guard let recordingService, !isRecording, !isStartingRecording else { return }
+        // A GIF still converting owns the popup and the scratch file; a new take waits for it.
+        guard let recordingService, !isRecording, !isStartingRecording, gifConversion == nil else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
         // A take still waiting in the overlay is kept (saved under the pattern) before a new one
         // can replace it — the app moving on is a dismissal (story 32).
@@ -483,9 +494,7 @@ public final class AppCoordinator {
             case let .success(file):
                 try? recordingSession.finish(file)
                 ui.presentRecordingState(recordingSession)
-                // A GIF take is converted by R13; until then it is delivered as the video the
-                // writer produced, under that file's own container extension.
-                finished(file)
+                await finished(file)
             case let .failure(error):
                 failRecording(with: error)
             }
@@ -495,11 +504,53 @@ public final class AppCoordinator {
     /// The take waiting in the post-recording overlay, if one is up (stories 32–34).
     public private(set) var pendingRecording: PendingRecording?
 
-    /// A take finished: route it by the after-recording setting (story 33). The overlay path keeps
+    /// The GIF conversion in flight, so Cancel can reach it.
+    private var gifConversion: Task<Void, Error>?
+
+    /// A take finished. A GIF take is converted first (stories 37–38): the video is what was
+    /// recorded, the GIF is what the user asked for; cancelling offers the video instead. Then
+    /// the result is routed by the after-recording setting.
+    private func finished(_ file: URL) async {
+        let duration = recordingSession.elapsed(at: clock())
+        let routeVideo = { self.route(PendingRecording(file: file, kind: .video, duration: duration)) }
+        guard case let .gif(gifSettings)? = recordingSession.options?.output, let gifEncoder, let mediaSink else {
+            routeVideo()
+            return
+        }
+        let gif = file.deletingPathExtension().appendingPathExtension("gif")
+        let conversion = Task {
+            try await gifEncoder.encode(video: file, to: gif, settings: gifSettings) { [weak self] progress in
+                Task { @MainActor in self?.ui.updateGIFConversion(progress: progress) }
+            }
+        }
+        gifConversion = conversion
+        ui.presentGIFConversion(cancel: { conversion.cancel() })
+        let outcome = await conversion.result
+        // The popup goes before anything else is shown (the keep / delete question, a failure).
+        gifConversion = nil
+        ui.dismissGIFConversion()
+        switch outcome {
+        case .success:
+            // The intermediate video is not a file the user ever saw (spec: deleted after a
+            // successful conversion); a delete failure only leaves it in scratch.
+            try? mediaSink.delete(file)
+            route(PendingRecording(file: gif, kind: .gif, duration: duration))
+        case .failure(is CancellationError):
+            if await ui.resolveCancelledGIFConversion() {
+                routeVideo()
+            } else {
+                try? mediaSink.delete(file)
+            }
+        case let .failure(error):
+            ui.presentRecordingFailure(.systemFailure("The GIF could not be made: \(error.localizedDescription)"))
+            routeVideo()
+        }
+    }
+
+    /// Route a finished take by the after-recording setting (story 33). The overlay path keeps
     /// the file in scratch until the overlay decides; the other two save at once.
-    private func finished(_ file: URL) {
-        let kind = recordingSession.options?.output.kind ?? .video
-        let recording = PendingRecording(file: file, kind: kind, duration: recordingSession.elapsed(at: clock()))
+    private func route(_ recording: PendingRecording) {
+        let file = recording.file
         switch settings.recordingDefaults.afterRecording {
         case .showOverlay:
             pendingRecording = recording
@@ -507,7 +558,9 @@ public final class AppCoordinator {
         case .saveSilently:
             if let saved = deliver(file, as: nil) { ui.presentRecordingFinished(at: saved) }
         case .openEditor:
-            if let saved = deliver(file, as: nil) { ui.openVideoEditor(at: saved) }
+            guard let saved = deliver(file, as: nil) else { return }
+            // A GIF is never edited in v1 (spec: out of scope): the setting degrades to a silent save.
+            if recording.kind == .gif { ui.presentRecordingFinished(at: saved) } else { ui.openVideoEditor(at: saved) }
         }
     }
 

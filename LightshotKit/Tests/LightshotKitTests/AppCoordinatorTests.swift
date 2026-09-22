@@ -144,6 +144,10 @@ private final class SpyUI: CaptureUI {
     func presentRecordingFinished(at url: URL) {}
     func presentPostRecordingOverlay(_ recording: PendingRecording) {}
     func openVideoEditor(at url: URL) {}
+    func presentGIFConversion(cancel: @escaping () -> Void) {}
+    func updateGIFConversion(progress: Double) {}
+    func dismissGIFConversion() {}
+    func resolveCancelledGIFConversion() async -> Bool { true }
     func presentRecordingFailure(_ error: RecordingError) {}
 }
 

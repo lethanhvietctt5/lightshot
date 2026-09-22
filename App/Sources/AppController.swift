@@ -24,8 +24,9 @@ final class AppController: NSObject, CaptureUI {
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
-    /// The post-recording overlay (spec 0006, stories 32–34).
+    /// The post-recording overlay (spec 0006, stories 32–34) and the GIF progress popup (37–38).
     private let postRecordingOverlay = PostRecordingOverlayController()
+    private let gifConversion = GIFConversionController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
 
@@ -83,6 +84,7 @@ final class AppController: NSObject, CaptureUI {
             history: history,
             recordingService: recordingService,
             mediaSink: SystemMediaSink(),
+            gifEncoder: ImageIOGIFEncoder(),
             scratchDirectory: Self.supportDirectory,
             ui: self
         )
@@ -580,6 +582,22 @@ final class AppController: NSObject, CaptureUI {
     /// revealed instead of silently landing.
     func openVideoEditor(at url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func presentGIFConversion(cancel: @escaping () -> Void) {
+        gifConversion.show(cancel: cancel)
+    }
+
+    func updateGIFConversion(progress: Double) {
+        gifConversion.update(progress: progress)
+    }
+
+    func dismissGIFConversion() {
+        gifConversion.hide()
+    }
+
+    func resolveCancelledGIFConversion() async -> Bool {
+        gifConversion.resolveCancelled()
     }
 
     /// Quitting with the overlay up keeps the take (story 32), like any other dismissal.
