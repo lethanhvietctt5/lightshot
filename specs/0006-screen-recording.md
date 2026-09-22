@@ -154,4 +154,4 @@ Each proposal below is adopted as written; the sub-issues are `Ready for Agent` 
 2. **Encoders offered** — proposal: H.264 default, HEVC optional; FPS choices 10 / 15 / 30 / 60; max resolution Original / 1080p / 720p.
 3. **GIF optimisation** — proposal: in-process (ImageIO + frame differencing), no bundled gifsicle; accept somewhat larger GIFs than CleanShot.
 4. **Where the frame compositor lives** — proposal: app target, `RecordingCompositor`, fed by pure overlay *models* (positions, styles) from `LightshotKit` so layout math is testable.
-5. **Crash recovery** — proposal: write fragmented MP4 (`movieFragmentInterval`) so a partial file is playable; skip if it constrains encoders.
+5. **Crash recovery** — proposal: write fragmented MP4 (`movieFragmentInterval`) so a partial file is playable; skip if it constrains encoders. *As built (R5):* `AVAssetWriter` fragments QuickTime movies, not MP4, so the writer produces a fragmented `.mov` in the scratch directory and `stop` rewraps it as MP4 with a passthrough export (no re-encode); an orphaned `.mov` found at launch is rewrapped into the save location and surfaced, an unreadable stub is deleted.

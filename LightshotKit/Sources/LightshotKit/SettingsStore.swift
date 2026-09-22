@@ -60,9 +60,15 @@ public extension SettingsStore {
     /// Where a finished recording lands by default (spec 0006, R2): the same save location and
     /// filename pattern as screenshots, with the container's extension — `.mp4` for video, `.gif`.
     func recordingDestination(kind: RecordingOutputKind, at date: Date = Date()) -> URL {
+        recordingDestination(pathExtension: kind == .video ? "mp4" : "gif", at: date)
+    }
+
+    /// The same destination for a file that already has its container's extension — a recovered
+    /// take, or a movie the MP4 rewrap could not process.
+    func recordingDestination(pathExtension: String, at date: Date = Date()) -> URL {
         saveLocation
             .appendingPathComponent(FilenameFormatter(pattern: filenamePattern).filename(at: date))
-            .appendingPathExtension(kind == .video ? "mp4" : "gif")
+            .appendingPathExtension(pathExtension)
     }
 }
 

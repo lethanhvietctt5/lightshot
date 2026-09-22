@@ -175,6 +175,12 @@ public struct RecordingOptions: Equatable, Sendable {
     }
 }
 
+/// Where the recording controls pill sits on the screen (story 12).
+public enum RecordingControlsPosition: String, CaseIterable, Codable, Sendable {
+    case top
+    case bottom
+}
+
 /// The Settings-owned baseline for every recording (story 40). `SettingsStore` persists these;
 /// the recorder toolbar seeds its toggles from them and overrides per recording.
 public struct RecordingDefaults: Equatable, Codable, Sendable {
@@ -194,6 +200,14 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var countdownSeconds: Int
     /// Play the countdown ticks and the start / stop / pause sounds (story 10 and R4).
     public var playSounds: Bool
+    /// Show the pause / stop / restart / discard pill while recording (story 12).
+    public var showRecordingControls: Bool
+    public var controlsPosition: RecordingControlsPosition
+    /// Darken everything outside the recording area while recording (story 16).
+    public var dimScreenWhileRecording: Bool
+    /// Ask before restart / discard throw a take away (story 14); the alerts' "don't ask again"
+    /// turns this off.
+    public var confirmBeforeDiscard: Bool
 
     public init(
         video: VideoSettings = .standard,
@@ -208,7 +222,11 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         showCursor: Bool = true,
         countdownEnabled: Bool = true,
         countdownSeconds: Int = 3,
-        playSounds: Bool = true
+        playSounds: Bool = true,
+        showRecordingControls: Bool = true,
+        controlsPosition: RecordingControlsPosition = .bottom,
+        dimScreenWhileRecording: Bool = false,
+        confirmBeforeDiscard: Bool = true
     ) {
         self.video = video
         self.gif = gif
@@ -223,6 +241,10 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.countdownEnabled = countdownEnabled
         self.countdownSeconds = max(0, countdownSeconds)
         self.playSounds = playSounds
+        self.showRecordingControls = showRecordingControls
+        self.controlsPosition = controlsPosition
+        self.dimScreenWhileRecording = dimScreenWhileRecording
+        self.confirmBeforeDiscard = confirmBeforeDiscard
     }
 
     /// The shipped defaults: a 3-second countdown with sounds, everything else off.
@@ -245,7 +267,11 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             showCursor: try c.decode(Bool.self, forKey: .showCursor),
             countdownEnabled: try c.decode(Bool.self, forKey: .countdownEnabled),
             countdownSeconds: try c.decode(Int.self, forKey: .countdownSeconds),
-            playSounds: try c.decodeIfPresent(Bool.self, forKey: .playSounds) ?? true
+            playSounds: try c.decodeIfPresent(Bool.self, forKey: .playSounds) ?? true,
+            showRecordingControls: try c.decodeIfPresent(Bool.self, forKey: .showRecordingControls) ?? true,
+            controlsPosition: try c.decodeIfPresent(RecordingControlsPosition.self, forKey: .controlsPosition) ?? .bottom,
+            dimScreenWhileRecording: try c.decodeIfPresent(Bool.self, forKey: .dimScreenWhileRecording) ?? false,
+            confirmBeforeDiscard: try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeDiscard) ?? true
         )
     }
 }

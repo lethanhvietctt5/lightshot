@@ -15,7 +15,9 @@ private let log = Logger(subsystem: "dev.lightshot.app", category: "recording")
 /// `RecordingWriter` encodes them through `AVAssetWriter` into H.264 / HEVC MP4 at the options'
 /// frame rate and resolution. Lightshot's own windows are excluded from the stream by process, so
 /// the recording controls and overlays never appear in the output (story 15). A display-sleep
-/// assertion is held for the life of the take (story 17).
+/// assertion is held for the life of the take (story 17). The writer produces a *fragmented*
+/// QuickTime movie beside the requested URL, so a crash mid-take leaves a playable file
+/// (story 18, `RecordingRecovery`); `stop` rewraps it as the MP4 the caller asked for.
 ///
 /// An actor: `start` / `stop` / `cancel` / `pause` / `resume` are serialised, so the stream, writer
 /// and assertion are only ever touched by one call at a time. Frame delivery runs on `queue`; the
@@ -28,7 +30,14 @@ actor SCRecordingService: RecordingService {
     private var stream: SCStream?
     private var output: StreamOutput?
     private var writer: RecordingWriter?
+    /// The MP4 the caller asked for; the writer's fragmented movie sits beside it.
+    private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
+
+    /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
+    static func scratchMovieURL(for url: URL) -> URL {
+        url.deletingPathExtension().appendingPathExtension("mov")
+    }
 
     func authorizationStatus() async -> CaptureAuthorizationStatus {
         ScreenRecordingPermission.status()
@@ -66,7 +75,8 @@ actor SCRecordingService: RecordingService {
             configuration.queueDepth = 6
 
             let writer = try RecordingWriter(
-                url: url, width: size.width, height: size.height, codec: video.codec, fps: video.fps
+                url: Self.scratchMovieURL(for: url), width: size.width, height: size.height,
+                codec: video.codec, fps: video.fps
             )
             let output = StreamOutput(writer: writer) { [weak self] error in
                 // The stream died on its own: tear down here, then let the coordinator fail the take.
@@ -80,6 +90,7 @@ actor SCRecordingService: RecordingService {
             self.stream = stream
             self.output = output
             self.writer = writer
+            self.finalURL = url
             holdDisplayAwake()
             return .success(())
         } catch let error as RecordingError {
@@ -102,7 +113,7 @@ actor SCRecordingService: RecordingService {
     }
 
     func stop() async -> Result<URL, RecordingError> {
-        guard let stream, let writer, let output else {
+        guard let stream, let writer, let output, let finalURL else {
             return .failure(.systemFailure("No recording is in progress."))
         }
         defer { tearDown() }
@@ -118,10 +129,18 @@ actor SCRecordingService: RecordingService {
             log.error("stopCapture failed: \(error.localizedDescription, privacy: .public)")
         }
         do {
-            let url = try await writer.finish(at: stopTime, on: queue)
+            let movie = try await writer.finish(at: stopTime, on: queue)
             if let streamError = output.failure { return .failure(streamError) }
-            log.info("Recording finished: \(url.lastPathComponent, privacy: .public), \(writer.frameCount) frames")
-            return .success(url)
+            log.info("Recording finished: \(movie.lastPathComponent, privacy: .public), \(writer.frameCount) frames")
+            do {
+                try await MP4Remuxer.remux(movie, to: finalURL)
+                try? FileManager.default.removeItem(at: movie)
+                return .success(finalURL)
+            } catch {
+                // The movie is complete and playable; hand it over as it is rather than lose it.
+                log.error("MP4 rewrap failed, delivering the QuickTime movie: \(error.localizedDescription, privacy: .public)")
+                return .success(movie)
+            }
         } catch let error as RecordingError {
             log.error("Recording failed to finish: \(String(describing: error), privacy: .public)")
             return .failure(error)
@@ -150,6 +169,7 @@ actor SCRecordingService: RecordingService {
         stream = nil
         output = nil
         writer = nil
+        finalURL = nil
         releaseDisplayAwake()
     }
 
@@ -313,6 +333,10 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
 /// and the first frame after resume is re-stamped to follow the last written one, so the file has
 /// no gap and no frozen stretch. SCK only delivers a frame when the screen changes, so the session
 /// is explicitly ended at the stop time — otherwise a static final stretch would be cut off.
+///
+/// The output is a QuickTime movie written in two-second fragments (story 18): the movie header
+/// goes out first and every fragment is self-contained, so a take the app never finalised is still
+/// playable up to its last fragment.
 private final class RecordingWriter: @unchecked Sendable {
     private let url: URL
     private let writer: AVAssetWriter
@@ -330,7 +354,8 @@ private final class RecordingWriter: @unchecked Sendable {
 
     init(url: URL, width: Int, height: Int, codec: VideoCodec, fps: Int) throws {
         self.url = url
-        writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
         frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, fps)))
 
         // Bit rate scales with pixel throughput: ~0.1 bit per pixel per frame reads as high quality

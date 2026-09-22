@@ -137,6 +137,8 @@ private final class SpyUI: CaptureUI {
     func presentImageLoadFailure(_ error: ImageLoadError) { imageLoadFailures.append(error) }
     func presentRecordingState(_ session: RecordingSession) {}
     func runRecordingCountdown(seconds: Int) async -> Bool { true }
+    func confirmRecordingRestart() async -> Bool { true }
+    func confirmRecordingDiscard() async -> Bool { true }
     func presentRecordingFinished(at url: URL) {}
     func presentRecordingFailure(_ error: RecordingError) {}
 }

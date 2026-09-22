@@ -167,6 +167,15 @@ struct SettingsView: View {
             .help("Count down before a recording starts, so you can get your hands in position.")
             Toggle("Play sounds", isOn: $model.recordingDefaults.playSounds)
                 .help("Countdown ticks and the start, stop and pause cues.")
+            Toggle("Show controls while recording", isOn: $model.recordingDefaults.showRecordingControls)
+            Picker("Controls position", selection: $model.recordingDefaults.controlsPosition) {
+                Text("Top").tag(RecordingControlsPosition.top)
+                Text("Bottom").tag(RecordingControlsPosition.bottom)
+            }
+            .disabled(!model.recordingDefaults.showRecordingControls)
+            Toggle("Dim screen while recording", isOn: $model.recordingDefaults.dimScreenWhileRecording)
+                .help("Darken everything outside the recording area so you can see what's in frame.")
+            Toggle("Confirm before discarding a recording", isOn: $model.recordingDefaults.confirmBeforeDiscard)
             Toggle("Remember last recording area", isOn: $model.rememberLastRecordingArea)
                 .help("Pre-fill the recording overlay with the area, window or display you recorded last time.")
         }

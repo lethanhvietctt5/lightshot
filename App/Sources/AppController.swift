@@ -40,6 +40,9 @@ final class AppController: NSObject, CaptureUI {
     private let recordingService = SCRecordingService()
     /// The 3-2-1 before a take (story 10).
     private let countdown = CountdownOverlayController()
+    /// The pause / stop / restart / discard pill and the outside-the-frame dimming (stories 12–16).
+    private let recordingControls = RecordingControlsController()
+    private let recordingDim = RecordingDimController()
     /// The previous recording state, so `presentRecordingState` can play the start / stop cues on
     /// the transitions that deserve them.
     private var lastRecordingState: RecordingSession.State = .idle
@@ -125,8 +128,8 @@ final class AppController: NSObject, CaptureUI {
         case .fullscreen: captureFullscreen()
         case .repeatLast: repeatLast()
         case .recordScreen: toggleRecording()
-        // Rebindable now (LIG-27) but inert until the recording controls land (LIG-31).
-        case .pauseResumeRecording, .restartRecording: break
+        case .pauseResumeRecording: pauseResumeRecording()
+        case .restartRecording: restartRecording()
         }
     }
 
@@ -148,6 +151,39 @@ final class AppController: NSObject, CaptureUI {
     /// progress.
     func toggleRecording() {
         Task { await coordinator.toggleRecording() }
+    }
+
+    /// Hotkey / pill entry points for the recording controls (stories 12–14).
+    func pauseResumeRecording() {
+        Task { await coordinator.pauseResumeRecording() }
+    }
+
+    func restartRecording() {
+        Task { await coordinator.restartRecording() }
+    }
+
+    func discardRecording() {
+        Task { await coordinator.discardRecording() }
+    }
+
+    /// Crash recovery at launch (story 18): finalise and surface any take a previous session left
+    /// behind in the scratch directory.
+    func recoverOrphanedRecordings() {
+        Task {
+            let recovered = await RecordingRecovery.recover(in: coordinator.recordingScratchDirectory) {
+                settings.recordingDestination(kind: .video)
+            }
+            guard let first = recovered.first else { return }
+            NSWorkspace.shared.activateFileViewerSelecting(recovered)
+            let alert = NSAlert()
+            alert.messageText = recovered.count == 1 ? "Your recording was recovered" : "Your recordings were recovered"
+            alert.informativeText = recovered.count == 1
+                ? "Lightshot quit before the recording finished. It was saved as \(first.lastPathComponent)."
+                : "Lightshot quit before \(recovered.count) recordings finished. They were saved to \(first.deletingLastPathComponent().path)."
+            alert.addButton(withTitle: "OK")
+            WindowPresenter.activateApp()
+            alert.runModal()
+        }
     }
 
     /// Whether a take is active — the menu row and status item key off this.
@@ -357,6 +393,69 @@ final class AppController: NSObject, CaptureUI {
         }
         lastRecordingState = session.state
         recordingStateObserver?(session)
+        updateRecordingSurfaces(session)
+    }
+
+    /// The pill and the dimming follow the session: shown while recording or paused (per Settings),
+    /// gone otherwise — including during the countdown, when the user is still setting up.
+    private func updateRecordingSurfaces(_ session: RecordingSession) {
+        let defaults = settings.recordingDefaults
+        switch session.state {
+        case .recording, .paused:
+            if defaults.showRecordingControls {
+                recordingControls.show(
+                    position: defaults.controlsPosition,
+                    isPaused: session.state == .paused,
+                    elapsed: { [weak self] in self?.recordingElapsed ?? 0 },
+                    actions: RecordingControlsController.Actions(
+                        pauseResume: { [weak self] in self?.pauseResumeRecording() },
+                        stop: { [weak self] in self?.toggleRecording() },
+                        restart: { [weak self] in self?.restartRecording() },
+                        discard: { [weak self] in self?.discardRecording() }
+                    )
+                )
+            }
+            if defaults.dimScreenWhileRecording, let region = session.options?.region {
+                recordingDim.show(outside: region)
+            }
+        default:
+            recordingControls.hide()
+            recordingDim.hide()
+        }
+    }
+
+    func confirmRecordingRestart() async -> Bool {
+        confirmDiscard(
+            title: "Restart this recording?",
+            message: "The current take will be thrown away and a new one will start.",
+            button: "Restart"
+        )
+    }
+
+    func confirmRecordingDiscard() async -> Bool {
+        confirmDiscard(
+            title: "Delete this recording?",
+            message: "The take so far will be deleted. This can't be undone.",
+            button: "Delete"
+        )
+    }
+
+    /// A modal confirmation with a "Don't ask again" box that clears `confirmBeforeDiscard`.
+    private func confirmDiscard(title: String, message: String, button: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Don't ask again"
+        WindowPresenter.activateApp()
+        let confirmed = alert.runModal() == .alertFirstButtonReturn
+        if confirmed, alert.suppressionButton?.state == .on {
+            settings.recordingDefaults.confirmBeforeDiscard = false
+        }
+        return confirmed
     }
 
     func runRecordingCountdown(seconds: Int) async -> Bool {

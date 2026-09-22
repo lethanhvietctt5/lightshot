@@ -22,6 +22,8 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     var holdStart = false
     private(set) var stopCount = 0
     private(set) var cancelCount = 0
+    private(set) var pauseCount = 0
+    private(set) var resumeCount = 0
     private(set) var requestAuthorizationCount = 0
 
     init(stopResult: Result<URL, RecordingError> = .success(URL(fileURLWithPath: "/tmp/scratch/take.mp4"))) {
@@ -46,8 +48,8 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
         }
         return startResult
     }
-    func pause() async {}
-    func resume() async {}
+    func pause() async { pauseCount += 1 }
+    func resume() async { resumeCount += 1 }
     func stop() async -> Result<URL, RecordingError> { stopCount += 1; return stopResult }
     func cancel() async { cancelCount += 1 }
 }
@@ -75,6 +77,9 @@ private final class SpyUI: CaptureUI {
     var holdCountdown = false
     var countdownGate: CheckedContinuation<Void, Never>?
     private(set) var countdowns: [Int] = []
+    var confirmResult = true
+    private(set) var restartConfirmations = 0
+    private(set) var discardConfirmations = 0
     private(set) var finished: [URL] = []
     private(set) var recordingFailures: [RecordingError] = []
     private(set) var permissionDeniedCount = 0
@@ -90,6 +95,8 @@ private final class SpyUI: CaptureUI {
         if holdCountdown { await withCheckedContinuation { countdownGate = $0 } }
         return countdownResult
     }
+    func confirmRecordingRestart() async -> Bool { restartConfirmations += 1; return confirmResult }
+    func confirmRecordingDiscard() async -> Bool { discardConfirmations += 1; return confirmResult }
     func presentRecordingFinished(at url: URL) { finished.append(url) }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
 }
@@ -357,6 +364,93 @@ private let display = CaptureRegion.display(id: 7)
     h.settings.rememberLastRecordingArea = true
     await h.coordinator.recordScreen()
     #expect(h.overlay.initials.last == window)
+}
+
+// MARK: - Controls: pause / resume, restart, discard (stories 12–14)
+
+@Test @MainActor func pauseFreezesTheTimerAndResumeContinuesThroughTheService() async {
+    let h = Harness()
+    await h.coordinator.startRecording(region: display)
+    h.now = 110
+    await h.coordinator.pauseResumeRecording()
+    #expect(h.coordinator.recordingSession.state == .paused)
+    #expect(h.service.pauseCount == 1)
+    h.now = 150
+    #expect(h.coordinator.recordingElapsed == 10)        // frozen while paused
+    await h.coordinator.pauseResumeRecording()
+    #expect(h.coordinator.recordingSession.state == .recording)
+    #expect(h.service.resumeCount == 1)
+    h.now = 155
+    #expect(h.coordinator.recordingElapsed == 15)
+    #expect(h.ui.states.suffix(2) == [.paused, .recording])
+
+    await h.coordinator.stopRecording()
+    await h.coordinator.pauseResumeRecording()           // nothing to pause once the take ended
+    #expect(h.service.pauseCount == 1)
+}
+
+@Test @MainActor func restartThrowsTheTakeAwayAndStartsAgainWithTheSameOptions() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: false, confirmBeforeDiscard: true)
+    await h.coordinator.startRecording(region: display)
+    h.now = 120
+    await h.coordinator.restartRecording()
+
+    #expect(h.ui.restartConfirmations == 1)
+    #expect(h.service.cancelCount == 1)                  // the old stream is torn down …
+    #expect(h.service.starts.count == 2)                 // … and a new one started
+    #expect(h.service.starts.map(\.options).allSatisfy { $0 == h.service.starts.first?.options })
+    #expect(h.sink.removed.count == 1)                   // the partial file is deleted
+    #expect(h.coordinator.recordingSession.state == .recording)
+    #expect(h.coordinator.recordingElapsed == 0)         // the clock restarted
+    #expect(h.ui.countdowns.isEmpty)
+}
+
+@Test @MainActor func restartGoesBackThroughTheCountdownWhenOneIsConfigured() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3, confirmBeforeDiscard: false)
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.restartRecording()
+
+    #expect(h.ui.restartConfirmations == 0)              // confirmation turned off in Settings
+    #expect(h.ui.countdowns == [3, 3])
+    #expect(h.service.starts.count == 2)
+    #expect(h.coordinator.recordingSession.state == .recording)
+}
+
+@Test @MainActor func aDeclinedConfirmationLeavesTheTakeRunning() async {
+    let h = Harness()
+    h.ui.confirmResult = false
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.restartRecording()
+    await h.coordinator.discardRecording()
+
+    #expect(h.ui.restartConfirmations == 1 && h.ui.discardConfirmations == 1)
+    #expect(h.service.cancelCount == 0)
+    #expect(h.service.starts.count == 1)
+    #expect(h.coordinator.recordingSession.state == .recording)
+}
+
+@Test @MainActor func discardDeletesThePartialAndEndsInIdleWithNoSave() async {
+    let h = Harness()
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.pauseResumeRecording()
+    await h.coordinator.discardRecording()
+
+    #expect(h.ui.discardConfirmations == 1)
+    #expect(h.service.cancelCount == 1)
+    #expect(h.sink.removed.count == 1)
+    #expect(h.sink.saves.isEmpty)
+    #expect(h.coordinator.recordingSession.state == .idle)
+    #expect(h.ui.states.last == .idle)
+}
+
+@Test @MainActor func restartAndDiscardAreNoOpsWhenNothingIsRecording() async {
+    let h = Harness()
+    await h.coordinator.restartRecording()
+    await h.coordinator.discardRecording()
+    #expect(h.ui.restartConfirmations == 0 && h.ui.discardConfirmations == 0)
+    #expect(h.service.cancelCount == 0)
 }
 
 // MARK: - Countdown (story 10)
