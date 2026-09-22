@@ -409,6 +409,10 @@ final class EditorModel {
         case .crop:
             beginCropGesture(at: point)
         case .arrow, .line, .rectangle, .ellipse, .freehand, .text, .step, .highlight, .redact:
+            // The tool stays active after a mark is placed (the user switches tools, not
+            // us), so a press on the selection's own handles reshapes it instead of
+            // starting a new mark.
+            if beginHandleDrag(at: point) { return }
             draft = Draft(
                 tool: tool, start: point, current: point, points: [point], arrowStyle: arrowStyle,
                 redactionStyle: redactionStyle, redactionStrength: redactionStrength,
@@ -456,7 +460,6 @@ final class EditorModel {
             if let kind = draft.kind {
                 let id = document.add(AnnotationElement(kind: kind, style: style))
                 document.select(id)
-                tool = .select
             }
         }
     }
@@ -464,24 +467,28 @@ final class EditorModel {
     // MARK: - Select / move / resize (stories 29–31)
 
     private func beginSelectGesture(at point: Point) {
-        if let id = document.selectedID, let kind = document.element(id: id)?.kind {
-            if let endpoints = kind.endpointHandles {
-                // Later handles win a tie, so a bend resting near an endpoint stays grabbable.
-                if let hit = endpoints.last(where: { isWithinGrabRadius(point, of: $0.point) }) {
-                    drag = DragSession(id: id, mode: .reshape(hit.handle), start: point, current: point)
-                    return
-                }
-            } else if let handle = handle(at: point, of: kind.boundingBox) {
-                drag = DragSession(id: id, mode: .resize(handle), start: point, current: point)
-                return
-            }
-        }
+        if beginHandleDrag(at: point) { return }
         if let hit = document.elementID(at: point) {
             document.select(hit)
             drag = DragSession(id: hit, mode: .move, start: point, current: point)
         } else {
             document.select(nil)
         }
+    }
+
+    /// Starts a reshape/resize drag if `point` is on one of the selected element's
+    /// handles. Returns false (and starts nothing) otherwise.
+    private func beginHandleDrag(at point: Point) -> Bool {
+        guard let id = document.selectedID, let kind = document.element(id: id)?.kind else { return false }
+        if let endpoints = kind.endpointHandles {
+            // Later handles win a tie, so a bend resting near an endpoint stays grabbable.
+            guard let hit = endpoints.last(where: { isWithinGrabRadius(point, of: $0.point) }) else { return false }
+            drag = DragSession(id: id, mode: .reshape(hit.handle), start: point, current: point)
+        } else {
+            guard let handle = handle(at: point, of: kind.boundingBox) else { return false }
+            drag = DragSession(id: id, mode: .resize(handle), start: point, current: point)
+        }
+        return true
     }
 
     /// Starts a crop drag: grab a handle to resize, press inside to move, or press
