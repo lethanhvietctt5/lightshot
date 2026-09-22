@@ -150,11 +150,17 @@ public struct KeystrokeOverlayModel: Equatable, Sendable {
         guard !secureInput else { return }
         if settings.mode == .commandOnly, !press.modifiers.isCommandChord { return }
         let text = press.text
-        if let last = entries.indices.last, entries[last].text == text,
-           time - entries[last].lastTime < Self.repeatWindow {
-            entries[last].count += 1
-            entries[last].lastTime = time
-            return
+        if let last = entries.indices.last, entries[last].text == text {
+            // A held key auto-repeats: keep its pill alive, but it is one press, not `×n`.
+            if press.isRepeat {
+                entries[last].lastTime = max(entries[last].lastTime, time - Self.bumpDuration)
+                return
+            }
+            if time - entries[last].lastTime < Self.repeatWindow {
+                entries[last].count += 1
+                entries[last].lastTime = time
+                return
+            }
         }
         entries.append(Entry(text: text, lastTime: time, count: 1))
         if entries.count > Self.maxEntries { entries.removeFirst(entries.count - Self.maxEntries) }
@@ -198,5 +204,28 @@ public struct KeystrokeOverlayModel: Equatable, Sendable {
             result.append(KeystrokeItem(text: heldModifiers.glyphs, opacity: 1, scale: 1))
         }
         return result
+    }
+}
+
+/// Turns a macOS virtual key code (plus the characters it types unmodified) into the label the
+/// keystroke pill prints (story 30): named keys get their standard glyph, everything else the
+/// upper-cased character. Pure so the mapping is testable without an event.
+public enum KeyLabel {
+    private static let named: [Int: String] = [
+        36: "↩", 76: "⌤", 48: "⇥", 49: "Space", 51: "⌫", 117: "⌦", 53: "⎋", 71: "⌧",
+        123: "←", 124: "→", 125: "↓", 126: "↑", 115: "↖", 119: "↘", 116: "⇞", 121: "⇟",
+        122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8",
+        101: "F9", 109: "F10", 103: "F11", 111: "F12",
+        114: "?⃝",
+    ]
+
+    /// `nil` when the key prints nothing worth showing (a dead key, a bare modifier).
+    public static func label(keyCode: Int, characters: String?) -> String? {
+        if let name = named[keyCode] { return name }
+        guard let characters, let first = characters.unicodeScalars.first else { return nil }
+        // Control characters and private-use glyphs come from keys the table should have named;
+        // never print them as-is.
+        guard first.value >= 0x20, !(0xF700...0xF8FF).contains(first.value) else { return nil }
+        return String(first).uppercased()
     }
 }

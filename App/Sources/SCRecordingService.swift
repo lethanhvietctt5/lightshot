@@ -135,8 +135,10 @@ actor SCRecordingService: RecordingService {
                 ),
                 width: size.width, height: size.height,
                 clickHighlight: options.highlightClicks ? options.clickHighlight : nil,
-                keystrokes: options.showKeystrokes ? options.keystrokeOverlay : nil,
-                systemAppearanceIsDark: UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+                // Without the Input Monitoring grant the tap cannot exist; record without the pill
+                // rather than fail the take (the toggles ask for the grant, story 41).
+                keystrokes: options.showKeystrokes && KeyEventTap.isAuthorized ? options.keystrokeOverlay : nil,
+                systemAppearanceIsDark: KeystrokeOverlayAppearance.systemIsDark
             )
             let systemMeter = systemAudioMeter
             let output = StreamOutput(
@@ -172,7 +174,7 @@ actor SCRecordingService: RecordingService {
                     compositor.handle(.pointer(.moved(MouseEventMonitor.pointer())), at: 0)
                     pointerEvents.start(onEvent: forward)
                 }
-                if options.showKeystrokes { keyEvents.start(onEvent: forward) }
+                if options.showKeystrokes, KeyEventTap.isAuthorized { keyEvents.start(onEvent: forward) }
             }
             audioMeter.level = 0
             systemAudioMeter.level = 0

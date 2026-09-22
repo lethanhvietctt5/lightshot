@@ -49,6 +49,19 @@ private let cmdZ = KeyPress(label: "Z", modifiers: .command)
     #expect(m.items(at: 2.0).map(\.text) == ["⌘Z ×3", "⌘Z"])
 }
 
+@Test func aHeldKeyAutoRepeatsWithoutCountingOrBumping() {
+    var m = KeystrokeOverlayModel(settings: .standard)
+    let left = KeyPress(label: "←")
+    m.keyDown(left, at: 0)
+    for i in 1...40 { m.keyDown(KeyPress(label: "←", isRepeat: true), at: 0.5 + Double(i) * 0.05) }   // held for 2 s
+    let items = m.items(at: 2.5)
+    #expect(items.map(\.text) == ["←"])                            // no ×41
+    #expect(items[0].opacity == 1 && items[0].scale == 1)          // alive, not re-bumped
+    #expect(m.items(at: 4.5).isEmpty)                               // fades after release
+    m.keyDown(left, at: 5)                                         // a real second press starts fresh
+    #expect(m.items(at: 5).map(\.text) == ["←"])
+}
+
 @Test func onlyTheNewestThreePillsStay() {
     var m = KeystrokeOverlayModel(settings: .standard)
     for (i, key) in ["A", "B", "C", "D"].enumerated() { m.keyDown(KeyPress(label: key), at: Double(i) * 0.1) }

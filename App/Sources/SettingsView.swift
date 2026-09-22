@@ -187,6 +187,9 @@ struct SettingsView: View {
                 .opacity(model.recordingDefaults.highlightClicks ? 1 : 0.5)
             Toggle("Show keystrokes", isOn: $model.recordingDefaults.showKeystrokes)
                 .help("Show the keys you press as a pill in the recording. Needs Input Monitoring; asked for the first time you switch it on.")
+                .onChange(of: model.recordingDefaults.showKeystrokes) { _, on in
+                    if on { model.featureTurnedOn(.showKeystrokes) }
+                }
             Picker("Keys to show", selection: $model.recordingDefaults.keystrokeOverlay.mode) {
                 ForEach(KeystrokeDisplayMode.allCases, id: \.self) { Text($0.title).tag($0) }
             }

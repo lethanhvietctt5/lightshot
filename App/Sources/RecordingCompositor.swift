@@ -67,7 +67,7 @@ final class RecordingCompositor: @unchecked Sendable {
         keystrokes?.prune(at: time)
         // Story 31: re-check secure input on every rendered frame, not only on key events, so a
         // password field that takes focus between keys blacks the pill out at once.
-        if keystrokes != nil { keystrokes?.setSecureInput(IsSecureEventInputEnabled()) }
+        keystrokes?.setSecureInput(IsSecureEventInputEnabled())
 
         let circles = highlight?.circles(at: time) ?? []
         let pills = keystrokes?.items(at: time) ?? []
@@ -121,6 +121,9 @@ final class RecordingCompositor: @unchecked Sendable {
             in: Size(width: Double(width), height: Double(height)), margin: Double(style.margin)
         ).cgRect
 
+        // One blur of the whole group per frame (a GPU render plus readback), shared by every pill.
+        let backdrop = style.blur ? blurred(source, in: group, radius: style.blurRadius) : nil
+
         var x = group.minX
         for (index, item) in items.enumerated() {
             let rect = CGRect(x: x, y: group.minY, width: widths[index], height: pillHeight)
@@ -131,18 +134,20 @@ final class RecordingCompositor: @unchecked Sendable {
             context.translateBy(x: center.x, y: center.y)
             context.scaleBy(x: CGFloat(item.scale), y: CGFloat(item.scale))
             context.translateBy(x: -center.x, y: -center.y)
+            // The fade applies to the pill as a whole, not to backdrop, tint and text separately.
             context.setAlpha(CGFloat(item.opacity))
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
 
             let path = CGPath(roundedRect: rect, cornerWidth: pillHeight / 2, cornerHeight: pillHeight / 2, transform: nil)
             context.addPath(path)
             context.clip()
-            if style.blur, let backdrop = blurred(source, in: rect, radius: style.blurRadius) {
-                // Images draw upright in a bottom-left context; undo the frame flip around this rect.
+            if let backdrop, let groupRect = backdropRect {
+                // Images draw upright in a bottom-left context; undo the frame flip around the rect.
                 context.saveGState()
-                context.translateBy(x: 0, y: rect.midY)
+                context.translateBy(x: 0, y: groupRect.midY)
                 context.scaleBy(x: 1, y: -1)
-                context.translateBy(x: 0, y: -rect.midY)
-                context.draw(backdrop, in: rect)
+                context.translateBy(x: 0, y: -groupRect.midY)
+                context.draw(backdrop, in: groupRect)
                 context.restoreGState()
             }
             context.setFillColor(style.tint)
@@ -156,12 +161,17 @@ final class RecordingCompositor: @unchecked Sendable {
             context.textPosition = CGPoint(x: rect.minX + style.paddingX, y: 0)
             CTLineDraw(lines[index], context)
             context.restoreGState()
+            context.endTransparencyLayer()
             context.restoreGState()
         }
     }
 
-    /// The frame under `rect` (top-left pixel coordinates), blurred.
+    /// Where the last `blurred(_:in:)` image belongs, in top-left pixel coordinates.
+    private var backdropRect: CGRect?
+
+    /// The frame under `rect` (top-left pixel coordinates), blurred; `backdropRect` says where it goes.
     private func blurred(_ source: CVPixelBuffer, in rect: CGRect, radius: CGFloat) -> CGImage? {
+        backdropRect = nil
         // CoreImage is bottom-left; the frame's pixel rect flips vertically.
         let ciRect = CGRect(x: rect.minX, y: CGFloat(height) - rect.maxY, width: rect.width, height: rect.height)
             .integral.intersection(CGRect(x: 0, y: 0, width: width, height: height))
@@ -169,8 +179,9 @@ final class RecordingCompositor: @unchecked Sendable {
         let filter = CIFilter.gaussianBlur()
         filter.inputImage = CIImage(cvPixelBuffer: source).clampedToExtent()
         filter.radius = Float(radius)
-        guard let output = filter.outputImage else { return nil }
-        return ciContext.createCGImage(output, from: ciRect)
+        guard let output = filter.outputImage, let image = ciContext.createCGImage(output, from: ciRect) else { return nil }
+        backdropRect = CGRect(x: ciRect.minX, y: CGFloat(height) - ciRect.maxY, width: ciRect.width, height: ciRect.height)
+        return image
     }
 
     // MARK: - Buffers
@@ -256,6 +267,14 @@ struct KeystrokePillStyle {
             kCTForegroundColorAttributeName as NSAttributedString.Key: text,
         ]
         return CTLineCreateWithAttributedString(NSAttributedString(string: string, attributes: attributes))
+    }
+}
+
+extension KeystrokeOverlayAppearance {
+    /// Whether the system appearance is dark right now, readable off the main actor (the
+    /// compositor is built on the recorder's actor, where `NSApp.effectiveAppearance` is not).
+    static var systemIsDark: Bool {
+        UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
     }
 }
 

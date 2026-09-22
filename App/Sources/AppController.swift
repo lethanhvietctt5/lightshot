@@ -85,7 +85,8 @@ final class AppController: NSObject, CaptureUI {
     lazy var settingsModel = SettingsModel(
         store: settings,
         applyHotkeys: { [weak self] bindings in self?.applyHotkeys(bindings) ?? [] },
-        applyRetention: { [weak self] retention in self?.applyRetention(retention) }
+        applyRetention: { [weak self] retention in self?.applyRetention(retention) },
+        permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false }
     )
 
     /// First-run permission onboarding (LIG-21). The checklist of every permission the app requires,

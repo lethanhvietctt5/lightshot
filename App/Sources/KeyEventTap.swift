@@ -1,5 +1,6 @@
-import AppKit
+import CoreGraphics
 import Carbon.HIToolbox
+import Foundation
 import LightshotKit
 
 /// The OS side of `InputEventSource` for the keyboard (spec 0006, stories 30–31): a **listen-only**
@@ -15,25 +16,56 @@ final class KeyEventTap: InputEventSource, @unchecked Sendable {
     private let lock = NSLock()
     private var session: Session?
 
-    /// One tap's lifetime: the mach port, its run-loop source and the thread spinning it.
-    private final class Session {
+    /// Whether Input Monitoring is granted right now (no prompt).
+    static var isAuthorized: Bool { CGPreflightListenEventAccess() }
+
+    /// One tap's lifetime: the mach port, its run-loop source and the thread spinning it. The tap
+    /// thread and `stop()` (any thread) both touch it, so its state sits behind a lock.
+    private final class Session: @unchecked Sendable {
         let onEvent: @Sendable (InputEvent) -> Void
-        var tap: CFMachPort?
-        var runLoop: CFRunLoop?
+        private let lock = NSLock()
+        private var tap: CFMachPort?
+        private var runLoop: CFRunLoop?
+        private var cancelled = false
 
         init(onEvent: @escaping @Sendable (InputEvent) -> Void) { self.onEvent = onEvent }
+
+        func attach(_ tap: CFMachPort) {
+            lock.lock(); self.tap = tap; lock.unlock()
+        }
+
+        /// Called on the tap thread just before it starts spinning: records the run loop and
+        /// enables the tap, unless `stop()` already came — then the thread must not start at all,
+        /// or the tap would keep listening for the rest of the process (a privacy leak, story 31).
+        func begin(on runLoop: CFRunLoop) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !cancelled, let tap else { return false }
+            self.runLoop = runLoop
+            CGEvent.tapEnable(tap: tap, enable: true)
+            return true
+        }
+
+        func cancel() {
+            lock.lock()
+            cancelled = true
+            let tap = self.tap, runLoop = self.runLoop
+            lock.unlock()
+            if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+            if let runLoop { CFRunLoopStop(runLoop) }
+        }
 
         func handle(_ type: CGEventType, _ event: CGEvent) {
             switch type {
             case .tapDisabledByTimeout, .tapDisabledByUserInput:
                 // macOS disables a slow tap; ours only forwards, so re-enable and carry on.
-                if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                lock.lock(); let tap = self.tap; let cancelled = self.cancelled; lock.unlock()
+                if let tap, !cancelled { CGEvent.tapEnable(tap: tap, enable: true) }
             case .keyDown:
                 onEvent(.key(.secureInput(IsSecureEventInputEnabled())))
                 let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
                 let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                let characters = NSEvent(cgEvent: event)?.charactersIgnoringModifiers
-                guard let label = KeyLabel.label(keyCode: keyCode, characters: characters) else { return }
+                guard let label = KeyLabel.label(keyCode: keyCode, characters: Self.unmodifiedCharacters(of: event)) else { return }
                 onEvent(.key(.keyDown(KeyPress(label: label, modifiers: KeyModifiers(event.flags), isRepeat: isRepeat))))
             case .flagsChanged:
                 onEvent(.key(.secureInput(IsSecureEventInputEnabled())))
@@ -41,6 +73,17 @@ final class KeyEventTap: InputEventSource, @unchecked Sendable {
             default:
                 break
             }
+        }
+
+        /// What the key types with no modifier held — so ⇧1 prints "⇧1", as menus do, not "⇧!".
+        private static func unmodifiedCharacters(of event: CGEvent) -> String? {
+            guard let copy = event.copy() else { return nil }
+            copy.flags = []
+            var length = 0
+            var buffer = [UniChar](repeating: 0, count: 4)
+            copy.keyboardGetUnicodeString(maxStringLength: buffer.count, actualStringLength: &length, unicodeString: &buffer)
+            guard length > 0 else { return nil }
+            return String(utf16CodeUnits: buffer, count: length)
         }
     }
 
@@ -59,27 +102,26 @@ final class KeyEventTap: InputEventSource, @unchecked Sendable {
             },
             userInfo: info
         ) else {
-            // No Input Monitoring grant (the toolbar gate should have caught it): nothing to show.
+            // No Input Monitoring grant (the toggle gates should have caught it): nothing to show.
             Unmanaged<Session>.fromOpaque(info).release()
             return
         }
-        session.tap = tap
+        session.attach(tap)
         lock.lock()
         self.session = session
         lock.unlock()
 
-        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
+        let handle = TapHandle(tap: tap, source: CFMachPortCreateRunLoopSource(nil, tap, 0), sessionRef: info)
         let thread = Thread {
-            let runLoop = CFRunLoopGetCurrent()
-            session.runLoop = runLoop
-            CFRunLoopAddSource(runLoop, source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-            CFRunLoopRun()
-            CFMachPortInvalidate(tap)
-            Unmanaged<Session>.fromOpaque(info).release()
+            if let runLoop: CFRunLoop = CFRunLoopGetCurrent() {
+                CFRunLoopAddSource(runLoop, handle.source, .commonModes)
+                if session.begin(on: runLoop) { CFRunLoopRun() }
+            }
+            CFMachPortInvalidate(handle.tap)
+            Unmanaged<Session>.fromOpaque(handle.sessionRef).release()
         }
         thread.name = "dev.lightshot.keytap"
-        thread.qualityOfService = .userInteractive
+        thread.qualityOfService = QualityOfService.userInteractive
         thread.start()
     }
 
@@ -88,10 +130,16 @@ final class KeyEventTap: InputEventSource, @unchecked Sendable {
         let session = self.session
         self.session = nil
         lock.unlock()
-        guard let session else { return }
-        if let tap = session.tap { CGEvent.tapEnable(tap: tap, enable: false) }
-        if let runLoop = session.runLoop { CFRunLoopStop(runLoop) }
+        session?.cancel()
     }
+}
+
+/// What the tap thread needs, handed over once at start: CoreFoundation types are thread-safe but
+/// not marked `Sendable`.
+private struct TapHandle: @unchecked Sendable {
+    let tap: CFMachPort
+    let source: CFRunLoopSource?
+    let sessionRef: UnsafeMutableRawPointer
 }
 
 extension KeyModifiers {

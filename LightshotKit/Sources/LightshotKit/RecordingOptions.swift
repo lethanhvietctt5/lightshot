@@ -446,12 +446,23 @@ public struct RecordingOverrides: Equatable, Sendable {
 public extension RecordingDefaults {
     /// The Settings default for one toolbar toggle — what the toggle shows before any override.
     subscript(toggle: RecordingToggle) -> Bool {
-        switch toggle {
-        case .microphone: return recordMicrophone
-        case .computerAudio: return recordComputerAudio
-        case .camera: return recordCamera
-        case .highlightClicks: return highlightClicks
-        case .showKeystrokes: return showKeystrokes
+        get {
+            switch toggle {
+            case .microphone: return recordMicrophone
+            case .computerAudio: return recordComputerAudio
+            case .camera: return recordCamera
+            case .highlightClicks: return highlightClicks
+            case .showKeystrokes: return showKeystrokes
+            }
+        }
+        set {
+            switch toggle {
+            case .microphone: recordMicrophone = newValue
+            case .computerAudio: recordComputerAudio = newValue
+            case .camera: recordCamera = newValue
+            case .highlightClicks: highlightClicks = newValue
+            case .showKeystrokes: showKeystrokes = newValue
+            }
         }
     }
 }
