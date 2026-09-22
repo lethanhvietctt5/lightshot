@@ -519,7 +519,10 @@ public final class AppCoordinator {
     /// the result is routed by the after-recording setting.
     private func finished(_ file: URL) async {
         let duration = recordingSession.elapsed(at: clock())
-        let routeVideo = { await self.archiveAndRoute(PendingRecording(file: file, kind: .video, duration: duration)) }
+        // Read now: the take's own after-recording choice (Studio Mode → the editor) outlives
+        // the session, which is idle again by the time a GIF conversion ends.
+        let after = recordingSession.options?.afterRecording ?? settings.recordingDefaults.afterRecording
+        let routeVideo = { await self.archiveAndRoute(PendingRecording(file: file, kind: .video, duration: duration), after: after) }
         guard case let .gif(gifSettings)? = recordingSession.options?.output, let gifEncoder, let mediaSink else {
             await routeVideo()
             return
@@ -541,7 +544,7 @@ public final class AppCoordinator {
             // The intermediate video is not a file the user ever saw (spec: deleted after a
             // successful conversion); a delete failure only leaves it in scratch.
             try? mediaSink.delete(file)
-            await archiveAndRoute(PendingRecording(file: gif, kind: .gif, duration: duration))
+            await archiveAndRoute(PendingRecording(file: gif, kind: .gif, duration: duration), after: after)
         case .failure(is CancellationError):
             if await ui.resolveCancelledGIFConversion() {
                 await routeVideo()
@@ -558,8 +561,8 @@ public final class AppCoordinator {
     /// never duplicated), so what the overlay then copies, saves or deletes is history's record.
     /// A history failure is best-effort like a screenshot's: the take stays in scratch and is
     /// routed as before.
-    private func archiveAndRoute(_ recording: PendingRecording) async {
-        route(await archive(recording))
+    private func archiveAndRoute(_ recording: PendingRecording, after: AfterRecordingAction) async {
+        route(await archive(recording), after: after)
     }
 
     /// File a finished take into history (story 39); the result is history's copy, or the take
@@ -631,10 +634,11 @@ public final class AppCoordinator {
         }
     }
 
-    /// Route a finished take by the after-recording setting (story 33). The overlay path keeps
-    /// the file in scratch until the overlay decides; the other two save at once.
-    private func route(_ recording: PendingRecording) {
-        switch settings.recordingDefaults.afterRecording {
+    /// Route a finished take by its after-recording action (story 33; the Settings default, or
+    /// the editor for a Studio Mode take). The overlay path keeps the file in scratch until the
+    /// overlay decides; the other two save at once.
+    private func route(_ recording: PendingRecording, after: AfterRecordingAction) {
+        switch after {
         case .showOverlay:
             pendingRecording = recording
             ui.presentPostRecordingOverlay(recording)

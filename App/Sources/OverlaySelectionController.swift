@@ -18,6 +18,8 @@ final class OverlaySelectionController: OverlayController {
     private let openSettings: () -> Void
     /// The recorder toolbar's lazy permission gate: whether a toggle may switch on (story 41).
     private let permissionGate: (RecordingToggle) async -> Bool
+    /// A toggle's standing grant, for the toolbar's warning badges (LIG-42).
+    private let permissionStatus: (RecordingToggle) async -> CaptureAuthorizationStatus
     /// The microphones the toolbar's device menu lists (story 20).
     private let audioInputs: () async -> [AudioInputDevice]
     /// The cameras the toolbar's device menu lists (story 27), and the preview bubble it shows.
@@ -28,12 +30,14 @@ final class OverlaySelectionController: OverlayController {
     init(
         openSettings: @escaping () -> Void = {},
         permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
+        permissionStatus: @escaping (RecordingToggle) async -> CaptureAuthorizationStatus = { _ in .authorized },
         audioInputs: @escaping () async -> [AudioInputDevice] = { [] },
         cameras: @escaping () async -> [CameraDevice] = { [] },
         cameraBubble: CameraBubbleController? = nil
     ) {
         self.openSettings = openSettings
         self.permissionGate = permissionGate
+        self.permissionStatus = permissionStatus
         self.audioInputs = audioInputs
         self.cameras = cameras
         self.cameraBubble = cameraBubble
@@ -154,13 +158,15 @@ final class OverlaySelectionController: OverlayController {
                 self?.finishRecording(with: nil)
                 self?.openSettings()
             },
-            permissionGate: permissionGate
+            permissionGate: permissionGate,
+            permissionStatus: permissionStatus
         ) { [weak self] choice in
             self?.finishRecording(with: choice)
         }
 
         let window = makeOverlayWindow(frame: frame)
         window.onConfirm = { model.startVideo() }
+        window.onAlternateConfirm = { model.startGIF() }
         window.onCancel = { model.cancel() }
         window.onArrow = { dx, dy, shift in model.arrow(dx: dx, dy: dy, shift: shift) }
         window.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
@@ -238,6 +244,8 @@ final class OverlaySelectionController: OverlayController {
 /// full-screen surface.
 final class OverlayKeyWindow: NSWindow {
     var onConfirm: (() -> Void)?
+    /// ⌥-Return (the recording overlay's Record GIF, LIG-42); falls back to `onConfirm` when unset.
+    var onAlternateConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
     /// Arrow keys (the recording overlay nudges / ⇧-resizes the selection): unit dx/dy and ⇧.
     var onArrow: ((_ dx: Double, _ dy: Double, _ shift: Bool) -> Void)?
@@ -254,6 +262,9 @@ final class OverlayKeyWindow: NSWindow {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // The overlays set the cursor themselves (crosshair, hands, resize arrows); AppKit's
+        // cursor rects would keep snapping it back to the arrow on every move.
+        window.disableCursorRects()
         return window
     }
 
@@ -261,7 +272,8 @@ final class OverlayKeyWindow: NSWindow {
         let shift = event.modifierFlags.contains(.shift)
         switch event.keyCode {
         case 53: onCancel?()           // Escape
-        case 36, 76: onConfirm?()      // Return / keypad Enter
+        case 36, 76:                   // Return / keypad Enter; ⌥ picks the alternate action
+            if event.modifierFlags.contains(.option), let onAlternateConfirm { onAlternateConfirm() } else { onConfirm?() }
         case 123 where onArrow != nil: onArrow?(-1, 0, shift)   // ←
         case 124 where onArrow != nil: onArrow?(1, 0, shift)    // →
         case 125 where onArrow != nil: onArrow?(0, 1, shift)    // ↓

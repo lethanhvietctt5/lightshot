@@ -171,3 +171,15 @@ private let allOnDefaults = RecordingDefaults(
     #expect(MaxResolution.p1080.maxLongestEdge == 1920)
     #expect(MaxResolution.original.maxLongestEdge == nil)
 }
+
+@Test func afterRecordingComesFromSettingsUnlessTheTakeOverridesIt() {
+    let defaults = RecordingDefaults(afterRecording: .saveSilently)
+    let plain = RecordingOptions.resolve(region: region, output: .video, defaults: defaults)
+    #expect(plain.afterRecording == .saveSilently)
+    // Record in Studio Mode (LIG-42): this take goes to the editor whatever Settings say.
+    let studio = RecordingOptions.resolve(
+        region: region, output: .video, defaults: defaults, overrides: RecordingOverrides(afterRecording: .openEditor)
+    )
+    #expect(studio.afterRecording == .openEditor)
+    #expect(studio.microphone == plain.microphone)   // nothing else changes
+}
