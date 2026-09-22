@@ -138,11 +138,11 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.captureFullscreen(displayID: displayID) }
     }
 
-    /// Menu / hotkey / status-item entry point for Record Screen (spec 0006, stories 1–2): starts a
-    /// recording of the primary display, or stops the one in progress. The record-mode overlay that
-    /// picks a rect or window arrives with LIG-29.
+    /// Menu / hotkey / status-item entry point for Record Screen (spec 0006, stories 1–7): opens the
+    /// recording overlay to pick a rect, window or display and starts the take, or stops the one in
+    /// progress.
     func toggleRecording() {
-        Task { await coordinator.toggleRecording(region: .display(id: UInt32(CGMainDisplayID()))) }
+        Task { await coordinator.toggleRecording() }
     }
 
     /// Whether a take is active — the menu row and status item key off this.

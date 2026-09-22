@@ -72,6 +72,7 @@ private final class StubOverlay: OverlayController {
     }
     func selectRegion() async -> CaptureRegion? { callCount += 1; return region }
     func selectWindow() async -> CaptureRegion? { windowCallCount += 1; return windowRegion }
+    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? { nil }
 }
 
 // Feeds a canned open-file result and records how often the panel was opened. `loadImage(from:)`
@@ -107,6 +108,8 @@ private final class StubSettings: SettingsStore {
     var historyRetention = 50
     var launchAtLogin = false
     var recordingDefaults = RecordingDefaults(countdownEnabled: false)
+    var rememberLastRecordingArea = false
+    var lastRecordingRegion: CaptureRegion?
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the

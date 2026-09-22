@@ -282,14 +282,26 @@ public final class AppCoordinator {
     /// Seconds of footage so far, excluding pauses (story 11's timer).
     public var recordingElapsed: TimeInterval { recordingSession.elapsed(at: clock()) }
 
-    /// The `recordScreen` hotkey / menu row (stories 1–2): one chord starts a recording of `region`
-    /// when idle, and stops the one in progress otherwise.
-    public func toggleRecording(region: CaptureRegion) async {
+    /// The `recordScreen` hotkey / menu row (stories 1–2): one chord opens the recording overlay
+    /// when idle, and stops the take in progress otherwise.
+    public func toggleRecording() async {
         if isRecording {
             await stopRecording()
         } else {
-            await startRecording(region: region)
+            await recordScreen()
         }
+    }
+
+    /// Record Screen from idle (stories 3–7): the recording overlay runs **first** to resolve a
+    /// `CaptureRegion` — a rect, a window or a display, pre-filled with the last one when
+    /// "remember last recording area" is on — and then the take starts on it. Escape (`nil`) is a
+    /// silent no-op. The chosen region is remembered for next time.
+    public func recordScreen() async {
+        guard recordingService != nil, !isRecording, !isStartingRecording else { return }
+        let initial = settings.rememberLastRecordingArea ? settings.lastRecordingRegion : nil
+        guard let region = await overlay.selectRecordingRegion(initial: initial) else { return }
+        settings.lastRecordingRegion = region
+        await startRecording(region: region)
     }
 
     /// Start a video recording of `region` (stories 1, 6). First-run onboarding gates it exactly as

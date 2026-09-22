@@ -35,6 +35,15 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
+    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? {
+        resolveStaleContinuation()
+        let windows = await Self.hoverableWindows()
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            presentRecordingOverlay(windows: windows, initial: initial)
+        }
+    }
+
     /// Guard against an overlapping presentation leaving a stale continuation: resolve the previous
     /// one to `nil` (a silent no-op) before installing a new one.
     private func resolveStaleContinuation() {
@@ -72,6 +81,33 @@ final class OverlaySelectionController: OverlayController {
         window.onConfirm = { model.confirmHovered() }
         window.onCancel = { model.cancel() }
         window.contentView = NSHostingView(rootView: WindowHoverOverlayView(model: model))
+        present(window, at: frame)
+    }
+
+    /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
+    /// v1 covers the main screen, like the other two modes.
+    private func presentRecordingOverlay(windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?) {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let scale = Double(screen?.backingScaleFactor ?? 2)
+        let screenNumber = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        let displayID = UInt32(screenNumber ?? CGMainDisplayID())
+
+        let model = RecordingOverlayModel(
+            bounds: Rect(x: 0, y: 0, width: frame.width, height: frame.height),
+            pixelScale: scale,
+            displayID: displayID,
+            windows: windows,
+            initial: initial
+        ) { [weak self] region in
+            self?.finish(with: region)
+        }
+
+        let window = makeOverlayWindow(frame: frame)
+        window.onConfirm = { model.confirm() }
+        window.onCancel = { model.cancel() }
+        window.onArrow = { dx, dy, shift in model.arrow(dx: dx, dy: dy, shift: shift) }
+        window.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
         present(window, at: frame)
     }
 
@@ -147,14 +183,21 @@ final class OverlaySelectionController: OverlayController {
 final class OverlayKeyWindow: NSWindow {
     var onConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
+    /// Arrow keys (the recording overlay nudges / ⇧-resizes the selection): unit dx/dy and ⇧.
+    var onArrow: ((_ dx: Double, _ dy: Double, _ shift: Bool) -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        let shift = event.modifierFlags.contains(.shift)
         switch event.keyCode {
         case 53: onCancel?()           // Escape
         case 36, 76: onConfirm?()      // Return / keypad Enter
+        case 123 where onArrow != nil: onArrow?(-1, 0, shift)   // ←
+        case 124 where onArrow != nil: onArrow?(1, 0, shift)    // →
+        case 125 where onArrow != nil: onArrow?(0, 1, shift)    // ↓
+        case 126 where onArrow != nil: onArrow?(0, -1, shift)   // ↑
         default: super.keyDown(with: event)
         }
     }

@@ -8,7 +8,7 @@ import Foundation
 /// spec's two selection modes are genuinely different targets — a dragged rectangle (LIG-13,
 /// stories 2–4) versus a hovered window id (LIG-14, stories 6–7). Keeping it an enum means the
 /// window case is an addition, not a breaking change to the capture signature.
-public enum CaptureRegion: Equatable, Sendable {
+public enum CaptureRegion: Equatable, Codable, Sendable {
     /// A rectangular selection in **screen point coordinates** (top-left origin), as dragged in
     /// the overlay. The concrete `CaptureService` maps it to the target display's native pixels.
     case rect(Rect)
