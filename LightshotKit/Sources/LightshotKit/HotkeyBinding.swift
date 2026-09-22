@@ -40,7 +40,19 @@ public struct HotkeyBinding: Equatable, Hashable, Codable, Sendable {
     }
 
     /// The chord as displayed to the user, e.g. `⇧⌘4`.
-    public var displayString: String { modifiers.displayString + keyLabel.uppercased() }
+    public var displayString: String { modifiers.displayString + displayKey }
+
+    /// The key as the system writes it. A chord recorded before the recorder asked for the unshifted
+    /// character stored Shift's symbol (`⇧⌘4` saved as `"$"`); on the US digit row that symbol is
+    /// read back as its digit.
+    private var displayKey: String {
+        if modifiers.contains(.shift), let digit = Self.shiftedDigits[keyLabel] { return digit }
+        return keyLabel.uppercased()
+    }
+
+    private static let shiftedDigits: [String: String] = [
+        "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+    ]
 }
 
 /// Two-or-more actions that resolve to the same chord — the shape the settings UI surfaces so a
