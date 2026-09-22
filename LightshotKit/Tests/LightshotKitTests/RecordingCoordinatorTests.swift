@@ -77,6 +77,38 @@ private final class SpyMediaSink: MediaSink {
         if trashFails { throw Failure() }
         trashed.append(url)
     }
+    private(set) var deleted: [URL] = []
+    func delete(_ url: URL) throws { deleted.append(url) }
+}
+
+/// A GIF encoder the test steers: it can wait at a gate (to be cancelled mid-way), report
+/// progress, or fail.
+private final class FakeGIFEncoder: GIFEncoding, @unchecked Sendable {
+    struct Failure: Error {}
+    var fails = false
+    var holds = false
+    private(set) var encodes: [(video: URL, output: URL, settings: GIFSettings)] = []
+    private var gate: CheckedContinuation<Void, Never>?
+
+    func encode(video: URL, to output: URL, settings: GIFSettings, progress: @escaping @Sendable (Double) -> Void) async throws {
+        encodes.append((video, output, settings))
+        progress(0.5)
+        if holds {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { gate = $0 }
+            } onCancel: {
+                Task { @MainActor [self] in self.release() }
+            }
+            try Task.checkCancellation()
+        }
+        if fails { throw Failure() }
+        progress(1)
+    }
+
+    @MainActor func release() {
+        gate?.resume()
+        gate = nil
+    }
 }
 
 @MainActor
@@ -96,6 +128,12 @@ private final class SpyUI: CaptureUI {
     private(set) var finished: [URL] = []
     private(set) var overlays: [PendingRecording] = []
     private(set) var editors: [URL] = []
+    private(set) var gifPopups = 0
+    private(set) var gifDismissals = 0
+    private(set) var gifProgress: [Double] = []
+    var gifCancel: (() -> Void)?
+    var keepVideoOnCancel = true
+    private(set) var cancelResolutions = 0
     private(set) var recordingFailures: [RecordingError] = []
     private(set) var permissionDeniedCount = 0
 
@@ -117,6 +155,10 @@ private final class SpyUI: CaptureUI {
     func presentRecordingFinished(at url: URL) { finished.append(url) }
     func presentPostRecordingOverlay(_ recording: PendingRecording) { overlays.append(recording) }
     func openVideoEditor(at url: URL) { editors.append(url) }
+    func presentGIFConversion(cancel: @escaping () -> Void) { gifPopups += 1; gifCancel = cancel }
+    func updateGIFConversion(progress: Double) { gifProgress.append(progress) }
+    func dismissGIFConversion() { gifDismissals += 1 }
+    func resolveCancelledGIFConversion() async -> Bool { cancelResolutions += 1; return keepVideoOnCancel }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
 }
 
@@ -187,6 +229,7 @@ private final class ManualClock {
 private final class Harness {
     let service: FakeRecordingService
     let sink = SpyMediaSink()
+    let gif = FakeGIFEncoder()
     let ui = SpyUI()
     let settings = StubSettings()
     let clock = ManualClock()
@@ -210,6 +253,7 @@ private final class Harness {
             settings: settings,
             recordingService: service,
             mediaSink: sink,
+            gifEncoder: gif,
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
             sleep: { seconds in await clock.sleep(seconds) },
             clock: { clock.now },
@@ -317,6 +361,74 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(h.coordinator.copyPendingRecordingFile() == nil)
     h.coordinator.dismissPendingRecording()
     #expect(h.sink.copied.count == 1 && h.sink.saves.count == 4)
+}
+
+// MARK: - GIF conversion (stories 37–38)
+
+@MainActor private func finishedGIFTake(_ h: Harness) async {
+    h.settings.recordingDefaults.afterRecording = .showOverlay
+    await h.coordinator.startRecording(region: display, output: .gif)
+    h.now = 130
+    await h.coordinator.stopRecording()
+}
+
+@Test @MainActor func aGIFTakeIsConvertedThenRoutedAsAGIFAndTheVideoIsDeleted() async {
+    let h = Harness()
+    h.settings.recordingDefaults.gif = GIFSettings(fps: 10, quality: 0.5, maxWidth: 320, optimize: false)
+    await finishedGIFTake(h)
+    #expect(h.gif.encodes.count == 1)
+    #expect(h.gif.encodes.first?.video == take)
+    #expect(h.gif.encodes.first?.output == URL(fileURLWithPath: "/tmp/scratch/take.gif"))
+    #expect(h.gif.encodes.first?.settings == h.settings.recordingDefaults.gif)
+    #expect(h.ui.gifPopups == 1 && h.ui.gifDismissals == 1)
+    #expect(h.sink.deleted == [take])                                // the intermediate video
+    #expect(h.ui.overlays == [PendingRecording(file: URL(fileURLWithPath: "/tmp/scratch/take.gif"), kind: .gif, duration: 30)])
+    #expect(h.ui.recordingFailures.isEmpty)
+}
+
+@Test @MainActor func progressReachesThePopupOnTheMainActor() async {
+    let h = Harness()
+    await finishedGIFTake(h)
+    await Task.yield()
+    #expect(h.ui.gifProgress.contains(0.5))
+}
+
+@Test @MainActor func cancellingOffersTheVideoInsteadOrDeletesTheTake() async {
+    let h = Harness()
+    h.gif.holds = true
+    let take1 = Task { await finishedGIFTake(h) }
+    await Task.yield()
+    while h.ui.gifCancel == nil { await Task.yield() }
+    h.ui.gifCancel?()                                                // Cancel in the popup
+    await take1.value
+    #expect(h.ui.cancelResolutions == 1)
+    #expect(h.ui.overlays.last?.kind == .video)                       // "Keep the video instead"
+    #expect(h.sink.deleted.isEmpty)
+
+    h.ui.keepVideoOnCancel = false
+    h.ui.gifCancel = nil
+    let take2 = Task { await finishedGIFTake(h) }
+    while h.ui.gifCancel == nil { await Task.yield() }
+    h.ui.gifCancel?()
+    await take2.value
+    #expect(h.ui.overlays.count == 1)                                 // nothing routed
+    #expect(h.sink.deleted == [take])                                 // the take is gone
+    #expect(h.ui.gifDismissals == 2)
+}
+
+@Test @MainActor func aFailedConversionSurfacesAndFallsBackToTheVideo() async {
+    let h = Harness()
+    h.gif.fails = true
+    await finishedGIFTake(h)
+    #expect(h.ui.recordingFailures.count == 1)
+    #expect(h.ui.overlays.last == PendingRecording(file: take, kind: .video, duration: 30))
+    #expect(h.sink.deleted.isEmpty)
+}
+
+@Test @MainActor func aVideoTakeNeverTouchesTheEncoder() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    #expect(h.gif.encodes.isEmpty && h.ui.gifPopups == 0)
 }
 
 @Test @MainActor func aNewTakeKeepsThePendingOneBeforeItStarts() async {
@@ -460,9 +572,9 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(options?.computerAudio == false)              // untouched toggles keep the default
     #expect(h.settings.recordingDefaults == RecordingDefaults(countdownEnabled: false, afterRecording: .saveSilently))   // not written back
 
-    // Until R13 converts it, a GIF take is delivered as the MP4 the writer produced.
+    // A GIF take is converted (R13) and the GIF is what gets saved.
     await h.coordinator.stopRecording()
-    #expect(h.sink.saves.first?.to.pathExtension == "mp4")
+    #expect(h.sink.saves.first?.to.pathExtension == "gif")
 }
 
 @Test @MainActor func escapeInTheOverlayIsASilentNoOp() async {

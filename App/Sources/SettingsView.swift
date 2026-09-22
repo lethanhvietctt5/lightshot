@@ -169,6 +169,25 @@ struct SettingsView: View {
             .help("HEVC halves the file size; H.264 plays everywhere.")
             Toggle("Scale Retina recordings to 1x", isOn: $model.recordingDefaults.video.scaleRetinaTo1x)
                 .help("Record at half the pixel size on a Retina display.")
+            Picker("GIF frame rate", selection: $model.recordingDefaults.gif.fps) {
+                ForEach([10, 15, 20, 30], id: \.self) { Text("\($0) fps").tag($0) }
+            }
+            .help("Fewer frames per second make a smaller GIF; 15 suits most screen recordings.")
+            HStack {
+                Text("GIF quality")
+                Slider(value: $model.recordingDefaults.gif.quality, in: 0...1, step: 0.1)
+                Text("\(Int((model.recordingDefaults.gif.quality * 100).rounded()))%")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .help("Lower quality uses fewer colours, which shrinks the file but can band gradients.")
+            Picker("GIF maximum width", selection: $model.recordingDefaults.gif.maxWidth) {
+                ForEach([200, 256, 320, 480, 500, 640, 800, 960, 1200], id: \.self) { Text("\($0) px").tag(Optional($0)) }
+                Text("Original").tag(Int?.none)
+            }
+            .help("Wider recordings are scaled down to this width, keeping their aspect.")
+            Toggle("Optimise GIFs", isOn: $model.recordingDefaults.gif.optimize)
+                .help("Only write what changed between frames. Much smaller for mostly-static recordings.")
             Toggle("Show the cursor", isOn: $model.recordingDefaults.showCursor)
             Toggle("Highlight clicks", isOn: $model.recordingDefaults.highlightClicks)
                 .help("Draw a halo under the pointer in recordings, with a ring on every click.")

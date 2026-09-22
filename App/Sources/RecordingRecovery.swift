@@ -26,6 +26,11 @@ enum RecordingRecovery {
             switch file.pathExtension {
             case "mp4":
                 recovered.append(file)   // finished, never delivered
+            case "gif":
+                // A GIF conversion that never finished (R13): the encoder removes its partial on
+                // every path it controls, so one still here belonged to a crash. Its MP4 is
+                // recovered above as a video.
+                try? fileManager.removeItem(at: file)
             case "mov":
                 let asset = AVURLAsset(url: file)
                 let playable = (try? await asset.load(.isPlayable)) ?? false

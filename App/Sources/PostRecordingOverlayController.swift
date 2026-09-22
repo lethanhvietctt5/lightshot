@@ -50,8 +50,9 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
             save: { [weak self] in self?.settle { $0.save(model.name) } },
             delete: { [weak self] in self?.deleteAfterConfirming() },
             quickLook: { [weak self] in self?.toggleQuickLook() },
-            openEditor: actions.openEditor.map { open in { [weak self] in open(); self?.close() } },
-            trim: actions.trim.map { trim in { [weak self] in trim(); self?.close() } },
+            // A GIF cannot be trimmed or edited in v1 (spec: the overlay hides both for a GIF).
+            openEditor: recording.kind == .gif ? nil : actions.openEditor.map { open in { [weak self] in open(); self?.close() } },
+            trim: recording.kind == .gif ? nil : actions.trim.map { trim in { [weak self] in trim(); self?.close() } },
             touched: { [weak self] in self?.restartTimeout() }
         )
         let hosting = NSHostingView(rootView: view)
@@ -126,7 +127,7 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible { QLPreviewPanel.shared().orderOut(nil) }
-        model?.player.pause()
+        model?.player?.pause()
         panel?.orderOut(nil)
         panel = nil
         model = nil
@@ -220,20 +221,26 @@ private final class KeyablePanel: NSPanel {
 @Observable
 private final class PostRecordingModel {
     let recording: PendingRecording
-    let player: AVQueuePlayer
-    private let looper: AVPlayerLooper
+    /// The looping preview for a video; a GIF animates itself in an image view.
+    let player: AVQueuePlayer?
+    private let looper: AVPlayerLooper?
     var name: String
     let fileSize: Int64?
 
     init(recording: PendingRecording) {
         self.recording = recording
-        let player = AVQueuePlayer()
-        player.isMuted = true
-        looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: recording.file))
-        self.player = player
+        if recording.kind == .video {
+            let player = AVQueuePlayer()
+            player.isMuted = true
+            looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: recording.file))
+            self.player = player
+            player.play()
+        } else {
+            player = nil
+            looper = nil
+        }
         name = recording.file.deletingPathExtension().lastPathComponent
         fileSize = (try? FileManager.default.attributesOfItem(atPath: recording.file.path)[.size] as? NSNumber)?.int64Value
-        player.play()
     }
 
     var durationText: String {
@@ -260,7 +267,7 @@ private struct PostRecordingOverlayView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            LoopingPlayerView(player: model.player)
+            preview
                 .frame(width: 280, height: 158)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(alignment: .bottomTrailing) {
@@ -303,6 +310,14 @@ private struct PostRecordingOverlayView: View {
         .onHover { _ in touched() }
     }
 
+    @ViewBuilder private var preview: some View {
+        if let player = model.player {
+            LoopingPlayerView(player: player)
+        } else {
+            AnimatedImageView(url: model.recording.file)
+        }
+    }
+
     /// The right-click menu mirrors the buttons (story 32), with the same disabled entries.
     @ViewBuilder private var menuItems: some View {
         Button("Copy File", action: copy)
@@ -327,6 +342,23 @@ private struct PostRecordingOverlayView: View {
         .disabled(action == nil)
         .help(action == nil ? "\(title) — coming with the video editor" : title)
     }
+}
+
+/// A GIF plays itself: `NSImageView` animates a multi-frame image (story 37's "loops in Preview").
+private struct AnimatedImageView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> NSImageView {
+        let view = NSImageView()
+        view.imageScaling = .scaleProportionallyUpOrDown
+        view.animates = true
+        view.image = NSImage(contentsOf: url)
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.black.cgColor
+        return view
+    }
+
+    func updateNSView(_ view: NSImageView, context: Context) {}
 }
 
 /// A bare `AVPlayerLayer`: no transport controls to swallow the drag that starts on the preview.

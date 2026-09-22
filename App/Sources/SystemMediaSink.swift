@@ -28,4 +28,8 @@ final class SystemMediaSink: MediaSink {
     func trash(_ url: URL) throws {
         try FileManager.default.trashItem(at: url, resultingItemURL: nil)
     }
+
+    func delete(_ url: URL) throws {
+        try FileManager.default.removeItem(at: url)
+    }
 }
