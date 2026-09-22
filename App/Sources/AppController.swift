@@ -40,6 +40,9 @@ final class AppController: NSObject, CaptureUI {
     private let recordingService = SCRecordingService()
     /// The 3-2-1 before a take (story 10).
     private let countdown = CountdownOverlayController()
+    /// The pause / stop / restart / discard pill and the outside-the-frame dimming (stories 12–16).
+    private let recordingControls = RecordingControlsController()
+    private let recordingDim = RecordingDimController()
     /// The previous recording state, so `presentRecordingState` can play the start / stop cues on
     /// the transitions that deserve them.
     private var lastRecordingState: RecordingSession.State = .idle
@@ -59,6 +62,7 @@ final class AppController: NSObject, CaptureUI {
             history: history,
             recordingService: recordingService,
             mediaSink: SystemMediaSink(),
+            scratchDirectory: Self.supportDirectory,
             ui: self
         )
         // Enforce the persisted retention setting on the history store at launch (story 54): the
@@ -125,8 +129,8 @@ final class AppController: NSObject, CaptureUI {
         case .fullscreen: captureFullscreen()
         case .repeatLast: repeatLast()
         case .recordScreen: toggleRecording()
-        // Rebindable now (LIG-27) but inert until the recording controls land (LIG-31).
-        case .pauseResumeRecording, .restartRecording: break
+        case .pauseResumeRecording: pauseResumeRecording()
+        case .restartRecording: restartRecording()
         }
     }
 
@@ -148,6 +152,62 @@ final class AppController: NSObject, CaptureUI {
     /// progress.
     func toggleRecording() {
         Task { await coordinator.toggleRecording() }
+    }
+
+    /// Hotkey / pill entry points for the recording controls (stories 12–14).
+    func pauseResumeRecording() {
+        Task { await coordinator.pauseResumeRecording() }
+    }
+
+    func restartRecording() {
+        Task { await coordinator.restartRecording() }
+    }
+
+    func discardRecording() {
+        Task { await coordinator.discardRecording() }
+    }
+
+    /// Crash recovery at launch (story 18): finalise any take a previous session left behind in the
+    /// scratch directory, deliver it through the same sink as a normal take (never overwriting —
+    /// a name clash gets a numbered suffix), and surface it.
+    func recoverOrphanedRecordings() {
+        Task {
+            let files = await RecordingRecovery.recover(in: coordinator.recordingScratchDirectory)
+            let sink = SystemMediaSink()
+            var recovered: [URL] = []
+            for file in files {
+                let destination = Self.uniqueDestination(settings.recordingDestination(pathExtension: file.pathExtension))
+                do {
+                    try sink.save(file, to: destination)
+                    recovered.append(destination)
+                } catch {
+                    presentRecordingFailure(.systemFailure("A recovered recording could not be saved: \(error.localizedDescription)"))
+                }
+            }
+            guard let first = recovered.first else { return }
+            NSWorkspace.shared.activateFileViewerSelecting(recovered)
+            let alert = NSAlert()
+            alert.messageText = recovered.count == 1 ? "Your recording was recovered" : "Your recordings were recovered"
+            alert.informativeText = recovered.count == 1
+                ? "Lightshot quit before the recording finished. It was saved as \(first.lastPathComponent)."
+                : "Lightshot quit before \(recovered.count) recordings finished. They were saved to \(first.deletingLastPathComponent().path)."
+            alert.addButton(withTitle: "OK")
+            WindowPresenter.activateApp()
+            alert.runModal()
+        }
+    }
+
+    /// `name.ext`, or `name 2.ext`, `name 3.ext`… when that file already exists.
+    private static func uniqueDestination(_ url: URL) -> URL {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return url }
+        let directory = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        for n in 2... {
+            let candidate = directory.appendingPathComponent("\(stem) \(n)").appendingPathExtension(url.pathExtension)
+            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return url
     }
 
     /// Whether a take is active — the menu row and status item key off this.
@@ -357,6 +417,69 @@ final class AppController: NSObject, CaptureUI {
         }
         lastRecordingState = session.state
         recordingStateObserver?(session)
+        updateRecordingSurfaces(session)
+    }
+
+    /// The pill and the dimming follow the session: shown while recording or paused (per Settings),
+    /// gone otherwise — including during the countdown, when the user is still setting up.
+    private func updateRecordingSurfaces(_ session: RecordingSession) {
+        let defaults = settings.recordingDefaults
+        switch session.state {
+        case .recording, .paused:
+            if defaults.showRecordingControls {
+                recordingControls.show(
+                    position: defaults.controlsPosition,
+                    isPaused: session.state == .paused,
+                    elapsed: { [weak self] in self?.recordingElapsed ?? 0 },
+                    actions: RecordingControlsController.Actions(
+                        pauseResume: { [weak self] in self?.pauseResumeRecording() },
+                        stop: { [weak self] in self?.toggleRecording() },
+                        restart: { [weak self] in self?.restartRecording() },
+                        discard: { [weak self] in self?.discardRecording() }
+                    )
+                )
+            }
+            if defaults.dimScreenWhileRecording, let region = session.options?.region {
+                recordingDim.show(outside: region)
+            }
+        default:
+            recordingControls.hide()
+            recordingDim.hide()
+        }
+    }
+
+    func confirmRecordingRestart() async -> Bool {
+        confirmDiscard(
+            title: "Cancel this recording and start a new one?",
+            message: "The take so far will be thrown away and the recording will start again.",
+            button: "Start Over"
+        )
+    }
+
+    func confirmRecordingDiscard() async -> Bool {
+        confirmDiscard(
+            title: "Delete this recording?",
+            message: "The take so far will be deleted. This can't be undone.",
+            button: "Delete"
+        )
+    }
+
+    /// A modal confirmation with a "Don't ask again" box that clears `confirmBeforeDiscard`.
+    private func confirmDiscard(title: String, message: String, button: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Don't ask again"
+        WindowPresenter.activateApp()
+        let confirmed = alert.runModal() == .alertFirstButtonReturn
+        if confirmed, alert.suppressionButton?.state == .on {
+            settings.recordingDefaults.confirmBeforeDiscard = false
+        }
+        return confirmed
     }
 
     func runRecordingCountdown(seconds: Int) async -> Bool {
@@ -515,14 +638,20 @@ final class AppController: NSObject, CaptureUI {
         return window
     }
 
-    /// Where the local history keeps its owned image copies + index: Application Support, under the
-    /// bundle id, so it is per-user, out of the way, and survives relaunches. Local-only — a v1
-    /// guardrail (no cloud, no accounts).
-    private static var historyDirectory: URL {
+    /// Lightshot's Application Support folder: per-user, out of the way, and it survives relaunches
+    /// and the OS's temp-file purge — which is what in-progress recordings need so a crashed take
+    /// is still there to recover days later (story 18).
+    private static var supportDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
         let bundleID = Bundle.main.bundleIdentifier ?? "dev.lightshot.app"
-        return base.appendingPathComponent(bundleID, isDirectory: true).appendingPathComponent("History", isDirectory: true)
+        return base.appendingPathComponent(bundleID, isDirectory: true)
+    }
+
+    /// Where the local history keeps its owned image copies + index. Local-only — a v1 guardrail
+    /// (no cloud, no accounts).
+    private static var historyDirectory: URL {
+        supportDirectory.appendingPathComponent("History", isDirectory: true)
     }
 
     private func openScreenRecordingSettings() {

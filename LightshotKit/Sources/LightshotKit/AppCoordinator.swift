@@ -28,6 +28,11 @@ public protocol CaptureUI: AnyObject {
     /// Show the 3-2-1 countdown (story 10) and return once it reaches zero — or `false` if the user
     /// pressed Escape, in which case the take is discarded before anything is recorded.
     func runRecordingCountdown(seconds: Int) async -> Bool
+    /// Ask before throwing the current take away for a fresh one (story 14). The app's alert offers
+    /// "don't ask again", which clears `RecordingDefaults.confirmBeforeDiscard`.
+    func confirmRecordingRestart() async -> Bool
+    /// Ask before deleting the current take (story 14); same "don't ask again" contract.
+    func confirmRecordingDiscard() async -> Bool
     /// A recording was saved at `url` (R2's outcome until the post-recording overlay lands, R12).
     func presentRecordingFinished(at url: URL)
     /// Surface a distinct, non-blank message for a recording failure other than permission/cancel.
@@ -331,18 +336,31 @@ public final class AppCoordinator {
         guard (try? recordingSession.start(options, writingTo: url, at: clock())) != nil else { return }
         ui.presentRecordingState(recordingSession)
 
-        if recordingSession.state == .countdown {
-            let completed = await ui.runRecordingCountdown(seconds: options.countdownSeconds)
-            // A stop during the countdown already discarded the take (see `stopRecording`).
-            guard recordingSession.state == .countdown else { return }
-            guard completed, (try? recordingSession.beginRecording(at: clock())) != nil else {
-                if let partialFile = try? recordingSession.discard() { mediaSink?.removeFile(at: partialFile) }
-                ui.presentRecordingState(recordingSession)
-                return
-            }
-            ui.presentRecordingState(recordingSession)
-        }
+        guard await runCountdownIfNeeded(options) else { return }
+        await startStream(options, writingTo: url)
+    }
 
+    /// The countdown step shared by a fresh take and a restart: when the session is counting down,
+    /// run the UI countdown and begin recording at zero. Returns whether the stream should start —
+    /// `false` when the user escaped (the take is discarded here) or a stop already ended it.
+    private func runCountdownIfNeeded(_ options: RecordingOptions) async -> Bool {
+        guard recordingSession.state == .countdown else { return recordingSession.state == .recording }
+        let completed = await ui.runRecordingCountdown(seconds: options.countdownSeconds)
+        // A stop during the countdown already discarded the take (see `stopRecording`).
+        guard recordingSession.state == .countdown else { return false }
+        guard completed, (try? recordingSession.beginRecording(at: clock())) != nil else {
+            _ = try? recordingSession.discard()   // nothing was written: no file to delete
+            ui.presentRecordingState(recordingSession)
+            return false
+        }
+        ui.presentRecordingState(recordingSession)
+        return true
+    }
+
+    /// Ask the service to start streaming — the last step of a fresh take and of a restart. Guarded
+    /// so a hotkey press while the service is still handing the stream back is ignored.
+    private func startStream(_ options: RecordingOptions, writingTo url: URL) async {
+        guard let recordingService else { return }
         isStartingRecording = true
         let outcome = await recordingService.start(options, writingTo: url) { [weak self] error in
             Task { @MainActor in self?.recordingDidFail(error) }
@@ -351,6 +369,62 @@ public final class AppCoordinator {
         if case let .failure(error) = outcome {
             failRecording(with: error)
         }
+    }
+
+    /// The `pauseResumeRecording` hotkey / pill button (story 13): pause a running take (the timer
+    /// freezes, the service stops feeding the writer) or resume a paused one. A no-op otherwise.
+    public func pauseResumeRecording() async {
+        guard let recordingService, !isStartingRecording else { return }
+        switch recordingSession.state {
+        case .recording:
+            guard (try? recordingSession.pause(at: clock())) != nil else { return }
+            await recordingService.pause()
+        case .paused:
+            guard (try? recordingSession.resume(at: clock())) != nil else { return }
+            await recordingService.resume()
+        default:
+            return
+        }
+        ui.presentRecordingState(recordingSession)
+    }
+
+    /// The `restartRecording` hotkey / pill button (story 14): throw the take away and begin again
+    /// with the same options — back through the countdown when one is configured. Legal while
+    /// recording or paused; confirmed first unless the user turned the confirmation off.
+    public func restartRecording() async {
+        guard let recordingService, !isStartingRecording,
+              recordingSession.state == .recording || recordingSession.state == .paused
+        else { return }
+        if settings.recordingDefaults.confirmBeforeDiscard {
+            guard await ui.confirmRecordingRestart() else { return }
+            guard recordingSession.state == .recording || recordingSession.state == .paused else { return }
+        }
+        guard (try? recordingSession.restart(at: clock())) != nil, let options = recordingSession.options,
+              let url = recordingSession.outputURL
+        else { return }
+        // The old stream is torn down (and its partial file deleted) by the service. A hotkey stop
+        // arriving during that teardown would find no stream, so it is held off until the new one
+        // is up — the countdown, if any, stays stoppable as usual.
+        isStartingRecording = true
+        await recordingService.cancel()
+        isStartingRecording = false
+        ui.presentRecordingState(recordingSession)
+
+        guard await runCountdownIfNeeded(options) else { return }
+        await startStream(options, writingTo: url)
+    }
+
+    /// The pill's Discard button (story 14): delete the take and end the session — no history entry,
+    /// no overlay. Legal from countdown, recording and paused; confirmed first unless turned off.
+    public func discardRecording() async {
+        guard let recordingService, !isStartingRecording, isRecording, recordingSession.state != .stopping else { return }
+        if settings.recordingDefaults.confirmBeforeDiscard {
+            guard await ui.confirmRecordingDiscard() else { return }
+            guard isRecording, recordingSession.state != .stopping else { return }
+        }
+        guard (try? recordingSession.discard()) != nil else { return }
+        await recordingService.cancel()   // deletes the partial file
+        ui.presentRecordingState(recordingSession)
     }
 
     /// The stream died mid-take (story 18's neighbour: the display went away, permission was
@@ -367,9 +441,8 @@ public final class AppCoordinator {
         guard let recordingService, isRecording, !isStartingRecording else { return }
         guard let outcome = try? recordingSession.stop(at: clock()) else { return }
         switch outcome {
-        case let .discarded(partialFile):
-            await recordingService.cancel()
-            mediaSink?.removeFile(at: partialFile)
+        case .discarded:
+            await recordingService.cancel()   // nothing was written; the service tears down
             ui.presentRecordingState(recordingSession)
         case .stopping:
             ui.presentRecordingState(recordingSession)
@@ -377,9 +450,9 @@ public final class AppCoordinator {
             case let .success(file):
                 try? recordingSession.finish(file)
                 ui.presentRecordingState(recordingSession)
-                // The writer always produces an MP4; a GIF take is converted from it by R13, so
-                // until then it is delivered as the video it is.
-                deliver(file, kind: .video)
+                // A GIF take is converted by R13; until then it is delivered as the video the
+                // writer produced, under that file's own container extension.
+                deliver(file)
             case let .failure(error):
                 failRecording(with: error)
             }
@@ -389,9 +462,9 @@ public final class AppCoordinator {
     /// Move the finished file to its default destination and tell the UI (R2's outcome; R12 replaces
     /// the reveal with the post-recording overlay). A save failure is a recording failure with a
     /// distinct message — the file stays in the scratch directory rather than vanishing.
-    private func deliver(_ file: URL, kind: RecordingOutputKind) {
+    private func deliver(_ file: URL) {
         guard let mediaSink else { return }
-        let destination = settings.recordingDestination(kind: kind)
+        let destination = settings.recordingDestination(pathExtension: file.pathExtension)
         do {
             try mediaSink.save(file, to: destination)
             ui.presentRecordingFinished(at: destination)
@@ -400,12 +473,11 @@ public final class AppCoordinator {
         }
     }
 
-    /// Fail the session (keeping its elapsed time for diagnostics), delete the partial file so
-    /// scratch never accumulates, and route the error the way capture does: recovery for a missing
-    /// permission, silence for a cancel, a message otherwise.
+    /// Fail the session (keeping its elapsed time for diagnostics) and route the error the way
+    /// capture does: recovery for a missing permission, silence for a cancel, a message otherwise.
+    /// The service has already deleted its partial file on every failure path.
     private func failRecording(with error: RecordingError) {
         try? recordingSession.fail(error, at: clock())
-        if let partialFile = recordingSession.outputURL { mediaSink?.removeFile(at: partialFile) }
         ui.presentRecordingState(recordingSession)
         switch error {
         case .permissionDenied:
@@ -417,11 +489,18 @@ public final class AppCoordinator {
         }
     }
 
-    /// A fresh file for the writer under the scratch directory; the finished take is moved out of
-    /// here by `deliver`, and a discarded or failed one is deleted through the sink, so nothing
-    /// accumulates. The directory itself is created here (Foundation, like `HistoryStore`).
+    /// Where in-progress takes live: the finished one is moved out by `deliver`, a discarded or
+    /// failed one is deleted by the service, and anything left over at launch is a crashed take
+    /// for the app's recovery to pick up (story 18). Callers should pass a durable
+    /// `scratchDirectory` (Application Support, not a temp dir the OS purges).
+    public var recordingScratchDirectory: URL {
+        scratchDirectory.appendingPathComponent("Lightshot Recordings", isDirectory: true)
+    }
+
+    /// A fresh file for the writer under the scratch directory. The directory itself is created
+    /// here (Foundation, like `HistoryStore`).
     private func scratchURL(for kind: RecordingOutputKind) -> URL {
-        let directory = scratchDirectory.appendingPathComponent("Lightshot Recordings", isDirectory: true)
+        let directory = recordingScratchDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
             .appendingPathComponent("Recording-\(UUID().uuidString)")

@@ -36,5 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Guide the user through granting the permissions capture needs, the first time they launch
         // (LIG-21). A no-op once every required permission is granted.
         controller.showPermissionOnboardingIfNeeded()
+        // Surface any take a crashed session left behind (spec 0006, story 18).
+        controller.recoverOrphanedRecordings()
     }
 }

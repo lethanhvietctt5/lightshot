@@ -36,8 +36,9 @@ public protocol RecordingService: PermissionAuthorizing {
     /// Finalise the file and return its URL, or a typed failure if the writer could not finish.
     func stop() async -> Result<URL, RecordingError>
 
-    /// Tear the stream down without finalising. The partial file is the caller's to delete — the
-    /// session hands its URL back from `discard`/`restart`.
+    /// Tear the stream down without finalising and delete whatever was written. The service owns
+    /// its partial files on every path that ends without a finished file (cancel, a failed stop,
+    /// a stream death); the coordinator never has to clean up after it.
     func cancel() async
 }
 
@@ -51,8 +52,4 @@ public protocol MediaSink {
     /// Move a finished recording to its final destination (the default save location + filename
     /// pattern, or a Save-As choice), replacing nothing silently — a collision is an error.
     func save(_ url: URL, to destination: URL) throws
-
-    /// Delete a partial file a discarded, restarted or failed take left behind. Best-effort: a
-    /// file that is already gone is not an error.
-    func removeFile(at url: URL)
 }
