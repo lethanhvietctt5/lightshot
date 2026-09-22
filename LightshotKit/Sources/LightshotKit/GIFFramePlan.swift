@@ -13,7 +13,8 @@ public struct GIFFramePlan: Equatable, Sendable {
 
     public init(duration: TimeInterval, sourceSize: Size, settings: GIFSettings) {
         frameDelay = Self.delay(forFPS: settings.fps)
-        frameCount = max(1, Int((max(duration, 0) / frameDelay).rounded(.up)))
+        // A hair under before rounding up, so 0.9 / 0.1 = 9.000000000000002 is nine frames, not ten.
+        frameCount = max(1, Int((max(duration, 0) / frameDelay - 1e-6).rounded(.up)))
         if let maxWidth = settings.maxWidth, sourceSize.width > Double(maxWidth), sourceSize.width > 0 {
             let scale = Double(maxWidth) / sourceSize.width
             outputSize = Size(width: Double(maxWidth), height: max(1, (sourceSize.height * scale).rounded()))

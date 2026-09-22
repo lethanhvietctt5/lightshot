@@ -358,7 +358,8 @@ public final class AppCoordinator {
     public func startRecording(
         region: CaptureRegion, output: RecordingOutputKind = .video, overrides: RecordingOverrides = .none
     ) async {
-        guard let recordingService, !isRecording, !isStartingRecording else { return }
+        // A GIF still converting owns the popup and the scratch file; a new take waits for it.
+        guard let recordingService, !isRecording, !isStartingRecording, gifConversion == nil else { return }
         guard await guideFirstRunAuthorizationIfNeeded(for: recordingService) else { return }
         // A take still waiting in the overlay is kept (saved under the pattern) before a new one
         // can replace it — the app moving on is a dismissal (story 32).
@@ -511,8 +512,9 @@ public final class AppCoordinator {
     /// the result is routed by the after-recording setting.
     private func finished(_ file: URL) async {
         let duration = recordingSession.elapsed(at: clock())
+        let routeVideo = { self.route(PendingRecording(file: file, kind: .video, duration: duration)) }
         guard case let .gif(gifSettings)? = recordingSession.options?.output, let gifEncoder, let mediaSink else {
-            route(PendingRecording(file: file, kind: .video, duration: duration))
+            routeVideo()
             return
         }
         let gif = file.deletingPathExtension().appendingPathExtension("gif")
@@ -523,25 +525,25 @@ public final class AppCoordinator {
         }
         gifConversion = conversion
         ui.presentGIFConversion(cancel: { conversion.cancel() })
-        defer {
-            gifConversion = nil
-            ui.dismissGIFConversion()
-        }
-        do {
-            try await conversion.value
+        let outcome = await conversion.result
+        // The popup goes before anything else is shown (the keep / delete question, a failure).
+        gifConversion = nil
+        ui.dismissGIFConversion()
+        switch outcome {
+        case .success:
             // The intermediate video is not a file the user ever saw (spec: deleted after a
             // successful conversion); a delete failure only leaves it in scratch.
             try? mediaSink.delete(file)
             route(PendingRecording(file: gif, kind: .gif, duration: duration))
-        } catch is CancellationError {
+        case .failure(is CancellationError):
             if await ui.resolveCancelledGIFConversion() {
-                route(PendingRecording(file: file, kind: .video, duration: duration))
+                routeVideo()
             } else {
                 try? mediaSink.delete(file)
             }
-        } catch {
+        case let .failure(error):
             ui.presentRecordingFailure(.systemFailure("The GIF could not be made: \(error.localizedDescription)"))
-            route(PendingRecording(file: file, kind: .video, duration: duration))
+            routeVideo()
         }
     }
 
@@ -556,7 +558,9 @@ public final class AppCoordinator {
         case .saveSilently:
             if let saved = deliver(file, as: nil) { ui.presentRecordingFinished(at: saved) }
         case .openEditor:
-            if let saved = deliver(file, as: nil) { ui.openVideoEditor(at: saved) }
+            guard let saved = deliver(file, as: nil) else { return }
+            // A GIF is never edited in v1 (spec: out of scope): the setting degrades to a silent save.
+            if recording.kind == .gif { ui.presentRecordingFinished(at: saved) } else { ui.openVideoEditor(at: saved) }
         }
     }
 

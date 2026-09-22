@@ -24,17 +24,32 @@ struct ImageIOGIFEncoder: GIFEncoding {
             sourceSize: Size(width: Double(naturalSize.width), height: Double(naturalSize.height)),
             settings: settings
         )
-        // Decoding and quantising are CPU work: off the caller's actor.
-        try await Task.detached(priority: .userInitiated) {
+        // Decoding and quantising are CPU work: off the caller's actor. A detached task inherits
+        // no cancellation, so the caller's Cancel is forwarded to it by hand (story 38).
+        try Task.checkCancellation()
+        let job = Task.detached(priority: .userInitiated) {
             try Self.write(asset: asset, track: track, plan: plan, settings: settings, to: output, progress: progress)
-        }.value
+        }
+        try await withTaskCancellationHandler {
+            try await job.value
+        } onCancel: {
+            job.cancel()
+        }
+    }
+
+    /// Where a conversion is written while it runs; the finished file takes the real name on
+    /// success, so anything under this name in scratch is a partial (recovery deletes it).
+    static func partialURL(for output: URL) -> URL {
+        output.appendingPathExtension("partial")
     }
 
     private static func write(
-        asset: AVURLAsset, track: AVAssetTrack, plan: GIFFramePlan, settings: GIFSettings, to output: URL,
+        asset: AVURLAsset, track: AVAssetTrack, plan: GIFFramePlan, settings: GIFSettings, to finalOutput: URL,
         progress: @Sendable (Double) -> Void
     ) throws {
+        let output = partialURL(for: finalOutput)
         try? FileManager.default.removeItem(at: output)
+        try? FileManager.default.removeItem(at: finalOutput)
         let reader = try AVAssetReader(asset: asset)
         let readerOutput = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -88,6 +103,13 @@ struct ImageIOGIFEncoder: GIFEncoding {
             try? FileManager.default.removeItem(at: output)
             throw RecordingError.systemFailure("The GIF could not be written.")
         }
+        do {
+            try? FileManager.default.removeItem(at: finalOutput)
+            try FileManager.default.moveItem(at: output, to: finalOutput)
+        } catch {
+            try? FileManager.default.removeItem(at: output)
+            throw error
+        }
         progress(1)
     }
 }
@@ -109,24 +131,30 @@ private struct FrameCanvas {
     }
 
     mutating func frame(from pixels: CVPixelBuffer, differencing: Bool) -> CGImage? {
-        guard let source = Self.image(from: pixels) else { return nil }
         let rowBytes = width * 4
+        // The source image aliases the sample's memory: draw it while the buffer is locked.
+        CVPixelBufferLockBaseAddress(pixels, .readOnly)
         let drawn: Bool = current.withUnsafeMutableBytes { bytes in
-            guard let context = CGContext(
-                data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: rowBytes,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-            ) else { return false }
+            guard let source = Self.image(from: pixels),
+                  let context = CGContext(
+                    data: bytes.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: rowBytes,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+                  ) else { return false }
             context.interpolationQuality = .medium
             context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
+        CVPixelBufferUnlockBaseAddress(pixels, .readOnly)
         guard drawn else { return nil }
 
-        // Posterise (quality).
+        // Posterise (quality): each channel to the nearest step, so white stays white.
         if mask != 0xFF {
+            let half = UInt8(truncatingIfNeeded: (~Int(mask) & 0xFF) / 2 + 1)
             for i in stride(from: 0, to: current.count, by: 4) {
-                current[i] &= mask; current[i + 1] &= mask; current[i + 2] &= mask
+                current[i] = Self.step(current[i], mask, half)
+                current[i + 1] = Self.step(current[i + 1], mask, half)
+                current[i + 2] = Self.step(current[i + 2], mask, half)
             }
         }
         var output = current
@@ -157,6 +185,11 @@ private struct FrameCanvas {
         )
     }
 
+    @inline(__always) private static func step(_ value: UInt8, _ mask: UInt8, _ half: UInt8) -> UInt8 {
+        let (sum, overflow) = value.addingReportingOverflow(half)
+        return overflow ? 0xFF : sum & mask
+    }
+
     /// Decoder noise, not content: channels this close count as the same pixel.
     private static let tolerance: Int = 8
 
@@ -164,9 +197,8 @@ private struct FrameCanvas {
         abs(Int(a) - Int(b)) <= tolerance
     }
 
+    /// A `CGImage` over the (locked) buffer's own bytes — valid only while the lock is held.
     private static func image(from pixels: CVPixelBuffer) -> CGImage? {
-        CVPixelBufferLockBaseAddress(pixels, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(pixels),
               let context = CGContext(
                 data: base, width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels),

@@ -170,7 +170,8 @@ struct SettingsView: View {
             Toggle("Scale Retina recordings to 1x", isOn: $model.recordingDefaults.video.scaleRetinaTo1x)
                 .help("Record at half the pixel size on a Retina display.")
             Picker("GIF frame rate", selection: $model.recordingDefaults.gif.fps) {
-                ForEach([10, 15, 20, 30], id: \.self) { Text("\($0) fps").tag($0) }
+                // A persisted rate outside the list still shows, rather than a blank picker.
+                ForEach(Array(Set([10, 15, 20, 30, model.recordingDefaults.gif.fps])).sorted(), id: \.self) { Text("\($0) fps").tag($0) }
             }
             .help("Fewer frames per second make a smaller GIF; 15 suits most screen recordings.")
             HStack {

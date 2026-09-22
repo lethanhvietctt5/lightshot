@@ -18,6 +18,7 @@ import Foundation
     #expect(GIFFramePlan(duration: 2.0, sourceSize: Size(width: 100, height: 100), settings: settings).frameCount == 20)
     #expect(GIFFramePlan(duration: 2.05, sourceSize: Size(width: 100, height: 100), settings: settings).frameCount == 21)
     #expect(GIFFramePlan(duration: 0, sourceSize: Size(width: 100, height: 100), settings: settings).frameCount == 1)
+    #expect(GIFFramePlan(duration: 0.9, sourceSize: Size(width: 100, height: 100), settings: settings).frameCount == 9)   // float noise
 }
 
 @Test func aFasterSourceIsSampledDownAndASlowerOneFillsOneFramePerSourceFrame() {

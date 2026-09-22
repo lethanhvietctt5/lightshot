@@ -82,8 +82,9 @@ private final class SpyMediaSink: MediaSink {
 }
 
 /// A GIF encoder the test steers: it can wait at a gate (to be cancelled mid-way), report
-/// progress, or fail.
-private final class FakeGIFEncoder: GIFEncoding, @unchecked Sendable {
+/// progress, or fail. Main-actor so the gate and the records are never touched off it.
+@MainActor
+private final class FakeGIFEncoder: GIFEncoding {
     struct Failure: Error {}
     var fails = false
     var holds = false
@@ -105,7 +106,7 @@ private final class FakeGIFEncoder: GIFEncoding, @unchecked Sendable {
         progress(1)
     }
 
-    @MainActor func release() {
+    func release() {
         gate?.resume()
         gate = nil
     }
@@ -393,12 +394,15 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(h.ui.gifProgress.contains(0.5))
 }
 
-@Test @MainActor func cancellingOffersTheVideoInsteadOrDeletesTheTake() async {
+@Test(.timeLimit(.minutes(1))) @MainActor func cancellingOffersTheVideoInsteadOrDeletesTheTake() async {
     let h = Harness()
     h.gif.holds = true
     let take1 = Task { await finishedGIFTake(h) }
     await Task.yield()
     while h.ui.gifCancel == nil { await Task.yield() }
+    // Mid-conversion the recorder is busy: a new take is refused.
+    await h.coordinator.startRecording(region: display)
+    #expect(h.service.starts.count == 1)
     h.ui.gifCancel?()                                                // Cancel in the popup
     await take1.value
     #expect(h.ui.cancelResolutions == 1)
@@ -423,6 +427,15 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(h.ui.recordingFailures.count == 1)
     #expect(h.ui.overlays.last == PendingRecording(file: take, kind: .video, duration: 30))
     #expect(h.sink.deleted.isEmpty)
+}
+
+@Test @MainActor func aGIFNeverGoesToTheVideoEditor() async {
+    let h = Harness()
+    h.settings.recordingDefaults.afterRecording = .openEditor
+    await h.coordinator.startRecording(region: display, output: .gif)
+    await h.coordinator.stopRecording()
+    #expect(h.ui.editors.isEmpty)
+    #expect(h.ui.finished.count == 1 && h.ui.finished[0].pathExtension == "gif")
 }
 
 @Test @MainActor func aVideoTakeNeverTouchesTheEncoder() async {

@@ -46,6 +46,7 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
 
         let view = PostRecordingOverlayView(
             model: model,
+            showsEditorActions: recording.kind == .video,
             copy: { [weak self] in self?.settle { $0.copy(model.name) } },
             save: { [weak self] in self?.settle { $0.save(model.name) } },
             delete: { [weak self] in self?.deleteAfterConfirming() },
@@ -256,6 +257,8 @@ private final class PostRecordingModel {
 
 private struct PostRecordingOverlayView: View {
     @Bindable var model: PostRecordingModel
+    /// A GIF cannot be trimmed or edited in v1, so those controls are not shown at all.
+    let showsEditorActions: Bool
     let copy: () -> Void
     let save: () -> Void
     let delete: () -> Void
@@ -298,8 +301,10 @@ private struct PostRecordingOverlayView: View {
             HStack(spacing: 4) {
                 button("Copy File", systemImage: "doc.on.doc", action: copy)
                 button("Save", systemImage: "square.and.arrow.down", action: save)
-                button("Open Video Editor", systemImage: "slider.horizontal.3", action: openEditor)
-                button("Trim", systemImage: "scissors", action: trim)
+                if showsEditorActions {
+                    button("Open Video Editor", systemImage: "slider.horizontal.3", action: openEditor)
+                    button("Trim", systemImage: "scissors", action: trim)
+                }
                 Spacer(minLength: 0)
                 button("Delete", systemImage: "trash", action: delete)
             }
@@ -323,8 +328,10 @@ private struct PostRecordingOverlayView: View {
         Button("Copy File", action: copy)
         Button("Save", action: save)
         Button("Rename") { renaming = true }
-        Button("Open Video Editor", action: openEditor ?? {}).disabled(openEditor == nil)
-        Button("Trim…", action: trim ?? {}).disabled(trim == nil)
+        if showsEditorActions {
+            Button("Open Video Editor", action: openEditor ?? {}).disabled(openEditor == nil)
+            Button("Trim…", action: trim ?? {}).disabled(trim == nil)
+        }
         Button("Quick Look", action: quickLook)
         Divider()
         Button("Delete", role: .destructive, action: delete)
