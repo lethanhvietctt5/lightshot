@@ -24,9 +24,11 @@ final class AppController: NSObject, CaptureUI {
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
-    /// The post-recording overlay (spec 0006, stories 32–34) and the GIF progress popup (37–38).
+    /// The post-recording overlay (spec 0006, stories 32–34), the GIF progress popup (37–38) and
+    /// the video editor window (35–36).
     private let postRecordingOverlay = PostRecordingOverlayController()
     private let gifConversion = GIFConversionController()
+    private let videoEditor = VideoEditorController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
 
@@ -573,15 +575,14 @@ final class AppController: NSObject, CaptureUI {
             save: { [weak self] name in self?.coordinator.savePendingRecording(as: name) != nil },
             delete: { [weak self] in self?.coordinator.deletePendingRecording() ?? false },
             dismiss: { [weak self] name in self?.coordinator.dismissPendingRecording(as: name) },
-            openEditor: nil,
-            trim: nil
+            openEditor: { [weak self] name in self?.coordinator.openPendingRecordingInEditor(as: name) != nil },
+            trim: { [weak self] name in self?.coordinator.openPendingRecordingInEditor(as: name) != nil }
         ))
     }
 
-    /// Story 33's "open the video editor": the editor is R14, so until then the saved file is
-    /// revealed instead of silently landing.
+    /// The video editor (stories 35–36), on a saved recording.
     func openVideoEditor(at url: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        videoEditor.open(url)
     }
 
     func presentGIFConversion(cancel: @escaping () -> Void) {

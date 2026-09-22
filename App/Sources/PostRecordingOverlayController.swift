@@ -23,8 +23,9 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
         let delete: () -> Bool
         /// The overlay went away without a decision: keep the file.
         let dismiss: (String) -> Void
-        let openEditor: (() -> Void)?
-        let trim: (() -> Void)?
+        /// Save under the name, then open the editor (story 35); `nil` while the editor is unavailable.
+        let openEditor: ((String) -> Bool)?
+        let trim: ((String) -> Bool)?
     }
 
     /// How long the overlay stays up untouched before it dismisses itself (and the file is kept).
@@ -52,8 +53,8 @@ final class PostRecordingOverlayController: NSObject, QLPreviewPanelDataSource, 
             delete: { [weak self] in self?.deleteAfterConfirming() },
             quickLook: { [weak self] in self?.toggleQuickLook() },
             // A GIF cannot be trimmed or edited in v1 (spec: the overlay hides both for a GIF).
-            openEditor: recording.kind == .gif ? nil : actions.openEditor.map { open in { [weak self] in open(); self?.close() } },
-            trim: recording.kind == .gif ? nil : actions.trim.map { trim in { [weak self] in trim(); self?.close() } },
+            openEditor: recording.kind == .gif ? nil : actions.openEditor.map { open in { [weak self] in self?.settle { _ in open(model.name) } } },
+            trim: recording.kind == .gif ? nil : actions.trim.map { trim in { [weak self] in self?.settle { _ in trim(model.name) } } },
             touched: { [weak self] in self?.restartTimeout() }
         )
         let hosting = NSHostingView(rootView: view)

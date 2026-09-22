@@ -605,6 +605,15 @@ public final class AppCoordinator {
         return saved
     }
 
+    /// Open video editor / Trim from the overlay (story 35): the take is saved (under `name`, or
+    /// the pattern) and the saved file opens in the editor. Returns where it landed.
+    @discardableResult
+    public func openPendingRecordingInEditor(as name: String? = nil) -> URL? {
+        guard let saved = savePendingRecording(as: name) else { return nil }
+        ui.openVideoEditor(at: saved)
+        return saved
+    }
+
     /// The overlay went away without a decision (Escape, timeout, the app moving on): the file is
     /// kept, under the name typed so far or the pattern (story 32).
     public func dismissPendingRecording(as name: String? = nil) {
