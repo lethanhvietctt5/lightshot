@@ -4,9 +4,9 @@ import Foundation
 ///
 /// The recording counterpart of `CaptureError`: `RecordingService` never yields a silently
 /// empty file — every failure is one of these, and `AppCoordinator` routes each case to a distinct
-/// outcome. `permissionDenied` carries *which* permission is missing, because recording needs more
-/// than Screen Recording (microphone, camera, input monitoring arrive with their features) and the
-/// recovery message and System Settings pane differ per kind.
+/// outcome. `permissionDenied` carries *which* permission is missing: today only Screen Recording
+/// exists, but the microphone, camera and input-monitoring kinds arrive with their features (R6),
+/// and the recovery message and System Settings pane differ per kind.
 ///
 /// `systemFailure` carries a description rather than the underlying `Error`, exactly as
 /// `CaptureError` does, so the type stays `Equatable`/`Sendable` and the core leaks no concrete

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Which container a recording ends up in.
+/// Which container a recording ends up in — the Start Video / Start GIF choice (story 8).
 public enum RecordingOutputKind: String, CaseIterable, Codable, Sendable {
     case video
     case gif
@@ -30,8 +30,11 @@ public enum MaxResolution: String, CaseIterable, Codable, Sendable {
 
 /// Encoder settings for an MP4 recording (story 40).
 public struct VideoSettings: Equatable, Codable, Sendable {
+    /// The encoder the writer is configured with.
     public var codec: VideoCodec
+    /// Frames per second the stream is sampled at; one of `fpsChoices`.
     public var fps: Int
+    /// Longest-edge cap applied after any Retina scaling.
     public var maxResolution: MaxResolution
     /// Write Retina captures at 1x (halve each edge on a 2x display) to keep files small.
     public var scaleRetinaTo1x: Bool
@@ -103,15 +106,23 @@ public enum InputDeviceSelection: Equatable, Sendable {
 /// Built once per recording by `resolve(region:output:defaults:overrides:)` and never edited
 /// afterwards, so the recorder, the compositor and the post-recording flow all read one value.
 public struct RecordingOptions: Equatable, Sendable {
+    /// What is recorded: a rect, a window, or a whole display (stories 3–6).
     public var region: CaptureRegion
+    /// MP4 or GIF, with the encoder/conversion settings it runs with (stories 37, 40).
     public var output: RecordingOutput
+    /// Narration input (story 20), or off.
     public var microphone: InputDeviceSelection
+    /// Record what other apps play (story 21).
     public var computerAudio: Bool
+    /// The webcam bubble's source (story 26), or off.
     public var camera: InputDeviceSelection
+    /// Draw a highlight at the pointer and animate clicks (story 29).
     public var highlightClicks: Bool
+    /// Draw the keystroke overlay (story 30).
     public var showKeystrokes: Bool
+    /// Draw the cursor into the frames (story 19).
     public var showCursor: Bool
-    /// Seconds of 3-2-1 before recording starts; `0` starts immediately.
+    /// Seconds of 3-2-1 before recording starts (story 10); `0` starts immediately.
     public var countdownSeconds: Int
 
     public init(
@@ -150,7 +161,6 @@ public struct RecordingOptions: Equatable, Sendable {
     ) -> RecordingOptions {
         let microphoneOn = overrides.microphone ?? defaults.recordMicrophone
         let cameraOn = overrides.camera ?? defaults.recordCamera
-        let countdownOn = overrides.countdown ?? defaults.countdownEnabled
         return RecordingOptions(
             region: region,
             output: output == .video ? .video(defaults.video) : .gif(defaults.gif),
@@ -159,8 +169,8 @@ public struct RecordingOptions: Equatable, Sendable {
             camera: cameraOn ? .device(id: defaults.cameraDeviceID) : .off,
             highlightClicks: overrides.highlightClicks ?? defaults.highlightClicks,
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
-            showCursor: overrides.showCursor ?? defaults.showCursor,
-            countdownSeconds: countdownOn ? defaults.countdownSeconds : 0
+            showCursor: defaults.showCursor,
+            countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0
         )
     }
 }
@@ -214,33 +224,29 @@ public struct RecordingDefaults: Equatable, Sendable {
     public static let standard = RecordingDefaults()
 }
 
-/// Per-recording toggles from the recorder toolbar (stories 8–9). `nil` means "as in Settings".
-/// A toggle flipped here changes only this recording, never the persisted default.
+/// Per-recording toggles from the recorder toolbar (stories 8–9): exactly the five the toolbar
+/// offers — microphone, computer audio, camera, click highlighting, keystrokes. `nil` means "as in
+/// Settings". A toggle flipped here changes only this recording, never the persisted default;
+/// cursor visibility and the countdown are Settings-only (stories 10, 19) and have no override.
 public struct RecordingOverrides: Equatable, Sendable {
     public var microphone: Bool?
     public var computerAudio: Bool?
     public var camera: Bool?
     public var highlightClicks: Bool?
     public var showKeystrokes: Bool?
-    public var showCursor: Bool?
-    public var countdown: Bool?
 
     public init(
         microphone: Bool? = nil,
         computerAudio: Bool? = nil,
         camera: Bool? = nil,
         highlightClicks: Bool? = nil,
-        showKeystrokes: Bool? = nil,
-        showCursor: Bool? = nil,
-        countdown: Bool? = nil
+        showKeystrokes: Bool? = nil
     ) {
         self.microphone = microphone
         self.computerAudio = computerAudio
         self.camera = camera
         self.highlightClicks = highlightClicks
         self.showKeystrokes = showKeystrokes
-        self.showCursor = showCursor
-        self.countdown = countdown
     }
 
     /// No overrides — every value comes from Settings.

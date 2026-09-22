@@ -33,7 +33,7 @@ public struct RecordingSession: Equatable, Sendable {
 
     /// Every command the session understands — named in `IllegalTransition` so a rejected call
     /// says exactly what was attempted from where.
-    public enum Command: String, Equatable, Sendable, CaseIterable {
+    public enum Command: String, Equatable, Sendable {
         case start, beginRecording, pause, resume, stop, finish, fail, restart, discard
     }
 
@@ -92,8 +92,7 @@ public struct RecordingSession: Equatable, Sendable {
         }
         self.options = options
         self.outputURL = url
-        recordedBeforeSegment = 0
-        segmentStart = nil
+        resetClock()
         enterRecordingOrCountdown(options, at: now)
     }
 
@@ -145,11 +144,12 @@ public struct RecordingSession: Equatable, Sendable {
         outputURL = url
     }
 
-    /// The service reported a failure. Legal from any active state; the elapsed total is kept for
-    /// diagnostics. Whether a partial file is recoverable is the crash-recovery path's concern (R5).
-    public mutating func fail(_ error: RecordingError) throws {
+    /// The service reported a failure at `now`. Legal from any active state; the open segment is
+    /// banked so the elapsed total survives for diagnostics. Whether a partial file is recoverable
+    /// is the crash-recovery path's concern (R5).
+    public mutating func fail(_ error: RecordingError, at now: TimeInterval) throws {
         guard isActive else { throw IllegalTransition(state: state, command: .fail) }
-        if case .recording = state { segmentStart = nil }
+        bankSegment(at: now)
         state = .failed(error)
     }
 
@@ -162,8 +162,7 @@ public struct RecordingSession: Equatable, Sendable {
         guard state == .recording || state == .paused,
               let options, let url = outputURL
         else { throw IllegalTransition(state: state, command: .restart) }
-        recordedBeforeSegment = 0
-        segmentStart = nil
+        resetClock()
         enterRecordingOrCountdown(options, at: now)
         return url
     }
@@ -181,8 +180,7 @@ public struct RecordingSession: Equatable, Sendable {
         state = .idle
         options = nil
         outputURL = nil
-        recordedBeforeSegment = 0
-        segmentStart = nil
+        resetClock()
         return url
     }
 
@@ -195,6 +193,11 @@ public struct RecordingSession: Equatable, Sendable {
             state = .recording
             segmentStart = now
         }
+    }
+
+    private mutating func resetClock() {
+        recordedBeforeSegment = 0
+        segmentStart = nil
     }
 
     private mutating func bankSegment(at now: TimeInterval) {

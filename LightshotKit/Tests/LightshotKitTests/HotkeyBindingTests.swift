@@ -38,6 +38,15 @@ import Foundation
 
 // MARK: - Conflict detection (acceptance criterion 1)
 
+@Test func recordingActionsTakePartInConflictDetection() {
+    var bindings = HotkeyBindings.defaults
+    bindings[.recordScreen] = HotkeyBinding(keyCode: 21, modifiers: [.command, .control], keyLabel: "4")
+    #expect(bindings.conflicts == [
+        HotkeyConflict(binding: bindings[.area]!, actions: [.area, .recordScreen])
+    ])
+    #expect(bindings.conflictingAction(for: bindings[.recordScreen]!, excluding: .recordScreen) == .area)
+}
+
 @Test func distinctChordsProduceNoConflict() {
     var bindings = HotkeyBindings()
     bindings[.area] = HotkeyBinding(keyCode: 21, modifiers: [.command], keyLabel: "4")

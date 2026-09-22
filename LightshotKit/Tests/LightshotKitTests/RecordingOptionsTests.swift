@@ -37,20 +37,29 @@ private let allOnDefaults = RecordingDefaults(
     #expect(o.output.kind == .gif)
 }
 
-@Test func everyOverrideBeatsItsDefault() {
-    let overrides = RecordingOverrides(
-        microphone: false, computerAudio: false, camera: false,
-        highlightClicks: false, showKeystrokes: false, showCursor: false, countdown: false
+@Test func everyOverrideBeatsItsDefaultInBothDirections() {
+    let allOff = RecordingOverrides(
+        microphone: false, computerAudio: false, camera: false, highlightClicks: false, showKeystrokes: false
     )
-    let o = RecordingOptions.resolve(region: region, output: .video, defaults: allOnDefaults, overrides: overrides)
-    #expect(o.microphone == .off)
-    #expect(!o.computerAudio)
-    #expect(o.camera == .off)
-    #expect(!o.highlightClicks)
-    #expect(!o.showKeystrokes)
-    #expect(!o.showCursor)
-    #expect(o.countdownSeconds == 0)
-    #expect(!o.hasCountdown)
+    let off = RecordingOptions.resolve(region: region, output: .video, defaults: allOnDefaults, overrides: allOff)
+    #expect(off.microphone == .off)
+    #expect(!off.computerAudio)
+    #expect(off.camera == .off)
+    #expect(!off.highlightClicks)
+    #expect(!off.showKeystrokes)
+    // Settings-only values are untouched by overrides (stories 10, 19).
+    #expect(off.showCursor)
+    #expect(off.countdownSeconds == 5)
+
+    let allOn = RecordingOverrides(
+        microphone: true, computerAudio: true, camera: true, highlightClicks: true, showKeystrokes: true
+    )
+    let on = RecordingOptions.resolve(region: region, output: .video, defaults: .standard, overrides: allOn)
+    #expect(on.microphone == .device(id: nil))
+    #expect(on.computerAudio)
+    #expect(on.camera == .device(id: nil))
+    #expect(on.highlightClicks)
+    #expect(on.showKeystrokes)
 }
 
 @Test func turningASourceOnByOverrideUsesTheDefaultDevice() {
@@ -70,7 +79,7 @@ private let allOnDefaults = RecordingDefaults(
     let defaults = RecordingDefaults.standard
     _ = RecordingOptions.resolve(
         region: region, output: .video, defaults: defaults,
-        overrides: RecordingOverrides(microphone: true, countdown: false)
+        overrides: RecordingOverrides(microphone: true, computerAudio: true)
     )
     #expect(defaults == .standard)
     #expect(RecordingOverrides.none == RecordingOverrides())
@@ -80,11 +89,7 @@ private let allOnDefaults = RecordingDefaults(
     let defaults = RecordingDefaults(countdownEnabled: false, countdownSeconds: 3)
     let o = RecordingOptions.resolve(region: region, output: .video, defaults: defaults)
     #expect(o.countdownSeconds == 0)
-    // …and the toolbar can switch it back on for this recording.
-    let on = RecordingOptions.resolve(
-        region: region, output: .video, defaults: defaults, overrides: RecordingOverrides(countdown: true)
-    )
-    #expect(on.countdownSeconds == 3)
+    #expect(!o.hasCountdown)
 }
 
 @Test func gifQualityIsClampedAndNegativeCountdownsAreZero() {

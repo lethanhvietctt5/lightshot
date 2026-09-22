@@ -58,7 +58,7 @@ private func recordingSession() throws -> RecordingSession {
     #expect(s.state == .recording)
     #expect(s.elapsed(at: 21) == 1)   // the previous take's time is gone
 
-    try s.fail(.diskFull)
+    try s.fail(.diskFull, at: 22)
     #expect(s.state == .failed(.diskFull))
     try s.start(options(), writingTo: url, at: 30)
     #expect(s.state == .recording)
@@ -137,7 +137,7 @@ private func recordingSession() throws -> RecordingSession {
         (.resume, { try $0.resume(at: 0) }),
         (.stop, { _ = try $0.stop(at: 0) }),
         (.finish, { try $0.finish(url) }),
-        (.fail, { try $0.fail(.diskFull) }),
+        (.fail, { try $0.fail(.diskFull, at: 0) }),
         (.restart, { _ = try $0.restart(at: 0) }),
         (.discard, { _ = try $0.discard() }),
     ]
@@ -167,6 +167,16 @@ private func recordingSession() throws -> RecordingSession {
         try paused.pause(at: 2)
     }
 
+    var counting = RecordingSession()
+    try counting.start(options(countdown: 3), writingTo: url, at: 0)
+    #expect(throws: RecordingSession.IllegalTransition(state: .countdown, command: .restart)) {
+        try counting.restart(at: 1)        // restart is only legal once footage exists
+    }
+    #expect(throws: RecordingSession.IllegalTransition(state: .countdown, command: .pause)) {
+        try counting.pause(at: 1)
+    }
+    #expect(counting.state == .countdown)
+
     var stopping = try recordingSession()
     _ = try stopping.stop(at: 1)
     for (command, attempt) in [
@@ -181,18 +191,52 @@ private func recordingSession() throws -> RecordingSession {
     }
 }
 
-@Test func failIsLegalFromEveryActiveStateOnly() throws {
+@Test func endedTakesAcceptNothingButStart() throws {
+    var finished = try recordingSession()
+    _ = try finished.stop(at: 1)
+    try finished.finish(url)
+    var failed = try recordingSession()
+    try failed.fail(.diskFull, at: 1)
+
+    for var session in [finished, failed] {
+        let before = session
+        let attempts: [(RecordingSession.Command, (inout RecordingSession) throws -> Void)] = [
+            (.beginRecording, { try $0.beginRecording(at: 2) }),
+            (.pause, { try $0.pause(at: 2) }),
+            (.resume, { try $0.resume(at: 2) }),
+            (.stop, { _ = try $0.stop(at: 2) }),
+            (.finish, { try $0.finish(url) }),
+            (.fail, { try $0.fail(.diskFull, at: 2) }),
+            (.restart, { _ = try $0.restart(at: 2) }),
+            (.discard, { _ = try $0.discard() }),
+        ]
+        for (command, attempt) in attempts {
+            #expect(throws: RecordingSession.IllegalTransition(state: before.state, command: command)) {
+                try attempt(&session)
+            }
+            #expect(session == before)
+        }
+    }
+}
+
+@Test func failIsLegalFromEveryActiveStateAndKeepsElapsedTime() throws {
     var s = RecordingSession()
     try s.start(options(countdown: 2), writingTo: url, at: 0)
-    try s.fail(.noDisplayAvailable)
+    try s.fail(.noDisplayAvailable, at: 1)
     #expect(s.state == .failed(.noDisplayAvailable))
-    #expect(throws: RecordingSession.IllegalTransition(state: .failed(.noDisplayAvailable), command: .fail)) {
-        try s.fail(.diskFull)
-    }
+
+    var recording = try recordingSession()
+    try recording.fail(.systemFailure("stream"), at: 30)
+    #expect(recording.elapsed(at: 99) == 30)   // the open segment is banked, not lost
+
+    var paused = try recordingSession()
+    try paused.pause(at: 4)
+    try paused.fail(.diskFull, at: 50)
+    #expect(paused.elapsed(at: 99) == 4)
 
     var stopping = try recordingSession()
     _ = try stopping.stop(at: 3)
-    try stopping.fail(.systemFailure("writer"))
+    try stopping.fail(.systemFailure("writer"), at: 5)
     #expect(stopping.state == .failed(.systemFailure("writer")))
-    #expect(stopping.elapsed(at: 9) == 3)   // kept for diagnostics
+    #expect(stopping.elapsed(at: 9) == 3)
 }
