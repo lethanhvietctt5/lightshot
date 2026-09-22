@@ -130,6 +130,8 @@ public struct RecordingOptions: Equatable, Sendable {
     public var clickHighlight: ClickHighlightSettings
     /// Draw the keystroke overlay (story 30).
     public var showKeystrokes: Bool
+    /// How the keystroke pill looks when `showKeystrokes` is on.
+    public var keystrokeOverlay: KeystrokeOverlaySettings
     /// Draw the cursor into the frames (story 19).
     public var showCursor: Bool
     /// Seconds of 3-2-1 before recording starts (story 10); `0` starts immediately.
@@ -148,6 +150,7 @@ public struct RecordingOptions: Equatable, Sendable {
         highlightClicks: Bool = false,
         clickHighlight: ClickHighlightSettings = .standard,
         showKeystrokes: Bool = false,
+        keystrokeOverlay: KeystrokeOverlaySettings = .standard,
         showCursor: Bool = true,
         countdownSeconds: Int = 0
     ) {
@@ -163,6 +166,7 @@ public struct RecordingOptions: Equatable, Sendable {
         self.highlightClicks = highlightClicks
         self.clickHighlight = clickHighlight
         self.showKeystrokes = showKeystrokes
+        self.keystrokeOverlay = keystrokeOverlay
         self.showCursor = showCursor
         self.countdownSeconds = max(0, countdownSeconds)
     }
@@ -194,6 +198,7 @@ public struct RecordingOptions: Equatable, Sendable {
             highlightClicks: overrides.highlightClicks ?? defaults.highlightClicks,
             clickHighlight: defaults.clickHighlight,
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
+            keystrokeOverlay: defaults.keystrokeOverlay,
             showCursor: defaults.showCursor,
             countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0
         )
@@ -230,6 +235,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     /// Style, size, colour and click animation of the highlight (story 29).
     public var clickHighlight: ClickHighlightSettings
     public var showKeystrokes: Bool
+    /// Mode, position, size, appearance and backdrop of the keystroke pill (story 30).
+    public var keystrokeOverlay: KeystrokeOverlaySettings
     public var showCursor: Bool
     public var countdownEnabled: Bool
     public var countdownSeconds: Int
@@ -261,6 +268,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         highlightClicks: Bool = false,
         clickHighlight: ClickHighlightSettings = .standard,
         showKeystrokes: Bool = false,
+        keystrokeOverlay: KeystrokeOverlaySettings = .standard,
         showCursor: Bool = true,
         countdownEnabled: Bool = true,
         countdownSeconds: Int = 3,
@@ -285,6 +293,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.highlightClicks = highlightClicks
         self.clickHighlight = clickHighlight
         self.showKeystrokes = showKeystrokes
+        self.keystrokeOverlay = keystrokeOverlay
         self.showCursor = showCursor
         self.countdownEnabled = countdownEnabled
         self.countdownSeconds = max(0, countdownSeconds)
@@ -318,6 +327,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             highlightClicks: try c.decode(Bool.self, forKey: .highlightClicks),
             clickHighlight: try c.decodeIfPresent(ClickHighlightSettings.self, forKey: .clickHighlight) ?? .standard,
             showKeystrokes: try c.decode(Bool.self, forKey: .showKeystrokes),
+            keystrokeOverlay: try c.decodeIfPresent(KeystrokeOverlaySettings.self, forKey: .keystrokeOverlay) ?? .standard,
             showCursor: try c.decode(Bool.self, forKey: .showCursor),
             countdownEnabled: try c.decode(Bool.self, forKey: .countdownEnabled),
             countdownSeconds: try c.decode(Int.self, forKey: .countdownSeconds),

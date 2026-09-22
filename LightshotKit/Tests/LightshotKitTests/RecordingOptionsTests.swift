@@ -96,7 +96,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight", "keystrokeOverlay"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
@@ -105,6 +105,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(older.microphoneVolume == 1 && !older.monoAudio)
     #expect(older.computerAudioVolume == 1 && !older.separateAudioTracks)
     #expect(older.clickHighlight == .standard)
+    #expect(older.keystrokeOverlay == .standard)
 }
 
 @Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {
@@ -131,6 +132,14 @@ private let allOnDefaults = RecordingDefaults(
     let o = RecordingOptions.resolve(region: region, output: .video, defaults: RecordingDefaults(clickHighlight: look),
                                      overrides: RecordingOverrides(highlightClicks: true))
     #expect(o.highlightClicks && o.clickHighlight == look)
+}
+
+@Test func keystrokeOverlaySettingsReachTheOptions() {
+    let look = KeystrokeOverlaySettings(mode: .commandOnly, position: .topRight, size: .large, appearance: .dark, blurBackground: false)
+    let o = RecordingOptions.resolve(region: region, output: .video, defaults: RecordingDefaults(keystrokeOverlay: look),
+                                     overrides: RecordingOverrides(showKeystrokes: true))
+    #expect(o.showKeystrokes && o.keystrokeOverlay == look)
+    #expect(!RecordingOptions.resolve(region: region, output: .video, defaults: RecordingDefaults(keystrokeOverlay: look)).showKeystrokes)
 }
 
 @Test func computerAudioSettingsReachTheOptions() {

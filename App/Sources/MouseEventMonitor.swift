@@ -11,15 +11,15 @@ final class MouseEventMonitor: InputEventSource, @unchecked Sendable {
     private let lock = NSLock()
     private var monitors: [Any] = []
 
-    func start(onEvent: @escaping @Sendable (PointerEvent) -> Void) {
+    func start(onEvent: @escaping @Sendable (InputEvent) -> Void) {
         stop()
         let moved: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         let down: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         let installed: [Any?] = [
-            NSEvent.addGlobalMonitorForEvents(matching: moved) { _ in onEvent(.moved(Self.pointer())) },
-            NSEvent.addGlobalMonitorForEvents(matching: down) { _ in onEvent(.down(Self.pointer())) },
-            NSEvent.addLocalMonitorForEvents(matching: moved) { event in onEvent(.moved(Self.pointer())); return event },
-            NSEvent.addLocalMonitorForEvents(matching: down) { event in onEvent(.down(Self.pointer())); return event },
+            NSEvent.addGlobalMonitorForEvents(matching: moved) { _ in onEvent(.pointer(.moved(Self.pointer()))) },
+            NSEvent.addGlobalMonitorForEvents(matching: down) { _ in onEvent(.pointer(.down(Self.pointer()))) },
+            NSEvent.addLocalMonitorForEvents(matching: moved) { event in onEvent(.pointer(.moved(Self.pointer()))); return event },
+            NSEvent.addLocalMonitorForEvents(matching: down) { event in onEvent(.pointer(.down(Self.pointer()))); return event },
         ]
         lock.lock()
         monitors = installed.compactMap { $0 }

@@ -38,14 +38,17 @@ actor SCRecordingService: RecordingService {
     private var output: StreamOutput?
     private var writer: RecordingWriter?
     private var microphone: MicrophoneCapture?
-    /// The pointer feed for the click highlight (story 29), running only while an overlay needs it.
+    /// The pointer feed for the click highlight (story 29) and the key feed for the keystroke
+    /// overlay (story 30), each running only while its overlay is on.
     private let pointerEvents: any InputEventSource
+    private let keyEvents: any InputEventSource
     /// The MP4 the caller asked for; the writer's fragmented movie sits beside it.
     private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
 
-    init(pointerEvents: any InputEventSource = MouseEventMonitor()) {
+    init(pointerEvents: any InputEventSource = MouseEventMonitor(), keyEvents: any InputEventSource = KeyEventTap()) {
         self.pointerEvents = pointerEvents
+        self.keyEvents = keyEvents
     }
 
     /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
@@ -123,7 +126,7 @@ actor SCRecordingService: RecordingService {
                     throw error
                 }
             }
-            // Overlays drawn into the frames (decision 4): the click highlight for now.
+            // Overlays drawn into the frames (decision 4): the click highlight and the keystroke pill.
             let compositor = RecordingCompositor(
                 mapping: FrameMapping(
                     regionOrigin: target.regionOrigin,
@@ -131,7 +134,9 @@ actor SCRecordingService: RecordingService {
                     pixelsPerPointY: Double(size.height) / target.pointSize.height
                 ),
                 width: size.width, height: size.height,
-                clickHighlight: options.highlightClicks ? options.clickHighlight : nil
+                clickHighlight: options.highlightClicks ? options.clickHighlight : nil,
+                keystrokes: options.showKeystrokes ? options.keystrokeOverlay : nil,
+                systemAppearanceIsDark: UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
             )
             let systemMeter = systemAudioMeter
             let output = StreamOutput(
@@ -158,12 +163,16 @@ actor SCRecordingService: RecordingService {
             microphone?.start()
             if compositor.isActive {
                 let queue = self.queue
-                // Seed the halo where the pointer already is: the first frames must not wait for a move.
-                compositor.handle(.moved(MouseEventMonitor.pointer()), at: 0)
-                pointerEvents.start { event in
+                let forward: @Sendable (InputEvent) -> Void = { event in
                     let now = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()))
                     queue.async { compositor.handle(event, at: now) }
                 }
+                if options.highlightClicks {
+                    // Seed the halo where the pointer already is: the first frames must not wait for a move.
+                    compositor.handle(.pointer(.moved(MouseEventMonitor.pointer())), at: 0)
+                    pointerEvents.start(onEvent: forward)
+                }
+                if options.showKeystrokes { keyEvents.start(onEvent: forward) }
             }
             audioMeter.level = 0
             systemAudioMeter.level = 0
@@ -262,6 +271,7 @@ actor SCRecordingService: RecordingService {
 
     private func tearDown() {
         pointerEvents.stop()
+        keyEvents.stop()
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0
