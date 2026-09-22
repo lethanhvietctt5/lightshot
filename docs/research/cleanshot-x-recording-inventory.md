@@ -18,7 +18,7 @@ This file is the parity target for [`specs/0006-screen-recording.md`](../../spec
 - **Engine** — ScreenCaptureKit (`SCStream`, `SCStreamConfiguration`, `SCShareableContent`, `SCStreamOutput`) + AVFoundation (`AVAssetWriter`, `AVAssetWriterInput`, `AVCaptureSession` for mic/camera). No ReplayKit, no ffmpeg, no gifski. [bin, `otool -L`]
 - **Self-Timer** is a separate *screenshot* mode, not a recording countdown. [nib]
 - **Presenter Overlay** support. [web changelog 4.6.2 only — no bundle string]
-- `cleanshot://` URL scheme exists (`capture-fullscreen`, `capture-previous-area`, `open-from-clipboard`, bare `record` token). [plist, bin]
+- `cleanshot://` URL scheme exists with verified actions `capture-fullscreen`, `capture-previous-area`, `open-from-clipboard`; a bare `record` token also appears in the binary, but no recording endpoint name was confirmed. [plist, bin]
 
 ## 2. Recorder toolbar (pre-start) and in-recording controls
 
@@ -57,7 +57,7 @@ This file is the parity target for [`specs/0006-screen-recording.md`](../../spec
 
 - **Show cursor** on recordings (`showCursorOnRecordings`). [nib]
 - **Highlight clicks** (`highlightClicks`) — style `ring/filled/outline` (`cursorHighlightStyle`), size (`cursorHighlightSize`), colour (Blue/Red/Green/Yellow/Orange/Purple/Pink/Gray/System Accent; `cursorColor1…8`), "Animate clicks" (`cursorHighlightAnimate`); classes `CursorHighlighter`, `CursorOverlay`, `MouseEventTapListener`; "Click here to preview". [nib, bin, defaults]
-- **Show keystrokes** (`showKeystrokes`) — `KeyboardOverlay` + `KeyEventTapListener` (Accessibility permission): "Show all keys" / "Show only command keys" (`keyboardOverlayDisplayAll`), position Top/Bottom × Left/Center/Right (`keyboardOverlayPosition`), size, appearance Light/Dark/System (`keyboardOverlayStyle`), "Blur background"; cannot show keys typed in password fields; repeated-press animation (4.2.2); held modifiers shown (4.7). [nib, bin, changelog]
+- **Show keystrokes** (`showKeystrokes`) — `KeyboardOverlay` + `KeyEventTapListener`; CleanShot prompts for **Accessibility** for this ("CleanShot needs accessibility permissions to display keystrokes while recording"); Lightshot's listen-only tap needs Input Monitoring instead (spec 0006): "Show all keys" / "Show only command keys" (`keyboardOverlayDisplayAll`), position Top/Bottom × Left/Center/Right (`keyboardOverlayPosition`), size, appearance Light/Dark/System (`keyboardOverlayStyle`), "Blur background"; cannot show keys typed in password fields; repeated-press animation (4.2.2); held modifiers shown (4.7). [nib, bin, changelog]
 
 ## 6. Post-recording flow
 
