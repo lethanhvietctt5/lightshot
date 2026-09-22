@@ -18,12 +18,16 @@ final class RecordingControlsController {
     private var panel: NSPanel?
     private var model: RecordingControlsModel?
 
-    func show(position: RecordingControlsPosition, isPaused: Bool, elapsed: @escaping () -> TimeInterval, actions: Actions) {
+    /// `audioLevel` is `nil` when the take has no microphone; otherwise the meter polls it (story 23).
+    func show(
+        position: RecordingControlsPosition, isPaused: Bool, elapsed: @escaping () -> TimeInterval,
+        audioLevel: (() -> Float)?, actions: Actions
+    ) {
         if let model {
             model.isPaused = isPaused
             return
         }
-        let model = RecordingControlsModel(isPaused: isPaused, elapsed: elapsed, actions: actions)
+        let model = RecordingControlsModel(isPaused: isPaused, elapsed: elapsed, audioLevel: audioLevel, actions: actions)
         self.model = model
 
         let hosting = NSHostingView(rootView: RecordingControlsView(model: model))
@@ -64,13 +68,39 @@ final class RecordingControlsController {
 private final class RecordingControlsModel {
     var isPaused: Bool
     let elapsed: () -> TimeInterval
+    let audioLevel: (() -> Float)?
     let actions: RecordingControlsController.Actions
 
-    init(isPaused: Bool, elapsed: @escaping () -> TimeInterval, actions: RecordingControlsController.Actions) {
+    /// The meter's latest reading, `0...1`.
+    var level: Float = 0
+    /// "Your microphone might be muted" (story 24): shown when the first seconds of the take stay
+    /// silent, hidden for good once any sound arrives.
+    private(set) var showsMutedHint = false
+    private var silentTicks = 0
+    private var heardSound = false
+
+    init(isPaused: Bool, elapsed: @escaping () -> TimeInterval, audioLevel: (() -> Float)?, actions: RecordingControlsController.Actions) {
         self.isPaused = isPaused
         self.elapsed = elapsed
+        self.audioLevel = audioLevel
         self.actions = actions
     }
+
+    /// Called ten times a second by the meter's timeline.
+    func sample() {
+        guard let audioLevel else { return }
+        level = audioLevel()
+        if level > Self.silence {
+            heardSound = true
+            showsMutedHint = false
+        } else if !heardSound, !isPaused {
+            silentTicks += 1
+            if silentTicks >= Self.mutedAfterTicks { showsMutedHint = true }
+        }
+    }
+
+    private static let silence: Float = 0.04
+    private static let mutedAfterTicks = 30   // three seconds at 10 Hz
 }
 
 private struct RecordingControlsView: View {
@@ -89,6 +119,9 @@ private struct RecordingControlsView: View {
                     .foregroundStyle(model.isPaused ? .secondary : .primary)
                     .frame(width: 52)
             }
+            if model.audioLevel != nil {
+                levelMeter
+            }
             control(model.isPaused ? "play.fill" : "pause.fill", help: model.isPaused ? "Resume" : "Pause") {
                 model.actions.pauseResume()
             }
@@ -100,6 +133,35 @@ private struct RecordingControlsView: View {
         .padding(.vertical, 8)
         .background(.regularMaterial, in: Capsule())
         .padding(8)
+    }
+
+    /// A small bar that follows the microphone level (story 23), with the muted hint beneath it.
+    private var levelMeter: some View {
+        TimelineView(.periodic(from: .now, by: 0.1)) { context in
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(model.showsMutedHint ? Color.orange : Color.secondary)
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.25))
+                            Capsule()
+                                .fill(model.level > 0.9 ? Color.red : Color.green)
+                                .frame(width: geometry.size.width * CGFloat(model.level))
+                        }
+                    }
+                    .frame(width: 44, height: 6)
+                }
+                if model.showsMutedHint {
+                    Text("Mic may be muted")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.orange)
+                }
+            }
+            .onChange(of: context.date) { _, _ in model.sample() }
+        }
+        .help("Microphone level")
     }
 
     private func control(_ symbol: String, help: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {

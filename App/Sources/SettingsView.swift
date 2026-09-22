@@ -166,6 +166,15 @@ struct SettingsView: View {
             Toggle("Scale Retina recordings to 1x", isOn: $model.recordingDefaults.video.scaleRetinaTo1x)
                 .help("Record at half the pixel size on a Retina display.")
             Toggle("Show the cursor", isOn: $model.recordingDefaults.showCursor)
+            HStack {
+                Text("Microphone volume")
+                Slider(value: $model.recordingDefaults.microphoneVolume, in: 0...2, step: 0.1)
+                Text("\(Int((model.recordingDefaults.microphoneVolume * 100).rounded()))%")
+                    .monospacedDigit()
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .help("Gain applied to your narration; 100% leaves it as the microphone delivers it.")
+            Toggle("Record audio in mono", isOn: $model.recordingDefaults.monoAudio)
             Picker("Countdown", selection: Binding(
                 get: {
                     guard model.recordingDefaults.countdownEnabled else { return 0 }

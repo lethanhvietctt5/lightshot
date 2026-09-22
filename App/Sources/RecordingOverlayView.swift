@@ -69,13 +69,16 @@ struct RecordingOverlayView: View {
                 if !model.toggles.isEmpty {
                     Divider().frame(height: 18)
                     ForEach(model.toggles, id: \.self) { toggle in
-                        Button {
-                            Task { await model.toggle(toggle) }
-                        } label: {
-                            Image(systemName: Self.symbol(for: toggle))
-                                .foregroundStyle(model.isOn(toggle) ? Color.accentColor : Color.secondary)
+                        if toggle == .microphone {
+                            microphoneControl
+                        } else {
+                            Button {
+                                Task { await model.toggle(toggle) }
+                            } label: {
+                                toggleGlyph(toggle)
+                            }
+                            .help(toggle.title)
                         }
-                        .help(toggle.title)
                     }
                 }
 
@@ -111,6 +114,34 @@ struct RecordingOverlayView: View {
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
             .position(controlsCenter(in: geometry.size))
         }
+    }
+
+    /// The mic toggle doubles as a device menu (story 20): a click flips it, the menu picks the input.
+    private var microphoneControl: some View {
+        Menu {
+            Button {
+                Task { await model.selectMicrophone(nil) }
+            } label: {
+                Label("System Default", systemImage: model.microphoneDeviceID == nil ? "checkmark" : "")
+            }
+            ForEach(model.audioInputs) { device in
+                Button {
+                    Task { await model.selectMicrophone(device.id) }
+                } label: {
+                    Label(device.name, systemImage: model.microphoneDeviceID == device.id ? "checkmark" : "")
+                }
+            }
+        } label: {
+            toggleGlyph(.microphone)
+        } primaryAction: {
+            Task { await model.toggle(.microphone) }
+        }
+        .help(model.isOn(.microphone) ? "Microphone on — choose a device" : "Record the microphone")
+    }
+
+    private func toggleGlyph(_ toggle: RecordingToggle) -> some View {
+        Image(systemName: Self.symbol(for: toggle))
+            .foregroundStyle(model.isOn(toggle) ? Color.accentColor : Color.secondary)
     }
 
     private static func symbol(for toggle: RecordingToggle) -> String {

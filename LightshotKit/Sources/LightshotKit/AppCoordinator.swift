@@ -35,6 +35,9 @@ public protocol CaptureUI: AnyObject {
     func confirmRecordingRestart() async -> Bool
     /// Ask before deleting the current take (story 14); same "don't ask again" contract.
     func confirmRecordingDiscard() async -> Bool
+    /// The microphone vanished mid-take (story 24): `true` to keep recording without audio, `false`
+    /// to stop now.
+    func resolveMicrophoneDisconnected() async -> Bool
     /// A recording was saved at `url` (R2's outcome until the post-recording overlay lands, R12).
     func presentRecordingFinished(at url: URL)
     /// Surface a distinct, non-blank message for a recording failure other than permission/cancel.
@@ -314,6 +317,10 @@ public final class AppCoordinator {
             return
         }
         settings.lastRecordingRegion = choice.region
+        if settings.recordingDefaults.microphoneDeviceID != choice.microphoneDeviceID {
+            // The device picked in the toolbar becomes the default for next time (story 20).
+            settings.recordingDefaults.microphoneDeviceID = choice.microphoneDeviceID
+        }
         await startRecording(region: choice.region, output: choice.output, overrides: choice.overrides)
     }
 
@@ -364,8 +371,8 @@ public final class AppCoordinator {
     private func startStream(_ options: RecordingOptions, writingTo url: URL) async {
         guard let recordingService else { return }
         isStartingRecording = true
-        let outcome = await recordingService.start(options, writingTo: url) { [weak self] error in
-            Task { @MainActor in self?.recordingDidFail(error) }
+        let outcome = await recordingService.start(options, writingTo: url) { [weak self] event in
+            Task { @MainActor in await self?.recordingDidReport(event) }
         }
         isStartingRecording = false
         if case let .failure(error) = outcome {
@@ -429,11 +436,19 @@ public final class AppCoordinator {
         ui.presentRecordingState(recordingSession)
     }
 
-    /// The stream died mid-take (story 18's neighbour: the display went away, permission was
-    /// revoked). The service has torn itself down; fail the session and route like any failure.
-    private func recordingDidFail(_ error: RecordingError) {
+    /// Something happened mid-take. A dead stream (the display went away, permission was revoked):
+    /// the service has torn itself down, so fail the session and route like any failure. A lost
+    /// microphone (story 24): the video keeps going while the user decides — continue without
+    /// audio, or stop now.
+    private func recordingDidReport(_ event: RecordingEvent) async {
         guard isRecording else { return }
-        failRecording(with: error)
+        switch event {
+        case let .failed(error):
+            failRecording(with: error)
+        case .audioInputLost:
+            let keepGoing = await ui.resolveMicrophoneDisconnected()
+            if !keepGoing, isRecording { await stopRecording() }
+        }
     }
 
     /// Stop the take in progress (story 2). The session enters `stopping`, the service finalises

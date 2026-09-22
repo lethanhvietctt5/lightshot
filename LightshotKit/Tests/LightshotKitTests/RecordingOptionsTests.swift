@@ -96,12 +96,13 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
     #expect(older.showRecordingControls && older.controlsPosition == .bottom && !older.dimScreenWhileRecording && older.confirmBeforeDiscard)
     #expect(older.showRecordingTimeInMenuBar)
+    #expect(older.microphoneVolume == 1 && !older.monoAudio)
 }
 
 @Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {
@@ -121,6 +122,12 @@ private let allOnDefaults = RecordingDefaults(
     let o = RecordingOptions.resolve(region: region, output: .video, defaults: defaults)
     #expect(o.countdownSeconds == 0)
     #expect(!o.hasCountdown)
+}
+
+@Test func microphoneVolumeIsClampedToTwiceUnity() {
+    #expect(RecordingDefaults(microphoneVolume: 5).microphoneVolume == 2)
+    #expect(RecordingDefaults(microphoneVolume: -1).microphoneVolume == 0)
+    #expect(RecordingOptions(region: region, output: .video(.standard), microphoneVolume: 3).microphoneVolume == 2)
 }
 
 @Test func gifQualityIsClampedAndNegativeCountdownsAreZero() {
