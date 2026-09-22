@@ -39,13 +39,6 @@ actor SCRecordingService: RecordingService {
     /// The MP4 the caller asked for; the writer's fragmented movie sits beside it.
     private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
-    /// Lets the microphone's sample callback reach a writer created after the capture object.
-    private var pendingWriterBox: WriterBox?
-
-    /// A reference cell so the microphone callback, created before the writer, can find it.
-    private final class WriterBox: @unchecked Sendable {
-        var writer: RecordingWriter?
-    }
 
     /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
     static func scratchMovieURL(for url: URL) -> URL {
@@ -87,36 +80,43 @@ actor SCRecordingService: RecordingService {
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
             configuration.queueDepth = 6
 
-            // Narration: open the microphone before the writer so its channel count shapes the track.
-            var microphone: MicrophoneCapture?
-            if case let .device(deviceID) = options.microphone {
-                let meter = audioMeter
-                let box = WriterBox()
-                microphone = try MicrophoneCapture(
-                    deviceID: deviceID, mono: options.monoAudio, volume: options.microphoneVolume, queue: queue,
-                    onSample: { box.writer?.appendAudio($0) },
-                    onLevel: { meter.level = $0 },
-                    onLost: { [weak self] in
-                        Task { await self?.microphoneDidVanish(); onEvent(.audioInputLost) }
-                    }
-                )
-                self.pendingWriterBox = box
-            }
-
+            let recordsMicrophone = options.microphone.isOn
             let writer = try RecordingWriter(
                 url: Self.scratchMovieURL(for: url), width: size.width, height: size.height,
                 codec: video.codec, fps: video.fps,
-                audioChannels: microphone?.channels
+                audioChannels: recordsMicrophone ? (options.monoAudio ? 1 : 2) : nil
             )
-            pendingWriterBox?.writer = writer
-            pendingWriterBox = nil
+            // Narration (story 20): PCM lands in the writer's audio track on the same queue.
+            var microphone: MicrophoneCapture?
+            if case let .device(deviceID) = options.microphone {
+                let meter = audioMeter
+                do {
+                    microphone = try MicrophoneCapture(
+                        deviceID: deviceID, mono: options.monoAudio, volume: options.microphoneVolume, queue: queue,
+                        onSample: { writer.appendAudio($0) },
+                        onLevel: { meter.level = $0 },
+                        onLost: { [weak self] in
+                            Task { await self?.microphoneDidVanish(); onEvent(.audioInputLost) }
+                        }
+                    )
+                } catch {
+                    writer.cancel()
+                    throw error
+                }
+            }
             let output = StreamOutput(writer: writer) { [weak self] error in
                 // The stream died on its own: tear down here, then let the coordinator fail the take.
                 Task { await self?.streamDidFail(); onEvent(.failed(error)) }
             }
             let stream = SCStream(filter: target.filter, configuration: configuration, delegate: output)
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
-            try await stream.startCapture()
+            do {
+                try await stream.startCapture()
+            } catch {
+                microphone?.stop()
+                writer.cancel()
+                throw error
+            }
             microphone?.start()
             audioMeter.level = 0
             log.info("Recording started: \(size.width)×\(size.height) @ \(video.fps) fps, mic \(microphone == nil ? "off" : "on", privacy: .public) → \(url.lastPathComponent, privacy: .public)")
@@ -398,7 +398,6 @@ private final class RecordingWriter: @unchecked Sendable {
     private var started = false
     private var sessionStart = CMTime.zero
     private var paused = false
-    private var resumePending = false
     private var offset = CMTime.zero
     private var lastWritten: CMTime?
     private var lastAudioWritten: CMTime?
@@ -460,18 +459,22 @@ private final class RecordingWriter: @unchecked Sendable {
         }
     }
 
-    /// Narration buffers (story 20), re-stamped with the same pause offset as the frames. Dropped
-    /// until the first frame has opened the session, while paused, and until the first frame after
-    /// a resume has re-based the offset — so audio never lands before or across a gap.
+    /// Narration buffers (story 20), re-stamped with the same pause offset as the frames. The
+    /// first buffer opens the session if no frame has yet (the two clocks agree, so either may
+    /// come first); buffers are dropped while paused. Each buffer carries one timing entry whose
+    /// duration is *per sample*, so the retimed copy keeps the sample-rate duration.
     func appendAudio(_ sampleBuffer: CMSampleBuffer) {
-        guard let audioInput, failure == nil, started, !paused, !resumePending else { return }
-        let stamped = CMTimeSubtract(CMSampleBufferGetPresentationTimeStamp(sampleBuffer), offset)
+        guard let audioInput, failure == nil, !paused else { return }
+        let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard ensureStarted(at: presentation) else { return }
+        let stamped = CMTimeSubtract(presentation, offset)
         guard CMTimeCompare(stamped, sessionStart) >= 0 else { return }
         if let lastAudioWritten, CMTimeCompare(stamped, lastAudioWritten) <= 0 { return }
         guard audioInput.isReadyForMoreMediaData else { return }
 
         var timing = CMSampleTimingInfo(
-            duration: CMSampleBufferGetDuration(sampleBuffer), presentationTimeStamp: stamped, decodeTimeStamp: .invalid
+            duration: CMTime(value: 1, timescale: CMTimeScale(MicrophoneCapture.sampleRate)),
+            presentationTimeStamp: stamped, decodeTimeStamp: .invalid
         )
         var retimed: CMSampleBuffer?
         CMSampleBufferCreateCopyWithNewTiming(
@@ -488,25 +491,25 @@ private final class RecordingWriter: @unchecked Sendable {
         }
     }
 
+    /// Open the writer session at the first media time seen — a frame or an audio buffer,
+    /// whichever arrives first. Returns whether the writer is usable.
+    private func ensureStarted(at presentation: CMTime) -> Bool {
+        if started { return true }
+        guard writer.startWriting() else {
+            failure = .systemFailure(writer.error?.localizedDescription ?? "The video writer could not start.")
+            log.error("AVAssetWriter.startWriting failed: \(self.writer.error?.localizedDescription ?? "unknown", privacy: .public)")
+            return false
+        }
+        writer.startSession(atSourceTime: presentation)
+        sessionStart = presentation
+        started = true
+        return true
+    }
+
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard failure == nil, !paused, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-
-        if !started {
-            guard writer.startWriting() else {
-                failure = .systemFailure(writer.error?.localizedDescription ?? "The video writer could not start.")
-                log.error("AVAssetWriter.startWriting failed: \(self.writer.error?.localizedDescription ?? "unknown", privacy: .public)")
-                return
-            }
-            writer.startSession(atSourceTime: presentation)
-            sessionStart = presentation
-            started = true
-        }
-        if resumePending, let lastWritten {
-            // Close the gap: the next frame lands one frame after the last one written before the pause.
-            offset = CMTimeSubtract(CMTimeSubtract(presentation, lastWritten), frameDuration)
-            resumePending = false
-        }
+        guard ensureStarted(at: presentation) else { return }
 
         let stamped = CMTimeSubtract(presentation, offset)
         if let lastWritten, CMTimeCompare(stamped, lastWritten) <= 0 { return }   // keep timestamps monotonic
@@ -522,10 +525,16 @@ private final class RecordingWriter: @unchecked Sendable {
 
     func pause() { paused = true }
 
+    /// Re-base the offset at the moment of resuming — against the host clock the frames and
+    /// audio share — so both continue one frame after the last thing written, whether or not the
+    /// screen changes right away (SCK only sends frames when it does).
     func resume() {
         guard paused else { return }
         paused = false
-        resumePending = true
+        let last = [lastWritten, lastAudioWritten].compactMap { $0 }.max { CMTimeCompare($0, $1) < 0 }
+        guard let last else { return }
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        offset = CMTimeSubtract(CMTimeSubtract(now, last), frameDuration)
     }
 
     /// Abandon the take and delete whatever was written.

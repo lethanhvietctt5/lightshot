@@ -65,8 +65,9 @@ final class RecordingOverlayModel {
         self.defaults = defaults
         self.availableToggles = availableToggles
         self.audioInputs = audioInputs
-        // A remembered device that is no longer attached falls back to the system default.
-        self.microphoneDeviceID = audioInputs.contains { $0.id == defaults.microphoneDeviceID } ? defaults.microphoneDeviceID : nil
+        // Kept even if that device is not attached right now: the capture falls back to the system
+        // default for this take, and the preference survives for when it is plugged back in.
+        self.microphoneDeviceID = defaults.microphoneDeviceID
         self.openSettings = openSettings
         self.permissionGate = permissionGate
         self.finish = finish
@@ -122,10 +123,19 @@ final class RecordingOverlayModel {
         overrides[toggle] = turningOn
     }
 
-    /// Pick a microphone from the mic toggle's menu (story 20) and make sure the toggle is on.
+    /// Pick a microphone from the mic toggle's menu (story 20) and make sure the toggle is on; a
+    /// refused permission leaves both the toggle and the choice as they were.
     func selectMicrophone(_ deviceID: String?) async {
+        if !isOn(.microphone) {
+            await toggle(.microphone)
+            guard isOn(.microphone) else { return }
+        }
         microphoneDeviceID = deviceID
-        if !isOn(.microphone) { await toggle(.microphone) }
+    }
+
+    /// The menu's "Do Not Record Microphone".
+    func turnOffMicrophone() {
+        overrides[.microphone] = false
     }
 
     // MARK: - Pointer

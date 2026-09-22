@@ -404,6 +404,12 @@ private let display = CaptureRegion.display(id: 7)
     #expect(options?.microphone == .device(id: "usb-mic"))
     #expect(options?.microphoneVolume == 1.5)
     #expect(options?.monoAudio == true)
+
+    // A take with the microphone off never overwrites the remembered device.
+    await h.coordinator.stopRecording()
+    h.overlay.choice = RecordingChoice(region: display, output: .video, overrides: RecordingOverrides(microphone: false), microphoneDeviceID: nil)
+    await h.coordinator.recordScreen()
+    #expect(h.settings.recordingDefaults.microphoneDeviceID == "usb-mic")
 }
 
 // MARK: - Controls: pause / resume, restart, discard (stories 12–14)

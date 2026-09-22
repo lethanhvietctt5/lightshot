@@ -317,8 +317,10 @@ public final class AppCoordinator {
             return
         }
         settings.lastRecordingRegion = choice.region
-        if settings.recordingDefaults.microphoneDeviceID != choice.microphoneDeviceID {
-            // The device picked in the toolbar becomes the default for next time (story 20).
+        let microphoneOn = choice.overrides.microphone ?? settings.recordingDefaults.recordMicrophone
+        if microphoneOn, settings.recordingDefaults.microphoneDeviceID != choice.microphoneDeviceID {
+            // The device picked in the toolbar becomes the default for next time (story 20) — only
+            // when the take actually records it, so a mic-off take never forgets the preference.
             settings.recordingDefaults.microphoneDeviceID = choice.microphoneDeviceID
         }
         await startRecording(region: choice.region, output: choice.output, overrides: choice.overrides)

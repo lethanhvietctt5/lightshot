@@ -14,15 +14,3 @@ struct AVAudioInputService: AudioInputService {
         }
     }
 }
-
-/// The latest microphone level, `0...1`, written from the capture queue and read by the pill's
-/// meter on the main thread — hence the lock.
-final class AudioLevelMeter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: Float = 0
-
-    var level: Float {
-        get { lock.lock(); defer { lock.unlock() }; return stored }
-        set { lock.lock(); stored = newValue; lock.unlock() }
-    }
-}

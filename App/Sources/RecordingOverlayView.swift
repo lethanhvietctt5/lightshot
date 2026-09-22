@@ -119,18 +119,19 @@ struct RecordingOverlayView: View {
     /// The mic toggle doubles as a device menu (story 20): a click flips it, the menu picks the input.
     private var microphoneControl: some View {
         Menu {
-            Button {
-                Task { await model.selectMicrophone(nil) }
-            } label: {
-                Label("System Default", systemImage: model.microphoneDeviceID == nil ? "checkmark" : "")
-            }
-            ForEach(model.audioInputs) { device in
-                Button {
-                    Task { await model.selectMicrophone(device.id) }
-                } label: {
-                    Label(device.name, systemImage: model.microphoneDeviceID == device.id ? "checkmark" : "")
+            Picker("Microphone", selection: Binding<String?>(
+                get: { model.isOn(.microphone) ? model.microphoneDeviceID : "off" },
+                set: { id in Task { await model.selectMicrophone(id) } }
+            )) {
+                Text("System Default").tag(String?.none)
+                ForEach(model.audioInputs) { device in
+                    Text(device.name).tag(Optional(device.id))
                 }
             }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Do Not Record Microphone") { model.turnOffMicrophone() }
+                .disabled(!model.isOn(.microphone))
         } label: {
             toggleGlyph(.microphone)
         } primaryAction: {

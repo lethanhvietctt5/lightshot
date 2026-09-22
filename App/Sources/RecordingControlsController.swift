@@ -73,11 +73,9 @@ private final class RecordingControlsModel {
 
     /// The meter's latest reading, `0...1`.
     var level: Float = 0
-    /// "Your microphone might be muted" (story 24): shown when the first seconds of the take stay
-    /// silent, hidden for good once any sound arrives.
-    private(set) var showsMutedHint = false
-    private var silentTicks = 0
-    private var heardSound = false
+    /// "Your microphone might be muted" (story 24), decided by the pure detector from the readings.
+    var showsMutedHint: Bool { detector.showsWarning }
+    private var detector = MutedMicrophoneDetector()
 
     init(isPaused: Bool, elapsed: @escaping () -> TimeInterval, audioLevel: (() -> Float)?, actions: RecordingControlsController.Actions) {
         self.isPaused = isPaused
@@ -90,17 +88,8 @@ private final class RecordingControlsModel {
     func sample() {
         guard let audioLevel else { return }
         level = audioLevel()
-        if level > Self.silence {
-            heardSound = true
-            showsMutedHint = false
-        } else if !heardSound, !isPaused {
-            silentTicks += 1
-            if silentTicks >= Self.mutedAfterTicks { showsMutedHint = true }
-        }
+        detector.observe(level: level, over: 0.1, paused: isPaused)
     }
-
-    private static let silence: Float = 0.04
-    private static let mutedAfterTicks = 30   // three seconds at 10 Hz
 }
 
 private struct RecordingControlsView: View {
@@ -154,7 +143,7 @@ private struct RecordingControlsView: View {
                     .frame(width: 44, height: 6)
                 }
                 if model.showsMutedHint {
-                    Text("Mic may be muted")
+                    Text("Your microphone might be muted")
                         .font(.system(size: 9))
                         .foregroundStyle(Color.orange)
                 }
