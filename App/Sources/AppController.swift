@@ -24,9 +24,11 @@ final class AppController: NSObject, CaptureUI {
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private let postCaptureToolbar = PostCaptureToolbarController()
-    /// The post-recording overlay (spec 0006, stories 32–34) and the GIF progress popup (37–38).
+    /// The post-recording overlay (spec 0006, stories 32–34), the GIF progress popup (37–38) and
+    /// the video editor window (35–36).
     private let postRecordingOverlay = PostRecordingOverlayController()
     private let gifConversion = GIFConversionController()
+    private let videoEditor = VideoEditorController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
 
@@ -205,7 +207,7 @@ final class AppController: NSObject, CaptureUI {
             let sink = SystemMediaSink()
             var recovered: [URL] = []
             for file in files {
-                let destination = Self.uniqueDestination(settings.recordingDestination(pathExtension: file.pathExtension))
+                let destination = settings.recordingDestination(pathExtension: file.pathExtension).uniqueForFileSystem()
                 do {
                     try sink.save(file, to: destination)
                     recovered.append(destination)
@@ -224,19 +226,6 @@ final class AppController: NSObject, CaptureUI {
             WindowPresenter.activateApp()
             alert.runModal()
         }
-    }
-
-    /// `name.ext`, or `name 2.ext`, `name 3.ext`… when that file already exists.
-    private static func uniqueDestination(_ url: URL) -> URL {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: url.path) else { return url }
-        let directory = url.deletingLastPathComponent()
-        let stem = url.deletingPathExtension().lastPathComponent
-        for n in 2... {
-            let candidate = directory.appendingPathComponent("\(stem) \(n)").appendingPathExtension(url.pathExtension)
-            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
-        }
-        return url
     }
 
     /// Whether a take is active — the menu row and status item key off this.
@@ -414,13 +403,12 @@ final class AppController: NSObject, CaptureUI {
 
         // While the editor is open Lightshot is a regular app — Dock icon, ⌘-Tab entry, app menu —
         // so the window can be found and switched to like any other. `editorWindowWillClose`
-        // returns it to a menu-bar-only accessory.
-        NSApp.setActivationPolicy(.regular)
-        WindowPresenter.present(window)
+        // returns it to a menu-bar-only accessory (unless the video editor is still open).
+        WindowPresenter.present(window, asRegularApp: true)
     }
 
     @objc private func editorWindowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        WindowPresenter.regularWindowClosed()
     }
 
     /// The editor's opening size: roomy by default, but never larger than the screen allows.
@@ -573,15 +561,13 @@ final class AppController: NSObject, CaptureUI {
             save: { [weak self] name in self?.coordinator.savePendingRecording(as: name) != nil },
             delete: { [weak self] in self?.coordinator.deletePendingRecording() ?? false },
             dismiss: { [weak self] name in self?.coordinator.dismissPendingRecording(as: name) },
-            openEditor: nil,
-            trim: nil
+            editor: { [weak self] name in self?.coordinator.openPendingRecordingInEditor(as: name) != nil }
         ))
     }
 
-    /// Story 33's "open the video editor": the editor is R14, so until then the saved file is
-    /// revealed instead of silently landing.
+    /// The video editor (stories 35–36), on a saved recording.
     func openVideoEditor(at url: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        videoEditor.open(url)
     }
 
     func presentGIFConversion(cancel: @escaping () -> Void) {
@@ -600,9 +586,11 @@ final class AppController: NSObject, CaptureUI {
         gifConversion.resolveCancelled()
     }
 
-    /// Quitting with the overlay up keeps the take (story 32), like any other dismissal.
+    /// Quitting with the overlay up keeps the take (story 32), like any other dismissal; the video
+    /// editor drops its backup and cancels an export, as closing its window would.
     func keepPendingRecordingOnQuit() {
         coordinator.dismissPendingRecording()
+        videoEditor.prepareForTermination()
     }
 
     func presentRecordingFailure(_ error: RecordingError) {

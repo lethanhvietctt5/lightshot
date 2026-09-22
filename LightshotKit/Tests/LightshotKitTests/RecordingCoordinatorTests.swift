@@ -444,6 +444,16 @@ private let take = URL(fileURLWithPath: "/tmp/scratch/take.mp4")
     #expect(h.gif.encodes.isEmpty && h.ui.gifPopups == 0)
 }
 
+@Test @MainActor func openEditorFromTheOverlaySavesThenOpensTheEditor() async {
+    let h = Harness()
+    await finishedTake(h, after: .showOverlay)
+    let saved = h.coordinator.openPendingRecordingInEditor(as: "cut me")
+    #expect(saved?.lastPathComponent == "cut me.mp4")
+    #expect(h.ui.editors == [saved])
+    #expect(h.coordinator.pendingRecording == nil)
+    #expect(h.coordinator.openPendingRecordingInEditor() == nil)   // nothing pending
+}
+
 @Test @MainActor func aNewTakeKeepsThePendingOneBeforeItStarts() async {
     let h = Harness()
     await finishedTake(h, after: .showOverlay)
