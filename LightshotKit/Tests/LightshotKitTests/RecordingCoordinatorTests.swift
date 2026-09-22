@@ -69,6 +69,12 @@ private final class SpyMediaSink: MediaSink {
 @MainActor
 private final class SpyUI: CaptureUI {
     private(set) var states: [RecordingSession.State] = []
+    /// What the countdown UI reports: `true` ran to zero, `false` the user pressed Escape.
+    var countdownResult = true
+    /// When set, the countdown suspends here until the test resumes it — to act mid-countdown.
+    var holdCountdown = false
+    var countdownGate: CheckedContinuation<Void, Never>?
+    private(set) var countdowns: [Int] = []
     private(set) var finished: [URL] = []
     private(set) var recordingFailures: [RecordingError] = []
     private(set) var permissionDeniedCount = 0
@@ -79,6 +85,11 @@ private final class SpyUI: CaptureUI {
     func presentCaptureFailure(_ error: CaptureError) {}
     func presentImageLoadFailure(_ error: ImageLoadError) {}
     func presentRecordingState(_ session: RecordingSession) { states.append(session.state) }
+    func runRecordingCountdown(seconds: Int) async -> Bool {
+        countdowns.append(seconds)
+        if holdCountdown { await withCheckedContinuation { countdownGate = $0 } }
+        return countdownResult
+    }
     func presentRecordingFinished(at url: URL) { finished.append(url) }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
 }
@@ -90,16 +101,18 @@ private final class IdleCaptureService: CaptureService, @unchecked Sendable {
     func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
 }
-/// Hands back a canned recording region and records what it was asked to pre-fill.
+/// Hands back a canned recording choice and records what it was asked to pre-fill / seed with.
 @MainActor
 private final class StubOverlay: OverlayController {
-    var recordingRegion: CaptureRegion? = .display(id: 7)
+    var choice: RecordingChoice? = RecordingChoice(region: .display(id: 7), output: .video)
     private(set) var initials: [CaptureRegion?] = []
+    private(set) var seededDefaults: [RecordingDefaults] = []
     func selectRegion() async -> CaptureRegion? { nil }
     func selectWindow() async -> CaptureRegion? { nil }
-    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? {
+    func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         initials.append(initial)
-        return recordingRegion
+        seededDefaults.append(defaults)
+        return choice
     }
 }
 @MainActor
@@ -254,13 +267,13 @@ private let display = CaptureRegion.display(id: 7)
 @Test @MainActor func aStopDuringTheCountdownDiscardsAndDeletesTheScratchFile() async {
     let h = Harness()
     h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3)
-    h.clock.holdSleeps = true
+    h.ui.holdCountdown = true
     let starting = Task { await h.coordinator.startRecording(region: display) }
-    while h.clock.sleepGate == nil { await Task.yield() }
+    while h.ui.countdownGate == nil { await Task.yield() }
     #expect(h.coordinator.recordingSession.state == .countdown)
 
-    await h.coordinator.stopRecording()      // Escape during the countdown
-    h.clock.sleepGate?.resume()
+    await h.coordinator.stopRecording()      // the hotkey during the countdown
+    h.ui.countdownGate?.resume()
     await starting.value
 
     #expect(h.service.cancelCount == 1)
@@ -291,17 +304,37 @@ private let display = CaptureRegion.display(id: 7)
 @Test @MainActor func recordScreenRunsTheOverlayFirstAndStartsOnItsRegion() async {
     let h = Harness()
     let rect = CaptureRegion.rect(Rect(x: 10, y: 20, width: 640, height: 360))
-    h.overlay.recordingRegion = rect
+    h.overlay.choice = RecordingChoice(region: rect, output: .video)
     await h.coordinator.recordScreen()
 
     #expect(h.overlay.initials == [nil])                 // nothing to remember yet
+    #expect(h.overlay.seededDefaults == [h.settings.recordingDefaults])   // toggles seed from Settings
     #expect(h.service.starts.first?.options.region == rect)
     #expect(h.coordinator.isRecording)
 }
 
+@Test @MainActor func theToolbarsOutputAndTogglesReachTheServiceWithoutTouchingSettings() async {
+    let h = Harness()
+    h.overlay.choice = RecordingChoice(
+        region: display, output: .gif, overrides: RecordingOverrides(microphone: true, highlightClicks: true)
+    )
+    await h.coordinator.recordScreen()
+
+    let options = h.service.starts.first?.options
+    #expect(options?.output.kind == .gif)
+    #expect(options?.microphone == .device(id: nil))
+    #expect(options?.highlightClicks == true)
+    #expect(options?.computerAudio == false)              // untouched toggles keep the default
+    #expect(h.settings.recordingDefaults == RecordingDefaults(countdownEnabled: false))   // not written back
+
+    // Until R13 converts it, a GIF take is delivered as the MP4 the writer produced.
+    await h.coordinator.stopRecording()
+    #expect(h.sink.saves.first?.to.pathExtension == "mp4")
+}
+
 @Test @MainActor func escapeInTheOverlayIsASilentNoOp() async {
     let h = Harness()
-    h.overlay.recordingRegion = nil
+    h.overlay.choice = nil
     await h.coordinator.recordScreen()
     #expect(h.service.starts.isEmpty)
     #expect(!h.coordinator.isRecording)
@@ -312,7 +345,7 @@ private let display = CaptureRegion.display(id: 7)
 @Test @MainActor func theChosenRegionIsRememberedAndPreFilledOnlyWhenTheSettingIsOn() async {
     let h = Harness()
     let window = CaptureRegion.window(id: 42, frame: Rect(x: 0, y: 0, width: 800, height: 600))
-    h.overlay.recordingRegion = window
+    h.overlay.choice = RecordingChoice(region: window, output: .video)
     await h.coordinator.recordScreen()
     #expect(h.settings.lastRecordingRegion == window)   // always kept …
     await h.coordinator.stopRecording()
@@ -326,18 +359,31 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.overlay.initials.last == window)
 }
 
-// MARK: - Countdown (story 10, until the overlay lands)
+// MARK: - Countdown (story 10)
 
-@Test @MainActor func aConfiguredCountdownWaitsThenBeginsRecording() async {
+@Test @MainActor func aConfiguredCountdownRunsInTheUIThenBeginsRecording() async {
     let h = Harness()
     h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3)
     await h.coordinator.startRecording(region: display)
 
-    #expect(h.waits == [3])
+    #expect(h.ui.countdowns == [3])
     #expect(h.ui.states == [.countdown, .recording])
     #expect(h.service.starts.count == 1)
     #expect(h.service.starts.first?.options.countdownSeconds == 3)
     #expect(h.coordinator.recordingElapsed == 0)   // the countdown itself is not footage
+}
+
+@Test @MainActor func escapeDuringTheCountdownDiscardsBeforeAnythingIsRecorded() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3)
+    h.ui.countdownResult = false
+    await h.coordinator.startRecording(region: display)
+
+    #expect(h.service.starts.isEmpty)
+    #expect(h.service.cancelCount == 0)                  // nothing was ever started
+    #expect(h.sink.removed.count == 1)
+    #expect(h.coordinator.recordingSession.state == .idle)
+    #expect(h.ui.states == [.countdown, .idle])
 }
 
 // MARK: - Error routing (stories 57–58)

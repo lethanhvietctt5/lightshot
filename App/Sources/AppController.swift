@@ -38,6 +38,11 @@ final class AppController: NSObject, CaptureUI {
 
     /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2).
     private let recordingService = SCRecordingService()
+    /// The 3-2-1 before a take (story 10).
+    private let countdown = CountdownOverlayController()
+    /// The previous recording state, so `presentRecordingState` can play the start / stop cues on
+    /// the transitions that deserve them.
+    private var lastRecordingState: RecordingSession.State = .idle
 
     /// Told on every recording transition, so the status item can show the stop glyph + timer
     /// (story 11). Set by `StatusMenuController`, which owns the status item.
@@ -47,7 +52,7 @@ final class AppController: NSObject, CaptureUI {
         super.init()
         coordinator = AppCoordinator(
             captureService: captureService,
-            overlay: OverlaySelectionController(),
+            overlay: OverlaySelectionController(openSettings: { [weak self] in self?.showSettings() }),
             imageSource: FileImageSource(),
             imageSink: SystemImageSink(),
             settings: settings,
@@ -341,7 +346,21 @@ final class AppController: NSObject, CaptureUI {
     }
 
     func presentRecordingState(_ session: RecordingSession) {
+        let sounds = settings.recordingDefaults.playSounds
+        switch (lastRecordingState, session.state) {
+        case (.recording, .recording), (.paused, .paused): break
+        case (_, .recording): RecordingSounds.play(.start, enabled: sounds)   // start, and resume
+        case (.recording, .paused): RecordingSounds.play(.pause, enabled: sounds)
+        case (_, .stopping): RecordingSounds.play(.stop, enabled: sounds)
+        case (.countdown, _): countdown.cancel()   // the hotkey stopped the take mid-countdown
+        default: break
+        }
+        lastRecordingState = session.state
         recordingStateObserver?(session)
+    }
+
+    func runRecordingCountdown(seconds: Int) async -> Bool {
+        await countdown.run(seconds: seconds, playSounds: settings.recordingDefaults.playSounds)
     }
 
     /// R2's outcome: reveal the saved file, as the editor's Save does. R12 replaces this with the

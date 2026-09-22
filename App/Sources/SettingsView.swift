@@ -144,9 +144,29 @@ struct SettingsView: View {
 
     // MARK: - Recording (spec 0006)
 
-    /// The Recording section grows with each recording ticket; R3 adds the remembered-area toggle.
+    /// The Recording section grows with each recording ticket: R3 the remembered-area toggle, R4
+    /// the countdown and sounds.
     private var recordingSection: some View {
         Section("Recording") {
+            Picker("Countdown", selection: Binding(
+                get: {
+                    guard model.recordingDefaults.countdownEnabled else { return 0 }
+                    // Snap a hand-edited value to the offered choices so the picker always matches a tag.
+                    return [3, 5, 10].contains(model.recordingDefaults.countdownSeconds) ? model.recordingDefaults.countdownSeconds : 3
+                },
+                set: { seconds in
+                    model.recordingDefaults.countdownEnabled = seconds > 0
+                    if seconds > 0 { model.recordingDefaults.countdownSeconds = seconds }
+                }
+            )) {
+                Text("Off").tag(0)
+                Text("3 seconds").tag(3)
+                Text("5 seconds").tag(5)
+                Text("10 seconds").tag(10)
+            }
+            .help("Count down before a recording starts, so you can get your hands in position.")
+            Toggle("Play sounds", isOn: $model.recordingDefaults.playSounds)
+                .help("Countdown ticks and the start, stop and pause cues.")
             Toggle("Remember last recording area", isOn: $model.rememberLastRecordingArea)
                 .help("Pre-fill the recording overlay with the area, window or display you recorded last time.")
         }

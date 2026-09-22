@@ -6,10 +6,11 @@ import LightshotKit
 /// view so the view stays a thin projection of it — the same split the screenshot overlays use.
 ///
 /// The geometry lives in the pure `EditableSelection`; this model adds what needs a screen: the
-/// hover-and-click window pick, the click-vs-drag distinction, the Option key, and resolution into
-/// a `CaptureRegion`. Unlike the screenshot overlay, releasing a drag never confirms — Return
-/// (Start, once the recorder toolbar lands) does. Coordinates are screen points (top-left origin)
-/// at 1:1 with the overlay window, so no projection is needed.
+/// hover-and-click window pick, the click-vs-drag distinction, the Option key, the recorder
+/// toolbar's per-recording toggles (story 9: seeded from Settings, overriding for this take only),
+/// and resolution into a `RecordingChoice`. Unlike the screenshot overlay, releasing a drag never
+/// confirms — Start Video / Start GIF (Return is Start Video) does. Coordinates are screen points
+/// (top-left origin) at 1:1 with the overlay window, so no projection is needed.
 @MainActor
 @Observable
 final class RecordingOverlayModel {
@@ -22,7 +23,16 @@ final class RecordingOverlayModel {
     let displayID: UInt32
     /// Screen points → native pixels: the readout, the typed fields and the arrow keys all speak pixels.
     let pixelScale: Double
-    private let finish: (CaptureRegion?) -> Void
+    /// The Settings baseline the toggles start from.
+    let defaults: RecordingDefaults
+    /// The toggles whose feature exists — the only ones the toolbar shows.
+    let availableToggles: Set<RecordingToggle>
+    private let finish: (RecordingChoice?) -> Void
+    /// The toolbar's settings shortcut (story 8).
+    let openSettings: () -> Void
+
+    /// This take's toggle overrides; `nil` per toggle means "as in Settings".
+    private(set) var overrides = RecordingOverrides.none
 
     /// The window under the pointer while nothing is selected yet — what the view highlights.
     private(set) var hovered: HoverWindow?
@@ -35,11 +45,17 @@ final class RecordingOverlayModel {
 
     init(
         bounds: Rect, pixelScale: Double, displayID: UInt32, windows: [HoverWindow],
-        initial: CaptureRegion?, finish: @escaping (CaptureRegion?) -> Void
+        initial: CaptureRegion?, defaults: RecordingDefaults,
+        availableToggles: Set<RecordingToggle> = RecordingFeatures.availableToggles,
+        openSettings: @escaping () -> Void = {},
+        finish: @escaping (RecordingChoice?) -> Void
     ) {
         self.windows = windows
         self.displayID = displayID
         self.pixelScale = pixelScale
+        self.defaults = defaults
+        self.availableToggles = availableToggles
+        self.openSettings = openSettings
         self.finish = finish
 
         // Pre-fill the remembered region (story 7) when it still makes sense on this display: a
@@ -74,6 +90,19 @@ final class RecordingOverlayModel {
     }
 
     var ratio: AspectRatio { selection.ratio }
+
+    /// The toolbar's toggles in display order, only those whose feature exists.
+    var toggles: [RecordingToggle] { RecordingToggle.allCases.filter { availableToggles.contains($0) } }
+
+    /// A toggle's current state: this take's override, else the Settings default.
+    func isOn(_ toggle: RecordingToggle) -> Bool {
+        overrides[toggle] ?? defaults[toggle]
+    }
+
+    /// Flip a toggle for this recording only — Settings are never written (story 9).
+    func toggle(_ toggle: RecordingToggle) {
+        overrides[toggle] = !isOn(toggle)
+    }
 
     // MARK: - Pointer
 
@@ -168,22 +197,30 @@ final class RecordingOverlayModel {
 
     // MARK: - Resolution
 
-    /// Start (Return): a snapped window resolves to `.window`, a rect covering the whole display to
-    /// `.display`, anything else to `.rect`. A no-op with nothing selected.
-    func confirm() {
-        guard let rect = selection.rect, hasSelection else { return }
-        if let snappedWindow {
-            finish(.window(id: snappedWindow.id, frame: rect))
-        } else if rect == selection.bounds {
-            finish(.display(id: displayID))
-        } else {
-            finish(.rect(rect))
-        }
+    /// The region a Start button resolves: a snapped window is `.window`, a rect covering the whole
+    /// display is `.display`, anything else `.rect`; `nil` with nothing selected.
+    var region: CaptureRegion? {
+        guard let rect = selection.rect, hasSelection else { return nil }
+        if let snappedWindow { return .window(id: snappedWindow.id, frame: rect) }
+        return rect == selection.bounds ? .display(id: displayID) : .rect(rect)
     }
 
-    /// The Fullscreen button (story 6): record the whole display.
+    /// Start Video (also Return, via the hosting window).
+    func startVideo() { start(.video) }
+
+    /// Start GIF: recorded as video, converted afterwards (R13).
+    func startGIF() { start(.gif) }
+
+    private func start(_ output: RecordingOutputKind) {
+        guard let region else { return }
+        finish(RecordingChoice(region: region, output: output, overrides: overrides))
+    }
+
+    /// The Fullscreen button (story 6): select the whole display; Start then records it.
     func chooseFullscreen() {
-        finish(.display(id: displayID))
+        snappedWindow = nil
+        selection.snap(to: selection.bounds)
+        hovered = nil
     }
 
     /// Cancel (Escape): resolves to `nil`, a silent no-op with no recording.

@@ -10,12 +10,19 @@ import LightshotKit
 /// a fake). Every entry point bridges the window's imperative lifecycle to `async` via a checked
 /// continuation, resumed exactly once when the user confirms or cancels: `selectRegion()` drags a
 /// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14),
-/// `selectRecordingRegion(initial:)` runs the editable recording selection (spec 0006). v1 covers
-/// the main screen; per-display selection is a follow-up.
+/// `selectRecording(initial:defaults:)` runs the editable recording selection with the recorder
+/// toolbar (spec 0006). v1 covers the main screen; per-display selection is a follow-up.
 @MainActor
 final class OverlaySelectionController: OverlayController {
+    /// The recorder toolbar's settings shortcut: cancels the overlay and opens Settings.
+    private let openSettings: () -> Void
     private var window: OverlayKeyWindow?
+
+    init(openSettings: @escaping () -> Void = {}) {
+        self.openSettings = openSettings
+    }
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
+    private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
 
     func selectRegion() async -> CaptureRegion? {
         resolveStaleContinuation()
@@ -36,12 +43,12 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
-    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? {
+    func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         resolveStaleContinuation()
         let windows = await Self.hoverableWindows()
         return await withCheckedContinuation { continuation in
-            self.continuation = continuation
-            presentRecordingOverlay(windows: windows, initial: initial)
+            self.recordingContinuation = continuation
+            presentRecordingOverlay(windows: windows, initial: initial, defaults: defaults)
         }
     }
 
@@ -50,6 +57,10 @@ final class OverlaySelectionController: OverlayController {
     private func resolveStaleContinuation() {
         if let stale = continuation {
             continuation = nil
+            stale.resume(returning: nil)
+        }
+        if let stale = recordingContinuation {
+            recordingContinuation = nil
             stale.resume(returning: nil)
         }
     }
@@ -102,7 +113,9 @@ final class OverlaySelectionController: OverlayController {
 
     /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
     /// v1 covers the main screen, like the other two modes.
-    private func presentRecordingOverlay(windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?) {
+    private func presentRecordingOverlay(
+        windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?, defaults: RecordingDefaults
+    ) {
         let geometry = Self.mainScreen()
         let frame = geometry.frame
 
@@ -111,13 +124,18 @@ final class OverlaySelectionController: OverlayController {
             pixelScale: geometry.scale,
             displayID: geometry.displayID,
             windows: windows,
-            initial: initial
-        ) { [weak self] region in
-            self?.finish(with: region)
+            initial: initial,
+            defaults: defaults,
+            openSettings: { [weak self] in
+                self?.finishRecording(with: nil)
+                self?.openSettings()
+            }
+        ) { [weak self] choice in
+            self?.finishRecording(with: choice)
         }
 
         let window = makeOverlayWindow(frame: frame)
-        window.onConfirm = { model.confirm() }
+        window.onConfirm = { model.startVideo() }
         window.onCancel = { model.cancel() }
         window.onArrow = { dx, dy, shift in model.arrow(dx: dx, dy: dy, shift: shift) }
         window.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
@@ -127,18 +145,7 @@ final class OverlaySelectionController: OverlayController {
     /// The shared borderless, screen-saver-level, transparent full-screen window every mode presents
     /// in — only its content view and key handlers differ.
     private func makeOverlayWindow(frame: NSRect) -> OverlayKeyWindow {
-        let window = OverlayKeyWindow(
-            contentRect: frame,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        window.level = .screenSaver
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        return window
+        OverlayKeyWindow.fullScreen(frame: frame)
     }
 
     private func present(_ window: OverlayKeyWindow, at frame: NSRect) {
@@ -188,6 +195,14 @@ final class OverlaySelectionController: OverlayController {
         window = nil
         continuation.resume(returning: region)
     }
+
+    private func finishRecording(with choice: RecordingChoice?) {
+        guard let recordingContinuation else { return }
+        self.recordingContinuation = nil
+        window?.orderOut(nil)
+        window = nil
+        recordingContinuation.resume(returning: choice)
+    }
 }
 
 /// A borderless window that can still become key — so it receives Escape/Return — and routes those
@@ -201,6 +216,18 @@ final class OverlayKeyWindow: NSWindow {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    /// A borderless, screen-saver-level, transparent window covering `frame` — the surface every
+    /// overlay (selection, window hover, recording, countdown) is presented in.
+    static func fullScreen(frame: NSRect) -> OverlayKeyWindow {
+        let window = OverlayKeyWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.level = .screenSaver
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        return window
+    }
 
     override func keyDown(with event: NSEvent) {
         let shift = event.modifierFlags.contains(.shift)
