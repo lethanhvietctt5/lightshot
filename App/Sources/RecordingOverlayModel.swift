@@ -16,7 +16,9 @@ import LightshotKit
 final class RecordingOverlayModel {
     typealias HoverWindow = WindowHoverOverlayModel.HoverWindow
 
-    private(set) var selection: EditableSelection
+    private(set) var selection: EditableSelection {
+        didSet { syncCameraPreview() }
+    }
     /// Candidates front-most first, so the first frame containing the pointer is the visible one.
     let windows: [HoverWindow]
     /// The display the overlay covers — what "Fullscreen" resolves to.
@@ -32,6 +34,11 @@ final class RecordingOverlayModel {
     /// The microphone this take narrates through; `nil` is the system default. Seeded from Settings
     /// and persisted back by the coordinator when the take starts.
     private(set) var microphoneDeviceID: String?
+    /// The cameras the camera toggle's menu lists (story 27), and the one this take composites.
+    let cameras: [CameraDevice]
+    private(set) var cameraDeviceID: String?
+    /// The live preview bubble over the selection while the camera toggle is on (story 26).
+    private let cameraBubble: CameraBubbleController?
     private let finish: (RecordingChoice?) -> Void
     /// The toolbar's settings shortcut (story 8).
     let openSettings: () -> Void
@@ -55,6 +62,8 @@ final class RecordingOverlayModel {
         initial: CaptureRegion?, defaults: RecordingDefaults,
         availableToggles: Set<RecordingToggle> = RecordingFeatures.availableToggles,
         audioInputs: [AudioInputDevice] = [],
+        cameras: [CameraDevice] = [],
+        cameraBubble: CameraBubbleController? = nil,
         openSettings: @escaping () -> Void = {},
         permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
         finish: @escaping (RecordingChoice?) -> Void
@@ -68,6 +77,9 @@ final class RecordingOverlayModel {
         // Kept even if that device is not attached right now: the capture falls back to the system
         // default for this take, and the preference survives for when it is plugged back in.
         self.microphoneDeviceID = defaults.microphoneDeviceID
+        self.cameras = cameras
+        self.cameraDeviceID = defaults.cameraDeviceID
+        self.cameraBubble = cameraBubble
         self.openSettings = openSettings
         self.permissionGate = permissionGate
         self.finish = finish
@@ -88,6 +100,13 @@ final class RecordingOverlayModel {
             selection = EditableSelection(bounds: bounds, rect: id == displayID ? bounds : nil)
         case nil:
             selection = EditableSelection(bounds: bounds)
+        }
+        // The camera on by default (Settings) still passes the permission gate first (story 41):
+        // an ungranted camera turns the toggle off for this take rather than opening the device.
+        if isOn(.camera), cameraBubble != nil {
+            Task { @MainActor in
+                if await permissionGate(.camera) { syncCameraPreview() } else { overrides[.camera] = false }
+            }
         }
     }
 
@@ -121,6 +140,7 @@ final class RecordingOverlayModel {
             guard await permissionGate(toggle) else { return }
         }
         overrides[toggle] = turningOn
+        if toggle == .camera { syncCameraPreview() }
     }
 
     /// Pick a microphone from the mic toggle's menu (story 20) and make sure the toggle is on; a
@@ -136,6 +156,42 @@ final class RecordingOverlayModel {
     /// The menu's "Do Not Record Microphone".
     func turnOffMicrophone() {
         overrides[.microphone] = false
+    }
+
+    /// Pick a camera from the camera toggle's menu (story 27), switching the toggle on first.
+    func selectCamera(_ deviceID: String?) async {
+        if !isOn(.camera) {
+            await toggle(.camera)
+            guard isOn(.camera) else { return }
+        }
+        cameraDeviceID = deviceID
+        syncCameraPreview()
+    }
+
+    /// The menu's "Do Not Record Camera".
+    func turnOffCamera() {
+        overrides[.camera] = false
+        syncCameraPreview()
+    }
+
+    /// CleanShot's warning: a camera take with no microphone is silent, which is rarely intended.
+    var cameraWithoutMicrophone: Bool { isOn(.camera) && !isOn(.microphone) }
+
+    /// The preview bubble follows the camera toggle and the selection (story 26): shown over the
+    /// selected region while the camera is on, gone otherwise.
+    private func syncCameraPreview() {
+        guard let cameraBubble else { return }
+        guard isOn(.camera) else {
+            cameraBubble.hide()
+            return
+        }
+        if hasSelection, let rect = selection.rect {
+            // `show` re-targets a running preview (a new device restarts the capture; the same one
+            // only moves), so it is safe to call on every change.
+            cameraBubble.show(deviceID: cameraDeviceID, region: rect, settings: defaults.cameraBubble)
+        } else {
+            cameraBubble.conceal()
+        }
     }
 
     // MARK: - Pointer
@@ -247,7 +303,10 @@ final class RecordingOverlayModel {
 
     private func start(_ output: RecordingOutputKind) {
         guard let region else { return }
-        finish(RecordingChoice(region: region, output: output, overrides: overrides, microphoneDeviceID: microphoneDeviceID))
+        finish(RecordingChoice(
+            region: region, output: output, overrides: overrides,
+            microphoneDeviceID: microphoneDeviceID, cameraDeviceID: cameraDeviceID
+        ))
     }
 
     /// The Fullscreen button (story 6): select the whole display; Start then records it.
@@ -258,7 +317,10 @@ final class RecordingOverlayModel {
     }
 
     /// Cancel (Escape): resolves to `nil`, a silent no-op with no recording.
-    func cancel() { finish(nil) }
+    func cancel() {
+        cameraBubble?.hide()
+        finish(nil)
+    }
 
     private static let dragThreshold: Double = 3
 

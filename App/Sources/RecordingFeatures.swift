@@ -1,8 +1,7 @@
 import LightshotKit
 
-/// Which of the recorder toolbar's toggles have their feature built (spec 0006, story 8). A toggle
-/// whose ticket has not landed is hidden, not disabled: R7 added the microphone, R8 computer
-/// audio, R10 click highlighting, R11 keystrokes; R9 adds the camera.
+/// Which of the recorder toolbar's toggles have their feature built (spec 0006, story 8): all five
+/// since R9 (camera), R10 (click highlighting) and R11 (keystrokes) landed after R7/R8's audio.
 enum RecordingFeatures {
-    static let availableToggles: Set<RecordingToggle> = [.microphone, .computerAudio, .highlightClicks, .showKeystrokes]
+    static let availableToggles: Set<RecordingToggle> = Set(RecordingToggle.allCases)
 }

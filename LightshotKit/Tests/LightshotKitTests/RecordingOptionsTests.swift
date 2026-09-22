@@ -96,7 +96,7 @@ private let allOnDefaults = RecordingDefaults(
     #expect(decoded == RecordingDefaults())
 
     // The R5 controls fields too.
-    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight", "keystrokeOverlay"] {
+    for key in ["showRecordingControls", "controlsPosition", "dimScreenWhileRecording", "confirmBeforeDiscard", "showRecordingTimeInMenuBar", "microphoneVolume", "monoAudio", "computerAudioVolume", "separateAudioTracks", "clickHighlight", "keystrokeOverlay", "cameraBubble"] {
         json.removeValue(forKey: key)
     }
     let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
@@ -106,6 +106,14 @@ private let allOnDefaults = RecordingDefaults(
     #expect(older.computerAudioVolume == 1 && !older.separateAudioTracks)
     #expect(older.clickHighlight == .standard)
     #expect(older.keystrokeOverlay == .standard)
+    #expect(older.cameraBubble == .standard)
+}
+
+@Test func cameraBubbleSettingsReachTheOptions() {
+    let look = CameraBubbleSettings(size: .huge, shape: .square, mirror: false, anchor: Point(x: 0.1, y: 0.2))
+    let o = RecordingOptions.resolve(region: region, output: .video, defaults: RecordingDefaults(cameraDeviceID: "cam", cameraBubble: look),
+                                     overrides: RecordingOverrides(camera: true))
+    #expect(o.camera == .device(id: "cam") && o.cameraBubble == look)
 }
 
 @Test func toggleSubscriptsReadDefaultsAndWriteOverrides() {

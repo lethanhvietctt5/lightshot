@@ -42,13 +42,19 @@ actor SCRecordingService: RecordingService {
     /// overlay (story 30), each running only while its overlay is on.
     private let pointerEvents: any InputEventSource
     private let keyEvents: any InputEventSource
+    /// The camera the bubble draws from (stories 26–28), shared with the on-screen preview.
+    private let cameraFeed: CameraFeed
     /// The MP4 the caller asked for; the writer's fragmented movie sits beside it.
     private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
 
-    init(pointerEvents: any InputEventSource = MouseEventMonitor(), keyEvents: any InputEventSource = KeyEventTap()) {
+    init(
+        pointerEvents: any InputEventSource = MouseEventMonitor(), keyEvents: any InputEventSource = KeyEventTap(),
+        cameraFeed: CameraFeed = CameraFeed()
+    ) {
         self.pointerEvents = pointerEvents
         self.keyEvents = keyEvents
+        self.cameraFeed = cameraFeed
     }
 
     /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
@@ -126,7 +132,19 @@ actor SCRecordingService: RecordingService {
                     throw error
                 }
             }
-            // Overlays drawn into the frames (decision 4): the click highlight and the keystroke pill.
+            // The camera (story 26): usually already running for the toolbar's preview bubble; a
+            // camera that cannot open costs the bubble, not the take.
+            var camera: CameraOverlay?
+            if case let .device(deviceID) = options.camera {
+                do {
+                    try cameraFeed.start(deviceID: deviceID, settings: options.cameraBubble)
+                    camera = CameraOverlay(feed: cameraFeed, regionSize: Size(width: target.pointSize.width, height: target.pointSize.height))
+                } catch {
+                    log.error("Camera unavailable for this take: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            // Overlays drawn into the frames (decision 4): the camera bubble, the click highlight
+            // and the keystroke pill.
             let compositor = RecordingCompositor(
                 mapping: FrameMapping(
                     regionOrigin: target.regionOrigin,
@@ -138,7 +156,8 @@ actor SCRecordingService: RecordingService {
                 // Without the Input Monitoring grant the tap cannot exist; record without the pill
                 // rather than fail the take (the toggles ask for the grant, story 41).
                 keystrokes: options.showKeystrokes && KeyEventTap.isAuthorized ? options.keystrokeOverlay : nil,
-                systemAppearanceIsDark: KeystrokeOverlayAppearance.systemIsDark
+                systemAppearanceIsDark: KeystrokeOverlayAppearance.systemIsDark,
+                camera: camera
             )
             let systemMeter = systemAudioMeter
             let output = StreamOutput(
@@ -274,6 +293,8 @@ actor SCRecordingService: RecordingService {
     private func tearDown() {
         pointerEvents.stop()
         keyEvents.stop()
+        // The camera is the take's while it runs; the preview panel (app side) goes with the session.
+        cameraFeed.stop()
         microphone?.stop()
         microphone = nil
         audioMeter.level = 0

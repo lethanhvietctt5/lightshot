@@ -20,16 +20,23 @@ final class OverlaySelectionController: OverlayController {
     private let permissionGate: (RecordingToggle) async -> Bool
     /// The microphones the toolbar's device menu lists (story 20).
     private let audioInputs: () async -> [AudioInputDevice]
+    /// The cameras the toolbar's device menu lists (story 27), and the preview bubble it shows.
+    private let cameras: () async -> [CameraDevice]
+    private let cameraBubble: CameraBubbleController?
     private var window: OverlayKeyWindow?
 
     init(
         openSettings: @escaping () -> Void = {},
         permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true },
-        audioInputs: @escaping () async -> [AudioInputDevice] = { [] }
+        audioInputs: @escaping () async -> [AudioInputDevice] = { [] },
+        cameras: @escaping () async -> [CameraDevice] = { [] },
+        cameraBubble: CameraBubbleController? = nil
     ) {
         self.openSettings = openSettings
         self.permissionGate = permissionGate
         self.audioInputs = audioInputs
+        self.cameras = cameras
+        self.cameraBubble = cameraBubble
     }
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
     private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
@@ -57,9 +64,10 @@ final class OverlaySelectionController: OverlayController {
         resolveStaleContinuation()
         let windows = await Self.hoverableWindows()
         let inputs = await audioInputs()
+        let cameras = await cameras()
         return await withCheckedContinuation { continuation in
             self.recordingContinuation = continuation
-            presentRecordingOverlay(windows: windows, initial: initial, defaults: defaults, audioInputs: inputs)
+            presentRecordingOverlay(windows: windows, initial: initial, defaults: defaults, audioInputs: inputs, cameras: cameras)
         }
     }
 
@@ -72,6 +80,7 @@ final class OverlaySelectionController: OverlayController {
         }
         if let stale = recordingContinuation {
             recordingContinuation = nil
+            cameraBubble?.hide()
             stale.resume(returning: nil)
         }
     }
@@ -126,7 +135,7 @@ final class OverlaySelectionController: OverlayController {
     /// v1 covers the main screen, like the other two modes.
     private func presentRecordingOverlay(
         windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?, defaults: RecordingDefaults,
-        audioInputs: [AudioInputDevice]
+        audioInputs: [AudioInputDevice], cameras: [CameraDevice]
     ) {
         let geometry = Self.mainScreen()
         let frame = geometry.frame
@@ -139,6 +148,8 @@ final class OverlaySelectionController: OverlayController {
             initial: initial,
             defaults: defaults,
             audioInputs: audioInputs,
+            cameras: cameras,
+            cameraBubble: cameraBubble,
             openSettings: { [weak self] in
                 self?.finishRecording(with: nil)
                 self?.openSettings()
@@ -215,6 +226,9 @@ final class OverlaySelectionController: OverlayController {
         self.recordingContinuation = nil
         window?.orderOut(nil)
         window = nil
+        // No take (Escape, the Settings shortcut, a stale overlay): the preview goes with the
+        // toolbar. With a take, it stays through the countdown and the recording (story 26).
+        if choice == nil { cameraBubble?.hide() }
         recordingContinuation.resume(returning: choice)
     }
 }

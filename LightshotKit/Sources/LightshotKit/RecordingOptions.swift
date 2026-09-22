@@ -124,6 +124,8 @@ public struct RecordingOptions: Equatable, Sendable {
     public var separateAudioTracks: Bool
     /// The webcam bubble's source (story 26), or off.
     public var camera: InputDeviceSelection
+    /// Size, shape, mirroring and position of the bubble (story 27).
+    public var cameraBubble: CameraBubbleSettings
     /// Draw a highlight at the pointer and animate clicks (story 29).
     public var highlightClicks: Bool
     /// How the highlight looks when `highlightClicks` is on.
@@ -147,6 +149,7 @@ public struct RecordingOptions: Equatable, Sendable {
         computerAudioVolume: Double = 1,
         separateAudioTracks: Bool = false,
         camera: InputDeviceSelection = .off,
+        cameraBubble: CameraBubbleSettings = .standard,
         highlightClicks: Bool = false,
         clickHighlight: ClickHighlightSettings = .standard,
         showKeystrokes: Bool = false,
@@ -163,6 +166,7 @@ public struct RecordingOptions: Equatable, Sendable {
         self.computerAudioVolume = min(max(computerAudioVolume, 0), 2)
         self.separateAudioTracks = separateAudioTracks
         self.camera = camera
+        self.cameraBubble = cameraBubble
         self.highlightClicks = highlightClicks
         self.clickHighlight = clickHighlight
         self.showKeystrokes = showKeystrokes
@@ -195,6 +199,7 @@ public struct RecordingOptions: Equatable, Sendable {
             computerAudioVolume: defaults.computerAudioVolume,
             separateAudioTracks: defaults.separateAudioTracks,
             camera: cameraOn ? .device(id: defaults.cameraDeviceID) : .off,
+            cameraBubble: defaults.cameraBubble,
             highlightClicks: overrides.highlightClicks ?? defaults.highlightClicks,
             clickHighlight: defaults.clickHighlight,
             showKeystrokes: overrides.showKeystrokes ?? defaults.showKeystrokes,
@@ -231,6 +236,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var recordCamera: Bool
     /// `nil` means the system default camera.
     public var cameraDeviceID: String?
+    /// Size, shape, mirroring and dragged position of the bubble (story 27).
+    public var cameraBubble: CameraBubbleSettings
     public var highlightClicks: Bool
     /// Style, size, colour and click animation of the highlight (story 29).
     public var clickHighlight: ClickHighlightSettings
@@ -265,6 +272,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         separateAudioTracks: Bool = false,
         recordCamera: Bool = false,
         cameraDeviceID: String? = nil,
+        cameraBubble: CameraBubbleSettings = .standard,
         highlightClicks: Bool = false,
         clickHighlight: ClickHighlightSettings = .standard,
         showKeystrokes: Bool = false,
@@ -290,6 +298,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.separateAudioTracks = separateAudioTracks
         self.recordCamera = recordCamera
         self.cameraDeviceID = cameraDeviceID
+        self.cameraBubble = cameraBubble
         self.highlightClicks = highlightClicks
         self.clickHighlight = clickHighlight
         self.showKeystrokes = showKeystrokes
@@ -324,6 +333,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             separateAudioTracks: try c.decodeIfPresent(Bool.self, forKey: .separateAudioTracks) ?? false,
             recordCamera: try c.decode(Bool.self, forKey: .recordCamera),
             cameraDeviceID: try c.decodeIfPresent(String.self, forKey: .cameraDeviceID),
+            cameraBubble: try c.decodeIfPresent(CameraBubbleSettings.self, forKey: .cameraBubble) ?? .standard,
             highlightClicks: try c.decode(Bool.self, forKey: .highlightClicks),
             clickHighlight: try c.decodeIfPresent(ClickHighlightSettings.self, forKey: .clickHighlight) ?? .standard,
             showKeystrokes: try c.decode(Bool.self, forKey: .showKeystrokes),
@@ -380,15 +390,18 @@ public struct RecordingChoice: Equatable, Sendable {
     /// The microphone picked in the toolbar's device menu (story 20); `nil` is the system default.
     /// Persisted as the Settings default, so the next take starts from it.
     public var microphoneDeviceID: String?
+    /// The camera picked in the toolbar's device menu (story 27); `nil` is the system default.
+    public var cameraDeviceID: String?
 
     public init(
         region: CaptureRegion, output: RecordingOutputKind, overrides: RecordingOverrides = .none,
-        microphoneDeviceID: String? = nil
+        microphoneDeviceID: String? = nil, cameraDeviceID: String? = nil
     ) {
         self.region = region
         self.output = output
         self.overrides = overrides
         self.microphoneDeviceID = microphoneDeviceID
+        self.cameraDeviceID = cameraDeviceID
     }
 }
 
