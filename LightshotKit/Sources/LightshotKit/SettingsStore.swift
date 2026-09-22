@@ -40,6 +40,12 @@ public protocol SettingsStore: AnyObject {
     /// FPS, audio/camera/overlay toggles, countdown. The recorder toolbar overrides per recording
     /// through `RecordingOptions.resolve`; the Recording settings section (R6) edits these.
     var recordingDefaults: RecordingDefaults { get set }
+
+    /// Pre-fill the recording overlay with the previous region (spec 0006, story 7).
+    var rememberLastRecordingArea: Bool { get set }
+    /// The region the last recording used, kept for `rememberLastRecordingArea`; `nil` until the
+    /// first recording. Persisted so it survives a relaunch.
+    var lastRecordingRegion: CaptureRegion? { get set }
 }
 
 public extension SettingsStore {

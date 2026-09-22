@@ -36,19 +36,12 @@ struct WindowHoverOverlayView: View {
     }
 
     private func draw(into context: inout GraphicsContext, size: CGSize) {
-        // Dim the whole screen, punching the hovered window out with an even-odd fill so it shows
-        // through at full brightness — the live preview of what a click will capture.
-        var dimmed = Path(CGRect(origin: .zero, size: size))
-        let box = model.hovered?.frame.standardized
-        if let box { dimmed.addRect(box.cgRect) }
-        context.fill(dimmed, with: .color(.black.opacity(0.45)), style: FillStyle(eoFill: true))
-
+        // The hovered window shows through at full brightness — the live preview of what a click
+        // will capture.
+        let box = model.hovered?.frame.standardized.cgRect
+        OverlayCanvas.dim(&context, size: size, punchingOut: box)
         guard let box else { return }
         // Outline the target so the highlight reads even against a bright window.
-        context.stroke(
-            Path(box.cgRect),
-            with: .color(.white),
-            style: StrokeStyle(lineWidth: 2)
-        )
+        context.stroke(Path(box), with: .color(.white), style: StrokeStyle(lineWidth: 2))
     }
 }

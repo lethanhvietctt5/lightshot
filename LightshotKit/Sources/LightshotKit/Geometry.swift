@@ -8,7 +8,7 @@ import Foundation
 // math with no platform dependency. The render layer maps these into CG space.
 
 /// A point in image pixel coordinates. Origin is top-left; `y` grows downward.
-public struct Point: Equatable, Sendable {
+public struct Point: Equatable, Codable, Sendable {
     public var x: Double
     public var y: Double
 
@@ -31,7 +31,7 @@ public struct Point: Equatable, Sendable {
 }
 
 /// A size in image pixels.
-public struct Size: Equatable, Sendable {
+public struct Size: Equatable, Codable, Sendable {
     public var width: Double
     public var height: Double
 
@@ -42,7 +42,7 @@ public struct Size: Equatable, Sendable {
 }
 
 /// An axis-aligned rectangle in image pixel coordinates.
-public struct Rect: Equatable, Sendable {
+public struct Rect: Equatable, Codable, Sendable {
     public var origin: Point
     public var size: Size
 

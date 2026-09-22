@@ -90,10 +90,17 @@ private final class IdleCaptureService: CaptureService, @unchecked Sendable {
     func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
 }
+/// Hands back a canned recording region and records what it was asked to pre-fill.
 @MainActor
-private final class IdleOverlay: OverlayController {
+private final class StubOverlay: OverlayController {
+    var recordingRegion: CaptureRegion? = .display(id: 7)
+    private(set) var initials: [CaptureRegion?] = []
     func selectRegion() async -> CaptureRegion? { nil }
     func selectWindow() async -> CaptureRegion? { nil }
+    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? {
+        initials.append(initial)
+        return recordingRegion
+    }
 }
 @MainActor
 private final class IdleImageSource: ImageSource {
@@ -116,6 +123,8 @@ private final class StubSettings: SettingsStore {
     var historyRetention = 50
     var launchAtLogin = false
     var recordingDefaults = RecordingDefaults(countdownEnabled: false)
+    var rememberLastRecordingArea = false
+    var lastRecordingRegion: CaptureRegion?
 }
 
 /// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.
@@ -140,6 +149,7 @@ private final class Harness {
     let ui = SpyUI()
     let settings = StubSettings()
     let clock = ManualClock()
+    let overlay = StubOverlay()
     let coordinator: AppCoordinator
 
     var now: TimeInterval {
@@ -153,7 +163,7 @@ private final class Harness {
         let clock = self.clock
         coordinator = AppCoordinator(
             captureService: IdleCaptureService(),
-            overlay: IdleOverlay(),
+            overlay: overlay,
             imageSource: IdleImageSource(),
             imageSink: IdleImageSink(),
             settings: settings,
@@ -173,7 +183,7 @@ private let display = CaptureRegion.display(id: 7)
 
 @Test @MainActor func toggleStartsAVideoRecordingOfTheDisplayAndReportsTheState() async {
     let h = Harness()
-    await h.coordinator.toggleRecording(region: display)
+    await h.coordinator.toggleRecording()
 
     #expect(h.coordinator.isRecording)
     #expect(h.service.starts.count == 1)
@@ -186,9 +196,9 @@ private let display = CaptureRegion.display(id: 7)
 
 @Test @MainActor func toggleAgainStopsFinishesAndSavesToTheDefaultDestination() async {
     let h = Harness()
-    await h.coordinator.toggleRecording(region: display)
+    await h.coordinator.toggleRecording()
     h.now = 130
-    await h.coordinator.toggleRecording(region: display)
+    await h.coordinator.toggleRecording()
 
     #expect(!h.coordinator.isRecording)
     #expect(h.service.stopCount == 1)
@@ -229,7 +239,7 @@ private let display = CaptureRegion.display(id: 7)
     let starting = Task { await h.coordinator.startRecording(region: display) }
     while h.service.startGate == nil { await Task.yield() }
 
-    await h.coordinator.toggleRecording(region: display)   // arrives mid-start
+    await h.coordinator.toggleRecording()                  // arrives mid-start
     #expect(h.service.stopCount == 0)
     #expect(h.coordinator.isRecording)
 
@@ -274,6 +284,46 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.sink.removed == h.service.starts.map(\.url))
     #expect(h.ui.states.last == .failed(.systemFailure("display disconnected")))
     #expect(h.service.stopCount == 0)
+}
+
+// MARK: - Recording overlay (stories 3–7)
+
+@Test @MainActor func recordScreenRunsTheOverlayFirstAndStartsOnItsRegion() async {
+    let h = Harness()
+    let rect = CaptureRegion.rect(Rect(x: 10, y: 20, width: 640, height: 360))
+    h.overlay.recordingRegion = rect
+    await h.coordinator.recordScreen()
+
+    #expect(h.overlay.initials == [nil])                 // nothing to remember yet
+    #expect(h.service.starts.first?.options.region == rect)
+    #expect(h.coordinator.isRecording)
+}
+
+@Test @MainActor func escapeInTheOverlayIsASilentNoOp() async {
+    let h = Harness()
+    h.overlay.recordingRegion = nil
+    await h.coordinator.recordScreen()
+    #expect(h.service.starts.isEmpty)
+    #expect(!h.coordinator.isRecording)
+    #expect(h.ui.states.isEmpty)
+    #expect(h.settings.lastRecordingRegion == nil)
+}
+
+@Test @MainActor func theChosenRegionIsRememberedAndPreFilledOnlyWhenTheSettingIsOn() async {
+    let h = Harness()
+    let window = CaptureRegion.window(id: 42, frame: Rect(x: 0, y: 0, width: 800, height: 600))
+    h.overlay.recordingRegion = window
+    await h.coordinator.recordScreen()
+    #expect(h.settings.lastRecordingRegion == window)   // always kept …
+    await h.coordinator.stopRecording()
+
+    await h.coordinator.recordScreen()
+    #expect(h.overlay.initials == [nil, nil])           // … but only offered when the setting is on
+    await h.coordinator.stopRecording()
+
+    h.settings.rememberLastRecordingArea = true
+    await h.coordinator.recordScreen()
+    #expect(h.overlay.initials.last == window)
 }
 
 // MARK: - Countdown (story 10, until the overlay lands)

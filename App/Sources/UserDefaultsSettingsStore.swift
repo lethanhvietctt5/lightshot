@@ -26,6 +26,8 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let captureDelay = "capture.delay"   // TimeInterval seconds; 0 == off
         static let historyRetention = "history.retention"
         static let recordingDefaults = "recording.defaults"   // JSON: RecordingDefaults
+        static let rememberLastRecordingArea = "recording.rememberLastArea"
+        static let lastRecordingRegion = "recording.lastRegion"   // JSON: CaptureRegion
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -126,6 +128,25 @@ final class UserDefaultsSettingsStore: SettingsStore {
         set {
             if let data = try? JSONEncoder().encode(newValue) {
                 defaults.set(data, forKey: Key.recordingDefaults)
+            }
+        }
+    }
+
+    var rememberLastRecordingArea: Bool {
+        get { defaults.bool(forKey: Key.rememberLastRecordingArea) }   // defaults to false
+        set { defaults.set(newValue, forKey: Key.rememberLastRecordingArea) }
+    }
+
+    var lastRecordingRegion: CaptureRegion? {
+        get {
+            guard let data = defaults.data(forKey: Key.lastRecordingRegion) else { return nil }
+            return try? JSONDecoder().decode(CaptureRegion.self, from: data)
+        }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Key.lastRecordingRegion)
+            } else {
+                defaults.removeObject(forKey: Key.lastRecordingRegion)
             }
         }
     }

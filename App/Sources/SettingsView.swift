@@ -13,6 +13,7 @@ struct SettingsView: View {
             shortcutsSection
             savingSection
             captureSection
+            recordingSection
             historySection
             generalSection
         }
@@ -138,6 +139,16 @@ struct SettingsView: View {
                 Text("10 seconds").tag(TimeInterval(10))
             }
             .help("Wait before the shot fires, so you can open menus or hover states first.")
+        }
+    }
+
+    // MARK: - Recording (spec 0006)
+
+    /// The Recording section grows with each recording ticket; R3 adds the remembered-area toggle.
+    private var recordingSection: some View {
+        Section("Recording") {
+            Toggle("Remember last recording area", isOn: $model.rememberLastRecordingArea)
+                .help("Pre-fill the recording overlay with the area, window or display you recorded last time.")
         }
     }
 

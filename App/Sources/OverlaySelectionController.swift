@@ -7,10 +7,11 @@ import LightshotKit
 /// choice into a `CaptureRegion` (or `nil` on Escape). The pre-capture step — it never captures.
 ///
 /// A thin OS wrapper (no unit tests; the coordinator's overlay → capture ordering is tested against
-/// a fake). Both entry points bridge the window's imperative lifecycle to `async` via a checked
+/// a fake). Every entry point bridges the window's imperative lifecycle to `async` via a checked
 /// continuation, resumed exactly once when the user confirms or cancels: `selectRegion()` drags a
-/// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14). v1 covers the main
-/// screen; per-display selection is a follow-up.
+/// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14),
+/// `selectRecordingRegion(initial:)` runs the editable recording selection (spec 0006). v1 covers
+/// the main screen; per-display selection is a follow-up.
 @MainActor
 final class OverlaySelectionController: OverlayController {
     private var window: OverlayKeyWindow?
@@ -35,6 +36,15 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
+    func selectRecordingRegion(initial: CaptureRegion?) async -> CaptureRegion? {
+        resolveStaleContinuation()
+        let windows = await Self.hoverableWindows()
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            presentRecordingOverlay(windows: windows, initial: initial)
+        }
+    }
+
     /// Guard against an overlapping presentation leaving a stale continuation: resolve the previous
     /// one to `nil` (a silent no-op) before installing a new one.
     private func resolveStaleContinuation() {
@@ -44,12 +54,28 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
-    private func presentRectOverlay() {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let scale = Double(screen?.backingScaleFactor ?? 2)
+    /// The main screen every overlay covers in v1: its frame, backing scale and display id.
+    private struct ScreenGeometry {
+        let frame: NSRect
+        let scale: Double
+        let displayID: UInt32
+    }
 
-        let model = SelectionOverlayModel(pixelScale: scale) { [weak self] region in
+    private static func mainScreen() -> ScreenGeometry {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        return ScreenGeometry(
+            frame: screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900),
+            scale: Double(screen?.backingScaleFactor ?? 2),
+            displayID: UInt32(number ?? CGMainDisplayID())
+        )
+    }
+
+    private func presentRectOverlay() {
+        let geometry = Self.mainScreen()
+        let frame = geometry.frame
+
+        let model = SelectionOverlayModel(pixelScale: geometry.scale) { [weak self] region in
             self?.finish(with: region)
         }
 
@@ -61,8 +87,7 @@ final class OverlaySelectionController: OverlayController {
     }
 
     private func presentWindowOverlay(windows: [WindowHoverOverlayModel.HoverWindow]) {
-        let screen = NSScreen.main ?? NSScreen.screens.first
-        let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let frame = Self.mainScreen().frame
 
         let model = WindowHoverOverlayModel(windows: windows) { [weak self] region in
             self?.finish(with: region)
@@ -75,7 +100,31 @@ final class OverlaySelectionController: OverlayController {
         present(window, at: frame)
     }
 
-    /// The shared borderless, screen-saver-level, transparent full-screen window both modes present
+    /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
+    /// v1 covers the main screen, like the other two modes.
+    private func presentRecordingOverlay(windows: [WindowHoverOverlayModel.HoverWindow], initial: CaptureRegion?) {
+        let geometry = Self.mainScreen()
+        let frame = geometry.frame
+
+        let model = RecordingOverlayModel(
+            bounds: Rect(x: 0, y: 0, width: frame.width, height: frame.height),
+            pixelScale: geometry.scale,
+            displayID: geometry.displayID,
+            windows: windows,
+            initial: initial
+        ) { [weak self] region in
+            self?.finish(with: region)
+        }
+
+        let window = makeOverlayWindow(frame: frame)
+        window.onConfirm = { model.confirm() }
+        window.onCancel = { model.cancel() }
+        window.onArrow = { dx, dy, shift in model.arrow(dx: dx, dy: dy, shift: shift) }
+        window.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
+        present(window, at: frame)
+    }
+
+    /// The shared borderless, screen-saver-level, transparent full-screen window every mode presents
     /// in — only its content view and key handlers differ.
     private func makeOverlayWindow(frame: NSRect) -> OverlayKeyWindow {
         let window = OverlayKeyWindow(
@@ -147,14 +196,21 @@ final class OverlaySelectionController: OverlayController {
 final class OverlayKeyWindow: NSWindow {
     var onConfirm: (() -> Void)?
     var onCancel: (() -> Void)?
+    /// Arrow keys (the recording overlay nudges / ⇧-resizes the selection): unit dx/dy and ⇧.
+    var onArrow: ((_ dx: Double, _ dy: Double, _ shift: Bool) -> Void)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        let shift = event.modifierFlags.contains(.shift)
         switch event.keyCode {
         case 53: onCancel?()           // Escape
         case 36, 76: onConfirm?()      // Return / keypad Enter
+        case 123 where onArrow != nil: onArrow?(-1, 0, shift)   // ←
+        case 124 where onArrow != nil: onArrow?(1, 0, shift)    // →
+        case 125 where onArrow != nil: onArrow?(0, 1, shift)    // ↓
+        case 126 where onArrow != nil: onArrow?(0, -1, shift)   // ↑
         default: super.keyDown(with: event)
         }
     }

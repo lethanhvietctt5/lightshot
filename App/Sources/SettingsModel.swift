@@ -32,6 +32,7 @@ final class SettingsModel {
     var openInEditor: Bool { didSet { store.openInEditor = openInEditor } }
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
     var captureDelay: TimeInterval { didSet { store.captureDelay = captureDelay } }
+    var rememberLastRecordingArea: Bool { didSet { store.rememberLastRecordingArea = rememberLastRecordingArea } }
     var historyRetention: Int {
         didSet {
             let clamped = max(0, historyRetention)
@@ -84,6 +85,7 @@ final class SettingsModel {
         self.openInEditor = store.openInEditor
         self.includeCursor = store.includeCursor
         self.captureDelay = store.captureDelay
+        self.rememberLastRecordingArea = store.rememberLastRecordingArea
         self.historyRetention = store.historyRetention
         self.launchAtLogin = store.launchAtLogin
     }
