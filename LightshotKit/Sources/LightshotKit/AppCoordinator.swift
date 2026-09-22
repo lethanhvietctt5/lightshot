@@ -336,19 +336,25 @@ public final class AppCoordinator {
         guard (try? recordingSession.start(options, writingTo: url, at: clock())) != nil else { return }
         ui.presentRecordingState(recordingSession)
 
-        if recordingSession.state == .countdown {
-            let completed = await ui.runRecordingCountdown(seconds: options.countdownSeconds)
-            // A stop during the countdown already discarded the take (see `stopRecording`).
-            guard recordingSession.state == .countdown else { return }
-            guard completed, (try? recordingSession.beginRecording(at: clock())) != nil else {
-                if let partialFile = try? recordingSession.discard() { mediaSink?.removeFile(at: partialFile) }
-                ui.presentRecordingState(recordingSession)
-                return
-            }
-            ui.presentRecordingState(recordingSession)
-        }
-
+        guard await runCountdownIfNeeded(options) else { return }
         await startStream(options, writingTo: url)
+    }
+
+    /// The countdown step shared by a fresh take and a restart: when the session is counting down,
+    /// run the UI countdown and begin recording at zero. Returns whether the stream should start —
+    /// `false` when the user escaped (the take is discarded here) or a stop already ended it.
+    private func runCountdownIfNeeded(_ options: RecordingOptions) async -> Bool {
+        guard recordingSession.state == .countdown else { return recordingSession.state == .recording }
+        let completed = await ui.runRecordingCountdown(seconds: options.countdownSeconds)
+        // A stop during the countdown already discarded the take (see `stopRecording`).
+        guard recordingSession.state == .countdown else { return false }
+        guard completed, (try? recordingSession.beginRecording(at: clock())) != nil else {
+            _ = try? recordingSession.discard()   // nothing was written: no file to delete
+            ui.presentRecordingState(recordingSession)
+            return false
+        }
+        ui.presentRecordingState(recordingSession)
+        return true
     }
 
     /// Ask the service to start streaming — the last step of a fresh take and of a restart. Guarded
@@ -393,23 +399,18 @@ public final class AppCoordinator {
             guard await ui.confirmRecordingRestart() else { return }
             guard recordingSession.state == .recording || recordingSession.state == .paused else { return }
         }
-        guard let partialFile = try? recordingSession.restart(at: clock()), let options = recordingSession.options,
+        guard (try? recordingSession.restart(at: clock())) != nil, let options = recordingSession.options,
               let url = recordingSession.outputURL
         else { return }
+        // The old stream is torn down (and its partial file deleted) by the service. A hotkey stop
+        // arriving during that teardown would find no stream, so it is held off until the new one
+        // is up — the countdown, if any, stays stoppable as usual.
+        isStartingRecording = true
         await recordingService.cancel()
-        mediaSink?.removeFile(at: partialFile)
+        isStartingRecording = false
         ui.presentRecordingState(recordingSession)
 
-        if recordingSession.state == .countdown {
-            let completed = await ui.runRecordingCountdown(seconds: options.countdownSeconds)
-            guard recordingSession.state == .countdown else { return }
-            guard completed, (try? recordingSession.beginRecording(at: clock())) != nil else {
-                if let partialFile = try? recordingSession.discard() { mediaSink?.removeFile(at: partialFile) }
-                ui.presentRecordingState(recordingSession)
-                return
-            }
-            ui.presentRecordingState(recordingSession)
-        }
+        guard await runCountdownIfNeeded(options) else { return }
         await startStream(options, writingTo: url)
     }
 
@@ -421,9 +422,8 @@ public final class AppCoordinator {
             guard await ui.confirmRecordingDiscard() else { return }
             guard isRecording, recordingSession.state != .stopping else { return }
         }
-        guard let partialFile = try? recordingSession.discard() else { return }
-        await recordingService.cancel()
-        mediaSink?.removeFile(at: partialFile)
+        guard (try? recordingSession.discard()) != nil else { return }
+        await recordingService.cancel()   // deletes the partial file
         ui.presentRecordingState(recordingSession)
     }
 
@@ -441,9 +441,8 @@ public final class AppCoordinator {
         guard let recordingService, isRecording, !isStartingRecording else { return }
         guard let outcome = try? recordingSession.stop(at: clock()) else { return }
         switch outcome {
-        case let .discarded(partialFile):
-            await recordingService.cancel()
-            mediaSink?.removeFile(at: partialFile)
+        case .discarded:
+            await recordingService.cancel()   // nothing was written; the service tears down
             ui.presentRecordingState(recordingSession)
         case .stopping:
             ui.presentRecordingState(recordingSession)
@@ -474,12 +473,11 @@ public final class AppCoordinator {
         }
     }
 
-    /// Fail the session (keeping its elapsed time for diagnostics), delete the partial file so
-    /// scratch never accumulates, and route the error the way capture does: recovery for a missing
-    /// permission, silence for a cancel, a message otherwise.
+    /// Fail the session (keeping its elapsed time for diagnostics) and route the error the way
+    /// capture does: recovery for a missing permission, silence for a cancel, a message otherwise.
+    /// The service has already deleted its partial file on every failure path.
     private func failRecording(with error: RecordingError) {
         try? recordingSession.fail(error, at: clock())
-        if let partialFile = recordingSession.outputURL { mediaSink?.removeFile(at: partialFile) }
         ui.presentRecordingState(recordingSession)
         switch error {
         case .permissionDenied:
@@ -492,8 +490,9 @@ public final class AppCoordinator {
     }
 
     /// Where in-progress takes live: the finished one is moved out by `deliver`, a discarded or
-    /// failed one is deleted through the sink, and anything left over at launch is a crashed take
-    /// for the app's recovery to pick up (story 18).
+    /// failed one is deleted by the service, and anything left over at launch is a crashed take
+    /// for the app's recovery to pick up (story 18). Callers should pass a durable
+    /// `scratchDirectory` (Application Support, not a temp dir the OS purges).
     public var recordingScratchDirectory: URL {
         scratchDirectory.appendingPathComponent("Lightshot Recordings", isDirectory: true)
     }

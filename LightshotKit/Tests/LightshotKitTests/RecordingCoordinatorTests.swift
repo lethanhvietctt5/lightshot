@@ -20,6 +20,9 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     /// When set, `start` suspends here until the test resumes it — for the in-flight-start race.
     var startGate: CheckedContinuation<Void, Never>?
     var holdStart = false
+    /// When set, `cancel` suspends here until the test resumes it — for the restart race.
+    var cancelGate: CheckedContinuation<Void, Never>?
+    var holdCancel = false
     private(set) var stopCount = 0
     private(set) var cancelCount = 0
     private(set) var pauseCount = 0
@@ -51,7 +54,10 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     func pause() async { pauseCount += 1 }
     func resume() async { resumeCount += 1 }
     func stop() async -> Result<URL, RecordingError> { stopCount += 1; return stopResult }
-    func cancel() async { cancelCount += 1 }
+    func cancel() async {
+        cancelCount += 1
+        if holdCancel { await withCheckedContinuation { cancelGate = $0 } }
+    }
 }
 
 private final class SpyMediaSink: MediaSink {
@@ -59,13 +65,11 @@ private final class SpyMediaSink: MediaSink {
     var saveFails = false
     private(set) var copied: [URL] = []
     private(set) var saves: [(from: URL, to: URL)] = []
-    private(set) var removed: [URL] = []
     func copyFile(at url: URL) { copied.append(url) }
     func save(_ url: URL, to destination: URL) throws {
         if saveFails { throw Failure() }
         saves.append((url, destination))
     }
-    func removeFile(at url: URL) { removed.append(url) }
 }
 
 @MainActor
@@ -286,8 +290,6 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.service.cancelCount == 1)
     #expect(h.service.stopCount == 0)
     #expect(h.service.starts.isEmpty)                 // the stream never started
-    #expect(h.sink.removed.count == 1)
-    #expect(h.sink.removed.first?.pathExtension == "mp4")
     #expect(h.coordinator.recordingSession.state == .idle)
     #expect(h.ui.states.last == .idle)
 }
@@ -301,7 +303,6 @@ private let display = CaptureRegion.display(id: 7)
 
     #expect(h.coordinator.recordingSession.state == .failed(.systemFailure("display disconnected")))
     #expect(h.ui.recordingFailures == [.systemFailure("display disconnected")])
-    #expect(h.sink.removed == h.service.starts.map(\.url))
     #expect(h.ui.states.last == .failed(.systemFailure("display disconnected")))
     #expect(h.service.stopCount == 0)
 }
@@ -397,10 +398,10 @@ private let display = CaptureRegion.display(id: 7)
     await h.coordinator.restartRecording()
 
     #expect(h.ui.restartConfirmations == 1)
-    #expect(h.service.cancelCount == 1)                  // the old stream is torn down …
+    #expect(h.service.cancelCount == 1)                  // the old stream (and its file) torn down …
     #expect(h.service.starts.count == 2)                 // … and a new one started
     #expect(h.service.starts.map(\.options).allSatisfy { $0 == h.service.starts.first?.options })
-    #expect(h.sink.removed.count == 1)                   // the partial file is deleted
+    #expect(h.service.starts.map(\.url).allSatisfy { $0 == h.service.starts.first?.url })   // same scratch URL
     #expect(h.coordinator.recordingSession.state == .recording)
     #expect(h.coordinator.recordingElapsed == 0)         // the clock restarted
     #expect(h.ui.countdowns.isEmpty)
@@ -438,11 +439,47 @@ private let display = CaptureRegion.display(id: 7)
     await h.coordinator.discardRecording()
 
     #expect(h.ui.discardConfirmations == 1)
-    #expect(h.service.cancelCount == 1)
-    #expect(h.sink.removed.count == 1)
+    #expect(h.service.cancelCount == 1)                  // the service deletes the partial file
     #expect(h.sink.saves.isEmpty)
     #expect(h.coordinator.recordingSession.state == .idle)
     #expect(h.ui.states.last == .idle)
+}
+
+@Test @MainActor func aStopDuringRestartsTeardownWaitsForTheNewStream() async {
+    // The old stream is being cancelled when the hotkey fires: the stop must not run against a
+    // service with no stream (which would fail the session) — it is ignored, and the new stream starts.
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: false, confirmBeforeDiscard: false)
+    await h.coordinator.startRecording(region: display)
+    h.service.holdCancel = true
+    let restarting = Task { await h.coordinator.restartRecording() }
+    while h.service.cancelGate == nil { await Task.yield() }
+
+    await h.coordinator.stopRecording()                  // arrives mid-teardown
+    #expect(h.service.stopCount == 0)
+
+    h.service.cancelGate?.resume()
+    await restarting.value
+    #expect(h.service.starts.count == 2)
+    #expect(h.coordinator.recordingSession.state == .recording)
+    #expect(h.ui.recordingFailures.isEmpty)
+}
+
+@Test @MainActor func discardIsLegalDuringTheCountdownAndRestartIsNot() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3, confirmBeforeDiscard: false)
+    h.ui.holdCountdown = true
+    let starting = Task { await h.coordinator.startRecording(region: display) }
+    while h.ui.countdownGate == nil { await Task.yield() }
+
+    await h.coordinator.restartRecording()               // no footage yet: nothing to restart
+    #expect(h.coordinator.recordingSession.state == .countdown)
+    await h.coordinator.discardRecording()
+    #expect(h.coordinator.recordingSession.state == .idle)
+
+    h.ui.countdownGate?.resume()
+    await starting.value
+    #expect(h.service.starts.isEmpty)
 }
 
 @Test @MainActor func restartAndDiscardAreNoOpsWhenNothingIsRecording() async {
@@ -475,7 +512,6 @@ private let display = CaptureRegion.display(id: 7)
 
     #expect(h.service.starts.isEmpty)
     #expect(h.service.cancelCount == 0)                  // nothing was ever started
-    #expect(h.sink.removed.count == 1)
     #expect(h.coordinator.recordingSession.state == .idle)
     #expect(h.ui.states == [.countdown, .idle])
 }
@@ -492,7 +528,6 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.coordinator.recordingSession.state == .failed(.permissionDenied(.screenRecording)))
     #expect(!h.coordinator.isRecording)
     #expect(h.sink.saves.isEmpty)
-    #expect(h.sink.removed.count == 1)                              // no scratch file left behind
     #expect(h.ui.states.last == .failed(.permissionDenied(.screenRecording)))   // status item reverts
 }
 

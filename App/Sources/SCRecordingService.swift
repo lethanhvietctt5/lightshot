@@ -12,8 +12,8 @@ private let log = Logger(subsystem: "dev.lightshot.app", category: "recording")
 /// A thin wrapper with no unit tests — it needs a real display + TCC state; the coordinator routing
 /// it feeds is tested against a fake. One `SCStream` delivers frames of the `RecordingOptions.region`
 /// (a display, a window, or a rect of the primary display) on a private queue, and a
-/// `RecordingWriter` encodes them through `AVAssetWriter` into H.264 / HEVC MP4 at the options'
-/// frame rate and resolution. Lightshot's own windows are excluded from the stream by process, so
+/// `RecordingWriter` encodes them through `AVAssetWriter` as H.264 / HEVC at the options' frame
+/// rate and resolution. Lightshot's own windows are excluded from the stream by process, so
 /// the recording controls and overlays never appear in the output (story 15). A display-sleep
 /// assertion is held for the life of the take (story 17). The writer produces a *fragmented*
 /// QuickTime movie beside the requested URL, so a crash mid-take leaves a playable file
@@ -137,7 +137,8 @@ actor SCRecordingService: RecordingService {
                 try? FileManager.default.removeItem(at: movie)
                 return .success(finalURL)
             } catch {
-                // The movie is complete and playable; hand it over as it is rather than lose it.
+                // The movie is complete and playable; hand it over as it is (under its own `.mov`
+                // extension) rather than lose it.
                 log.error("MP4 rewrap failed, delivering the QuickTime movie: \(error.localizedDescription, privacy: .public)")
                 return .success(movie)
             }
@@ -325,9 +326,9 @@ private final class StreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @u
     }
 }
 
-/// Encodes screen frames into an MP4 through `AVAssetWriter`. Every method runs on the service's
-/// serial queue (`finish` hops onto it itself); the class only guards its own state with that
-/// convention.
+/// Encodes screen frames into a fragmented QuickTime movie through `AVAssetWriter`. Every method
+/// runs on the service's serial queue (`finish` hops onto it itself); the class only guards its own
+/// state with that convention.
 ///
 /// Pause/resume (story 13) is a presentation-time offset: frames delivered while paused are dropped,
 /// and the first frame after resume is re-stamped to follow the last written one, so the file has

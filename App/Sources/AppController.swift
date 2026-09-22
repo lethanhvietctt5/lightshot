@@ -62,6 +62,7 @@ final class AppController: NSObject, CaptureUI {
             history: history,
             recordingService: recordingService,
             mediaSink: SystemMediaSink(),
+            scratchDirectory: Self.supportDirectory,
             ui: self
         )
         // Enforce the persisted retention setting on the history store at launch (story 54): the
@@ -166,12 +167,22 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.discardRecording() }
     }
 
-    /// Crash recovery at launch (story 18): finalise and surface any take a previous session left
-    /// behind in the scratch directory.
+    /// Crash recovery at launch (story 18): finalise any take a previous session left behind in the
+    /// scratch directory, deliver it through the same sink as a normal take (never overwriting —
+    /// a name clash gets a numbered suffix), and surface it.
     func recoverOrphanedRecordings() {
         Task {
-            let recovered = await RecordingRecovery.recover(in: coordinator.recordingScratchDirectory) {
-                settings.recordingDestination(kind: .video)
+            let files = await RecordingRecovery.recover(in: coordinator.recordingScratchDirectory)
+            let sink = SystemMediaSink()
+            var recovered: [URL] = []
+            for file in files {
+                let destination = Self.uniqueDestination(settings.recordingDestination(pathExtension: file.pathExtension))
+                do {
+                    try sink.save(file, to: destination)
+                    recovered.append(destination)
+                } catch {
+                    presentRecordingFailure(.systemFailure("A recovered recording could not be saved: \(error.localizedDescription)"))
+                }
             }
             guard let first = recovered.first else { return }
             NSWorkspace.shared.activateFileViewerSelecting(recovered)
@@ -184,6 +195,19 @@ final class AppController: NSObject, CaptureUI {
             WindowPresenter.activateApp()
             alert.runModal()
         }
+    }
+
+    /// `name.ext`, or `name 2.ext`, `name 3.ext`… when that file already exists.
+    private static func uniqueDestination(_ url: URL) -> URL {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else { return url }
+        let directory = url.deletingLastPathComponent()
+        let stem = url.deletingPathExtension().lastPathComponent
+        for n in 2... {
+            let candidate = directory.appendingPathComponent("\(stem) \(n)").appendingPathExtension(url.pathExtension)
+            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return url
     }
 
     /// Whether a take is active — the menu row and status item key off this.
@@ -426,9 +450,9 @@ final class AppController: NSObject, CaptureUI {
 
     func confirmRecordingRestart() async -> Bool {
         confirmDiscard(
-            title: "Restart this recording?",
-            message: "The current take will be thrown away and a new one will start.",
-            button: "Restart"
+            title: "Cancel this recording and start a new one?",
+            message: "The take so far will be thrown away and the recording will start again.",
+            button: "Start Over"
         )
     }
 
@@ -614,14 +638,20 @@ final class AppController: NSObject, CaptureUI {
         return window
     }
 
-    /// Where the local history keeps its owned image copies + index: Application Support, under the
-    /// bundle id, so it is per-user, out of the way, and survives relaunches. Local-only — a v1
-    /// guardrail (no cloud, no accounts).
-    private static var historyDirectory: URL {
+    /// Lightshot's Application Support folder: per-user, out of the way, and it survives relaunches
+    /// and the OS's temp-file purge — which is what in-progress recordings need so a crashed take
+    /// is still there to recover days later (story 18).
+    private static var supportDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
         let bundleID = Bundle.main.bundleIdentifier ?? "dev.lightshot.app"
-        return base.appendingPathComponent(bundleID, isDirectory: true).appendingPathComponent("History", isDirectory: true)
+        return base.appendingPathComponent(bundleID, isDirectory: true)
+    }
+
+    /// Where the local history keeps its owned image copies + index. Local-only — a v1 guardrail
+    /// (no cloud, no accounts).
+    private static var historyDirectory: URL {
+        supportDirectory.appendingPathComponent("History", isDirectory: true)
     }
 
     private func openScreenRecordingSettings() {
