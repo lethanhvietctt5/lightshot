@@ -26,6 +26,16 @@ struct EditorView: View {
     var body: some View {
         canvas
             .background { editingShortcuts }
+            .overlay(alignment: .top) { autoRedactNotice }
+            #if DEBUG
+            // Development aid (spec 0009): `-previewAutoRedact YES` opens the redact tool and runs
+            // Auto Redact once, so the flow can be looked at without clicking.
+            .task {
+                guard UserDefaults.standard.bool(forKey: "previewAutoRedact") else { return }
+                model.selectTool(.redact)
+                model.autoRedact()
+            }
+            #endif
             .frame(minWidth: 760, minHeight: 520)
             .toolbar { editorToolbar }
     }
@@ -308,6 +318,44 @@ struct EditorView: View {
                 .foregroundStyle(.orange)
                 .help("Visual only — can be reversed or inferred. Use Blackout to hide secrets.")
         }
+
+        autoRedactButton
+    }
+
+    /// Auto Redact (spec 0009): a click runs it in the current style; press and hold (or
+    /// right-click) picks what it looks for. One icon wide, so the redact options still leave
+    /// room for Copy and Done in a small editor window.
+    private var autoRedactButton: some View {
+        Menu {
+            autoRedactCategoryToggles
+        } label: {
+            Image(systemName: "wand.and.sparkles")
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        } primaryAction: {
+            model.autoRedact()
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .contextMenu { autoRedactCategoryToggles }
+        .disabled(model.isAutoRedacting)
+        .help("Auto Redact (⇧⌘R): find and redact sensitive text and codes in the current style. Hold or right-click to choose what it looks for. Runs on this Mac and can miss things.")
+        .accessibilityLabel("Auto Redact")
+    }
+
+    @ViewBuilder
+    private var autoRedactCategoryToggles: some View {
+        Section("Look for") {
+            ForEach(SensitiveCategory.allCases, id: \.self) { category in
+                Toggle(category.title, isOn: Binding(
+                    get: { model.autoRedactCategories.contains(category) },
+                    set: { model.setAutoRedact(category, enabled: $0) }
+                ))
+            }
+        }
     }
 
     private var redactionHelp: String {
@@ -368,10 +416,52 @@ struct EditorView: View {
             Button("Bring Forward") { model.bringForward() }
                 .disabled(!model.hasSelection)
                 .keyboardShortcut("]", modifiers: .command)
+            Button("Auto Redact") { model.autoRedact() }
+                .disabled(model.isAutoRedacting)
+                .keyboardShortcut("r", modifiers: [.command, .shift])
         }
         .opacity(0)
         .frame(width: 0, height: 0)
         .accessibilityHidden(true)
+    }
+
+    /// The note after an auto-redact run: what it did, and that it can miss things.
+    @ViewBuilder
+    private var autoRedactNotice: some View {
+        if model.isAutoRedacting {
+            // The first scan after launch can take a while (Vision loads its models), so the
+            // progress sits where the result will appear, not inside the toolbar button.
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Looking for sensitive text…").font(.callout)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .shadow(radius: 6, y: 2)
+            .padding(.top, 12)
+            .accessibilityElement(children: .combine)
+        } else if let notice = model.autoRedactNotice {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: notice.isError ? "exclamationmark.triangle.fill" : "wand.and.sparkles")
+                    .foregroundStyle(notice.isError ? Color.orange : Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(notice.lines.enumerated()), id: \.offset) { index, line in
+                        Text(line)
+                            .font(index == 0 ? .callout.weight(.medium) : .callout)
+                            .foregroundStyle(index == 0 ? .primary : .secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .shadow(radius: 6, y: 2)
+            .padding(.top, 12)
+            .onTapGesture { model.dismissAutoRedactNotice() }
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+        }
     }
 
     // MARK: - Canvas

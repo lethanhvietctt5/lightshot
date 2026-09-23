@@ -129,6 +129,24 @@ public struct AnnotationDocument: Equatable, Sendable {
         return id
     }
 
+    /// Appends every element on top of the z-order, in order, as **one** undo step (an auto
+    /// redact batch, spec 0009). Step markers are numbered as consecutive `add`s would number
+    /// them. An empty list changes nothing and records no undo step.
+    @discardableResult
+    public mutating func add(contentsOf elements: [AnnotationElement]) -> [ElementID] {
+        var next = nextStepNumber
+        let numbered = elements.map { element -> AnnotationElement in
+            var element = element
+            if case let .stepMarker(_, center, radius) = element.kind {
+                element.kind = .stepMarker(number: next, center: center, radius: radius)
+                next += 1
+            }
+            return element
+        }
+        perform { $0.elements.append(contentsOf: numbered) }
+        return numbered.map(\.id)
+    }
+
     /// Records the selection. Passing `nil` clears it; an unknown id is ignored,
     /// leaving the current selection intact. Not undoable, but it closes any open
     /// coalescing run so edits before and after a selection change stay distinct.

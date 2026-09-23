@@ -1,6 +1,6 @@
 # Spec 0009 — Auto Redact
 
-**Status:** accepted — decisions taken below
+**Status:** implemented — see *As built* at the end for where the build refined a decision
 **Linear:** [LIG-63](https://linear.app/light-shot/issue/LIG-63) (label `ready-for-agent`)
 **Platform:** Native macOS (Swift / SwiftUI + AppKit), macOS 14+
 **Scope:** Local-only. The screenshot editor finds sensitive text, faces and codes in a capture on-device and redacts them in one step, using the redaction style the user has selected. Adds one pure module and one document command; no language model, no network.
@@ -19,7 +19,7 @@ Before I share a screenshot I have to find every secret in it myself: the email 
 
 The redact tool gains an **Auto Redact** button (⇧⌘R). Pressing it recognises the text in the capture on-device, finds the sensitive parts, and immediately adds a redaction over each one. Every new redaction uses the **redaction style and strength currently selected** in the redact tool (pixelate by default, or blur, or blackout). The whole batch is one undo step. The redactions are ordinary: I can move, resize, restyle or delete each one afterwards.
 
-A chevron next to the button opens a checklist of sensitive-data categories (secrets, payment cards, emails, phone numbers, faces, …), remembered across launches. After a run, a short notice says what was redacted and reminds me that recognition can miss text. When the selected style is blur or pixelate, it also says that style is not secure.
+Pressing and holding the button (or right-clicking it) opens a checklist of sensitive-data categories (secrets, payment cards, emails, phone numbers, faces, …), remembered across launches. After a run, a short notice says what was redacted and reminds me that recognition can miss text. When the selected style is blur or pixelate, it also says that style is not secure.
 
 ## User Stories
 
@@ -67,7 +67,7 @@ A chevron next to the button opens a checklist of sensitive-data categories (sec
 
 ### Categories
 
-34. As a user, I want a checklist of categories next to the button, so that I choose what counts as sensitive for my work.
+34. As a user, I want a checklist of categories on the button, so that I choose what counts as sensitive for my work.
 35. As a user, I want my category choices remembered across launches, so that I set them once.
 36. As a user, I want sensible defaults on first use, so that the button is useful before I open the checklist.
 37. As a user, I want the checklist to say which categories are on, so that I know what a run will look for.
@@ -111,12 +111,12 @@ The scanner's input and output, in prose (names may change in implementation):
 
 - **Matching runs over each line's text.** The matched character range is mapped to rectangles through the words it overlaps. A match that covers only part of a word (`password:hunter2`) takes a horizontal slice of that word's rectangle, in proportion to character offsets. Vision's own per-character boxes are approximations, so the adapter asks only for word boxes.
 - **Secrets:**
-  - Known key formats by prefix and shape: AWS access keys (`AKIA`/`ASIA` + 16), GitHub (`ghp_`, `gho_`, `ghs_`, `ghu_`, `github_pat_`), Stripe (`sk_live_`, `rk_live_`, `sk_test_`), Slack (`xox[abpors]-`), Google (`AIza` + 35), `sk-`-style LLM keys, JWTs (three dot-separated base64url segments starting `eyJ`), and a `-----BEGIN … PRIVATE KEY-----` line. For a key block, the header line and every following line up to the `END` line are one detection.
-  - **Labelled values:** a label (`password`, `passwd`, `pwd`, `passcode`, `secret`, `token`, `api key`/`api_key`/`apikey`, `access key`, `client secret`, `private key`, case-insensitive), optionally followed by `:` or `=`. The value is the rest of that line after the label and separator. If nothing follows on the line, the value is the nearest line to its right whose vertical extent overlaps the label's by at least half. The label is never covered.
+  - Known key formats by prefix and shape: AWS access keys (`AKIA`/`ASIA` + 16), GitHub (`ghp_`, `gho_`, `ghs_`, `ghu_`, `github_pat_`), Stripe (`sk_live_`, `rk_live_`, `sk_test_`), Slack (`xox[abpors]-`), Google (`AIza` + 35), `sk-`-style LLM keys, JWTs (three dot-separated base64url segments starting `eyJ`), and a `-----BEGIN … PRIVATE KEY-----` line. In a key block, the header line, every following line and the `END` line are each covered (lines are never merged with each other).
+  - **Labelled values:** a label (`password`, `passwd`, `pwd`, `passcode`, `secret`, `token`, `api key`/`api_key`/`apikey`, `access key`, `client secret`, `private key`, case-insensitive) followed by `:` or `=`. The value is the rest of that line after the separator. A line that is *only* a label (optionally with its colon) takes as its value the nearest line to its right whose vertical extent overlaps the label's by at least half. The label is never covered. Requiring the separator keeps "Token count: 5" readable.
   - **High-entropy tokens:** a whitespace-free token of at least 20 characters that mixes upper case, lower case and digits, with Shannon entropy of at least 3.5 bits per character. Pure-hex tokens don't qualify (commit hashes) unless labelled. URLs and file paths are judged by their longest segment, not as a whole. These thresholds are a starting point, tuned against the fixtures.
 - **Payment cards:** 13–19 digits, with optional single spaces or dashes between groups, passing the Luhn check.
 - **Bank accounts:** IBANs (country code, check digits, up to 30 alphanumerics, optional spaces) passing mod-97.
-- **Email, phone, postal address, link:** `NSDataDetector` (a `mailto:` link counts as email, not link). A link that contains an email is reported once, as email.
+- **Email:** a regular expression. **Phone, postal address, link:** `NSDataDetector`, whose readings are the weakest: one that overlaps any other match (a card number read as a phone, an email inside a link) is dropped before the category filter, so switching a category off never lets its text resurface as another. A phone number must have 7–15 digits (E.164), so a 16-digit order number is not one.
 - **ID numbers:** US SSNs, `###-##-####`, excluding invalid area numbers (`000`, `666`, `9xx`), group `00` and serial `0000`.
 - **IP addresses:** dotted IPv4 with each octet 0–255, and IPv6 in full or compressed form.
 - **Faces and codes:** every rectangle the recogniser returns, in its category.
@@ -128,14 +128,14 @@ The scanner's input and output, in prose (names may change in implementation):
 
 - On: `secret`, `paymentCard`, `bankAccount`, `email`, `phone`, `idNumber`, `ipAddress`, `code`.
 - Off: `postalAddress` (address detection is noisy), `link` (most links aren't sensitive), `face` (avatars would be covered on every chat screenshot).
-- The enabled set is stored through `SettingsStore` and survives relaunch.
+- The enabled set is stored in user defaults by the editor, like the last arrow style, and survives relaunch.
 
 ### Recognition
 
 - The adapter scans the **backdrop of the whole document**: the base image plus every existing element, flattened over the visible frame. `redactionBackdrop(document, below: elements.count)` already produces it. Text annotations are scanned too, and pixels already under a blackout are gone and can't be detected twice.
 - Text recognition uses `.accurate`, `usesLanguageCorrection = false` (correction would "fix" keys into words), and `automaticallyDetectsLanguage = true`. It works on the backdrop's image and converts Vision's normalised, bottom-left rectangles into image pixel coordinates by adding the backdrop frame's origin.
 - Words come from splitting each observation's top candidate on whitespace and asking `boundingBox(for:)` for each word's range.
-- Recognition runs off the main actor. The editor stays interactive. The button is disabled with a progress indicator while a scan is in flight, and a second press is ignored.
+- Recognition runs off the main actor. The editor stays interactive. While a scan is in flight the button is disabled, a second press is ignored, and the notice area shows "Looking for sensitive text…" with a spinner (the first scan after launch can take several seconds while Vision loads its models).
 - If recognition throws, no elements are added and the notice shows the error. An empty result is a success with nothing found, not an error.
 
 ### Applying
@@ -156,7 +156,7 @@ The scanner's input and output, in prose (names may change in implementation):
 
 ### UI placement
 
-- The redact tool's options bar gets a split button after the style picker and strength slider: the main part is "Auto Redact" (a sparkle-and-eye-slash symbol or similar), and the chevron opens the category checklist. Its tooltip names the shortcut.
+- The redact tool's options bar gets a one-icon Auto Redact button (`wand.and.sparkles`) after the "Secure"/"Not secure" label. A click runs it; press-and-hold or right-click opens the category checklist. Its tooltip names the shortcut and the hold gesture. It is one icon wide, not a split button, because a split button pushed Copy and Done into the toolbar's overflow in a 1180 px editor window.
 - ⇧⌘R is bound in the editor window and works whichever tool is active. It's unused in the editor today.
 
 ## Testing Decisions
@@ -208,7 +208,7 @@ The scanner's input and output, in prose (names may change in implementation):
 
 ## Further Notes
 
-- **Glossary additions** (to add to `CONTEXT.md` under *Redaction* when this lands):
+- **Glossary additions** (now in `CONTEXT.md` under *Redaction*):
   - **Auto redact:** adding redactions over detections in one step, using the current redaction style. _Avoid_: smart redact, auto blur, secure scan.
   - **Detection:** one found item — a sensitive-data category and an image-space rectangle. It's not a redaction until applied.
   - **Sensitive-data category:** a kind of thing auto redact looks for. The user chooses which are on.
@@ -216,3 +216,13 @@ The scanner's input and output, in prose (names may change in implementation):
 - **Why OCR the backdrop, not the base image.** Scanning what the user will actually export catches typed annotations and skips blacked-out areas. It also keeps the geometry in the same frame `redactionBackdrop` already defines (see [ADR 0001](../docs/adr/0001-core-image-blur-and-shared-redaction-patch.md)).
 - **Performance expectation:** accurate text recognition on a full 5K capture takes roughly half a second to a couple of seconds on Apple silicon. That's why it runs off the main actor with a progress state, and not on every edit.
 - **Detection is best-effort by nature.** Every piece of user-facing copy must keep telling the user to check before sharing.
+
+## As built
+
+- **Button.** A one-icon button instead of a split button with a chevron: a click runs Auto Redact, press-and-hold or right-click opens the checklist (see *UI placement*). Even so, in an editor window narrower than about 1215 px, Done moves into the toolbar's `>>` overflow while the redact tool is active. Without the button that happens below about 1175 px; ⌘S still works either way.
+- **Category storage.** User defaults via the editor, not `SettingsStore` (see *Default categories*).
+- **Labels need a separator**, a bare label takes the next column, key-block lines are covered one by one, and phone numbers are capped at 15 digits (see *Scanning rules*).
+- **Progress** shows in the notice area (see *Recognition*).
+- **Development aid:** DEBUG builds accept `-previewAutoRedact YES` alongside `-previewSurface editor -previewFile <png>` to open the redact tool and run Auto Redact once.
+- **Verified** on fixture PNGs (terminal with an AWS key, JWT, commit hash and IP; mail list with emails and a phone number; checkout form with card, password column, IBAN, a Luhn-invalid order number and a TOTP QR code). Everything expected was covered; the commit hash, the order number and every label stayed readable.
+

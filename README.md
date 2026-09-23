@@ -12,6 +12,7 @@ Everything happens on your machine. No cloud, no accounts, no network — even c
 - **Capture options** — self-timer, cursor inclusion, repeat last capture, and multi-display selection.
 - **Annotation editor** in one compact toolbar row — arrows, lines, rectangles, ellipses, freehand, text boxes, highlights, auto-numbered step markers, a **Focus** tool that dims everything outside chosen areas, and an adjustable, reversible crop. Full undo/redo.
 - **Redaction** — `blackout` (secure, erases pixels), plus `blur` / `pixelate` (obscure only — **not** safe for secrets).
+- **Auto Redact** (⇧⌘R) — on-device text recognition finds keys, passwords, cards, IBANs, emails, phone numbers, IPs and QR codes and redacts them in the current style. It can miss things; check before sharing.
 - **Finish** — copy to the clipboard, save as PNG/JPEG, drag out, or **pin** the shot so it floats on top while you work.
 - **Open existing images** in the editor.
 

@@ -62,6 +62,16 @@ _Avoid_: Randomization, noise
 **Backdrop**:
 Everything a redaction sits on — the base image plus every element beneath it — flattened. A blur obscures its backdrop, so it hides annotations under it and never those above it.
 
+**Auto redact**:
+Adding redactions over every detection in one step, in the current redaction style. It chooses *where* redactions go, never whether they are secure.
+_Avoid_: Smart redact, auto blur, secure scan
+
+**Detection**:
+One found item: a sensitive-data category and an image-space rectangle. It is not a redaction until auto redact applies it.
+
+**Sensitive-data category**:
+A kind of thing auto redact looks for (secrets, payment cards, emails, faces, …). The user chooses which are on.
+
 ### Recording
 
 **Recording**:
