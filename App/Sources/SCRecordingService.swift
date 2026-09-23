@@ -331,7 +331,7 @@ actor SCRecordingService: RecordingService {
         // dimming never reach the file even when they overlap the region (story 15).
         let ownApp = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
 
-        switch region {
+        switch region.recordedArea {
         case let .display(id):
             guard let display = content.displays.first(where: { $0.displayID == id }) ?? content.displays.first else {
                 throw RecordingError.noDisplayAvailable
@@ -343,31 +343,18 @@ actor SCRecordingService: RecordingService {
                 scale: SCCaptureService.backingScale(for: display),
                 sourceRect: nil
             )
-        case let .rect(rect):
-            // The overlay runs on the main screen, so a rect is a sub-rect of the primary display.
+        case let .area(rect):
+            // The overlay runs on the main screen, so an area is a sub-rect of the primary display.
+            // A picked window lands here too: recording its area, not the window alone, is what keeps
+            // an app opened over it in the take (story 5).
             guard let display = content.displays.first else { throw RecordingError.noDisplayAvailable }
-            let standardized = rect.standardized
-            let sourceRect = CGRect(
-                x: standardized.minX, y: standardized.minY, width: standardized.width, height: standardized.height
-            )
+            let sourceRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
             return Target(
                 filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
                 pointSize: sourceRect.size,
                 regionOrigin: Point(x: display.frame.minX + sourceRect.minX, y: display.frame.minY + sourceRect.minY),
                 scale: SCCaptureService.backingScale(for: display),
                 sourceRect: sourceRect
-            )
-        case let .window(id, _):
-            guard let window = content.windows.first(where: { $0.windowID == id }) else {
-                throw RecordingError.systemFailure("The selected window is no longer available.")
-            }
-            let scale = (NSScreen.main ?? NSScreen.screens.first)?.backingScaleFactor ?? 2
-            return Target(
-                filter: SCContentFilter(desktopIndependentWindow: window),
-                pointSize: window.frame.size,
-                regionOrigin: Point(x: window.frame.minX, y: window.frame.minY),
-                scale: scale,
-                sourceRect: nil
             )
         }
     }
