@@ -1137,3 +1137,22 @@ private func studioTake() throws -> URL {
     await h.coordinator.stopRecording()
     #expect(h.ui.studios.isEmpty && h.ui.editors.count == 1)
 }
+
+@Test @MainActor func aStudioExportIsFiledIntoHistoryAndSavedLikeARecording() async throws {
+    let h = Harness(withHistory: true)
+    let export = FileManager.default.temporaryDirectory.appendingPathComponent("studio-export-\(UUID().uuidString).mp4")
+    try Data("movie".utf8).write(to: export)
+    let saved = await h.coordinator.fileStudioExport(at: export, named: "Demo")
+    #expect(saved?.path == "/tmp/movies/Demo.mp4")
+    #expect(h.history?.all().map(\.kind) == [.video])
+    #expect(h.sink.copies.count == 1)                                 // history's copy goes to the save location
+}
+
+@Test @MainActor func aStudioExportIsStillSavedWhenHistoryIsOff() async throws {
+    let h = Harness()
+    let export = FileManager.default.temporaryDirectory.appendingPathComponent("studio-export-\(UUID().uuidString).gif")
+    try Data("gif".utf8).write(to: export)
+    let saved = await h.coordinator.fileStudioExport(at: export, named: nil)
+    #expect(saved?.pathExtension == "gif" && saved?.deletingLastPathComponent().path == "/tmp/movies")
+    #expect(h.sink.saves.map(\.from) == [export])
+}

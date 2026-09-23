@@ -38,6 +38,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showPermissionOnboardingIfNeeded()
         // Surface any take a crashed session left behind (spec 0006, story 18).
         controller.recoverOrphanedRecordings()
+        #if DEBUG
+        // Development aid: `-openStudioProject <folder>` opens a studio project at launch, so the
+        // Studio editor can be exercised without recording a take.
+        if let path = UserDefaults.standard.string(forKey: "openStudioProject") {
+            controller.openStudioProject(at: URL(fileURLWithPath: path))
+            let seek = UserDefaults.standard.double(forKey: "studioSeek")
+            if seek > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [controller] in controller.debugSeekStudio(to: seek) }
+            }
+        }
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -99,6 +99,8 @@ final class AppController: NSObject, CaptureUI {
             studioProjects: StudioProjectStore(directory: Self.studioProjectsDirectory),
             ui: self
         )
+        // A studio project's export is filed like a finished recording (spec 0007, story 27).
+        videoEditor.fileExport = { [weak self] file, name in await self?.coordinator.fileStudioExport(at: file, named: name) }
         // Enforce the persisted retention setting on the history store at launch (story 54): the
         // value lives in `SettingsStore` (LIG-15), the trimming lives here in the `HistoryStore` seam.
         applyRetention(settings.historyRetention)
@@ -623,6 +625,10 @@ final class AppController: NSObject, CaptureUI {
     func openStudioProject(at url: URL) {
         coordinator.openStudioProject(at: url)
     }
+
+    #if DEBUG
+    func debugSeekStudio(to time: Double) { videoEditor.debugSeek(to: time) }
+    #endif
 
     func presentGIFConversion(cancel: @escaping () -> Void) {
         gifConversion.show(cancel: cancel)
