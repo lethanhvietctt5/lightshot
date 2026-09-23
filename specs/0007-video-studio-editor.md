@@ -55,7 +55,7 @@ A raw screen recording is hard to watch: the interesting part is small, the curs
 
 14. As a user, I want to change the **cursor size**, so that it is visible in a small player.
 15. As a user, I want **cursor smoothing**, so that shaky movement becomes a clean glide.
-16. As a user, I want **click effects** (ripple / pulse / none, colour), so that clicks read on video.
+16. As a user, I want **click effects** (ripple / pulse / none, colour — yellow by default, the recorder's click-highlight colour; LIG-67), so that clicks read on video.
 17. As a user, I want the cursor to **hide when idle**, so that it doesn't sit on top of content.
 18. As a user, I want **motion blur** on cursor and zoom movement, so that the video feels cinematic.
 19. As a user, I want to **hide the cursor** entirely, so that a clean product shot is one toggle.

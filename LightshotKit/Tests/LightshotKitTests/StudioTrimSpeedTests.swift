@@ -149,3 +149,16 @@ private func spans(_ edits: StudioEdits) -> [[Double]] {
     let studio = StudioEdits(sourceDuration: 5, look: .studio)
     #expect(studio.canvas.padding == 0 && studio.canvas.cornerRadius == 0)
 }
+
+@Test func theDefaultClickColourIsTheRecordersYellow() {
+    let yellow = CursorHighlightColor.yellow.rgb!
+    let expected = RGBAColor(red: yellow.red, green: yellow.green, blue: yellow.blue)
+    #expect(CursorStyle().clickColor == expected)
+    #expect(StudioEdits(sourceDuration: 5, look: .studio).cursor.clickColor == expected)
+    let options = RecordingOptions(
+        region: .display(id: 1), output: .video(VideoSettings(codec: .h264, fps: 30, maxResolution: .original, scaleRetinaTo1x: false)),
+        highlightClicks: true,
+        clickHighlight: ClickHighlightSettings(color: .accent)          // no fixed colour: falls back to yellow
+    )
+    #expect(StudioEdits.flattenLook(options: options, sourceDuration: 5).cursor.clickColor == expected)
+}

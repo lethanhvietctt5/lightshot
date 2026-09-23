@@ -256,6 +256,8 @@ public enum CursorTheme: String, CaseIterable, Codable, Sendable {
 public struct CursorStyle: Equatable, Codable, Sendable {
     public static let minimumSize = 0.5
     public static let maximumSize = 3.0
+    /// The recorder's click-highlight yellow, so a click reads the same before and after editing.
+    public static let defaultClickColor = RGBAColor(red: 1, green: 0.85, blue: 0.2)
 
     public var visible: Bool
     public var theme: CursorTheme
@@ -274,7 +276,7 @@ public struct CursorStyle: Equatable, Codable, Sendable {
     public init(
         visible: Bool = true, theme: CursorTheme = .macOS, size: Double = 1.5, smoothing: Double = 0.5, hideWhenIdle: Bool = false,
         idleDelay: Double = 2, clickEffect: ClickEffect = .ripple,
-        clickColor: RGBAColor = RGBAColor(red: 0.2, green: 0.5, blue: 1), motionBlur: Double = 0.4
+        clickColor: RGBAColor = CursorStyle.defaultClickColor, motionBlur: Double = 0.4
     ) {
         self.visible = visible
         self.theme = theme
@@ -546,7 +548,7 @@ public struct StudioEdits: Equatable, Codable, Sendable {
             visible: options.showCursor, size: 1, smoothing: 0, hideWhenIdle: false,
             clickEffect: options.highlightClicks ? .ripple : .none,
             clickColor: options.clickHighlight.color.rgb.map { RGBAColor(red: $0.red, green: $0.green, blue: $0.blue) }
-                ?? RGBAColor(red: 0.2, green: 0.5, blue: 1),
+                ?? CursorStyle.defaultClickColor,
             motionBlur: 0
         )
         edits.keystrokes = StudioKeystrokeStyle(visible: options.showKeystrokes, overlay: options.keystrokeOverlay)
