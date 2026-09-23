@@ -14,6 +14,9 @@ enum StudioStyle {
     static let clip = Color.theme(.studioClip)
     static let selection = Color.theme(.timelineSelection)
     static let zoom = Color.theme(.zoomAccent)
+    static let trim = Color.theme(.trimAccent)
+    static let speed = Color.theme(.speedAccent)
+    static let text = Color.theme(.textAccent)
     static let blue = Color.theme(.accentBlue)
     /// Text and glyphs on an accent fill (the blue, the zoom purple, the text-pill orange).
     static let onAccent = Color.theme(.onAccent)
@@ -67,10 +70,9 @@ struct StudioEditorView: View {
             Button("Export") { model.presentExport?() }.keyboardShortcut("e", modifiers: .command)
             Button("Undo") { model.undo() }.keyboardShortcut("z", modifiers: .command)
             Button("Redo") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
-            Button("Split") { model.splitAtPlayhead() }.keyboardShortcut("b", modifiers: .command)
             // Single-key shortcuts stand down while a text field has focus, so typing stays typing.
             Group {
-                Button("Split") { model.splitAtPlayhead() }.keyboardShortcut("s", modifiers: [])
+                Button("Trim") { model.addTrim() }.keyboardShortcut("t", modifiers: [])
                 Button("Delete") { model.deleteSelection() }.keyboardShortcut(.delete, modifiers: [])
                 Button("Play") { model.togglePlay() }.keyboardShortcut(.space, modifiers: [])
             }

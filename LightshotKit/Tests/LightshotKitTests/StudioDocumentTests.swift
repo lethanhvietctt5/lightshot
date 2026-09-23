@@ -2,8 +2,8 @@ import Testing
 import Foundation
 @testable import LightshotKit
 
-// The Studio editor's undoable edits (spec 0007, stories 5–13 and the look settings): clips cut,
-// trimmed and sped up; zoom pills added, moved, resized; every change undoable.
+// The Studio editor's undoable edits (spec 0007, stories 5–13 and the look settings): zoom pills
+// added, moved, resized; every change undoable. Trim and speed pills: StudioTrimSpeedTests.
 
 private func document(_ duration: Double = 10) -> StudioDocument {
     StudioDocument(edits: StudioEdits(sourceDuration: duration, look: .studio))
@@ -15,57 +15,6 @@ private func document(_ duration: Double = 10) -> StudioDocument {
     let doc = document(10)
     #expect(doc.edits.clips.count == 1)
     #expect(doc.edits.clips[0].start == 0 && doc.edits.clips[0].end == 10 && doc.edits.clips[0].speed == 1)
-}
-
-@Test func splittingAtThePlayheadMakesTwoClipsThatMeetThere() {
-    var doc = document(10)
-    let second = doc.split(atOutput: 4)
-    #expect(second != nil)
-    #expect(doc.edits.clips.map { [$0.start, $0.end] } == [[0, 4], [4, 10]])
-    #expect(doc.edits.clips[1].id == second)
-}
-
-@Test func splittingTooCloseToAClipEdgeDoesNothing() {
-    var doc = document(10)
-    #expect(doc.split(atOutput: 0.05) == nil)
-    #expect(doc.edits.clips.count == 1)
-}
-
-@Test func deletingAClipCutsItsRangeOutOfTheOutput() {
-    var doc = document(10)
-    doc.split(atOutput: 3)
-    doc.split(atOutput: 6)
-    let middle = doc.edits.clips[1].id                // 3…6
-    doc.deleteClip(middle)
-    #expect(doc.edits.clips.map { [$0.start, $0.end] } == [[0, 3], [6, 10]])
-    #expect(StudioTimeline(clips: doc.edits.clips).outputDuration == 7)
-}
-
-@Test func theLastClipCannotBeDeleted() {
-    var doc = document(10)
-    doc.deleteClip(doc.edits.clips[0].id)
-    #expect(doc.edits.clips.count == 1)
-}
-
-@Test func trimmingAClipIsClampedToItsNeighboursAndTheSource() {
-    var doc = document(10)
-    let second = doc.split(atOutput: 5)!
-    let first = doc.edits.clips[0].id
-    doc.trimClip(first, start: -2, end: 7)        // can't pass the source start or the next clip
-    #expect(doc.edits.clips[0].start == 0 && doc.edits.clips[0].end == 5)
-    doc.trimClip(second, start: 6, end: 20)
-    #expect(doc.edits.clips[1].start == 6 && doc.edits.clips[1].end == 10)
-    doc.trimClip(second, start: 9.99, end: 10)    // never shorter than the minimum
-    #expect(doc.edits.clips[1].end - doc.edits.clips[1].start >= StudioClip.minimumLength - 1e-9)
-}
-
-@Test func speedIsClampedToAQuarterToFourTimes() {
-    var doc = document(10)
-    let id = doc.edits.clips[0].id
-    doc.setSpeed(id, 10)
-    #expect(doc.edits.clips[0].speed == 4)
-    doc.setSpeed(id, 0.1)
-    #expect(doc.edits.clips[0].speed == 0.25)
 }
 
 // MARK: - Zooms
@@ -115,7 +64,7 @@ private func document(_ duration: Double = 10) -> StudioDocument {
 @Test func everyCommandUndoesAndRedoes() {
     var doc = document(10)
     let original = doc.edits
-    doc.split(atOutput: 4)
+    doc.addTrim(atSource: 4, length: 1)
     let split = doc.edits
     doc.addZoom(atSource: 1)
     doc.undo()
@@ -126,13 +75,13 @@ private func document(_ duration: Double = 10) -> StudioDocument {
     doc.redo()
     #expect(doc.edits == split)
     #expect(doc.canRedo)
-    doc.split(atOutput: 7)                            // a new edit drops the redo stack
+    doc.addTrim(atSource: 7, length: 1)               // a new edit drops the redo stack
     #expect(!doc.canRedo)
 }
 
 @Test func aNoOpCommandLeavesNoUndoStep() {
     var doc = document(10)
-    doc.deleteClip(doc.edits.clips[0].id)
+    doc.removeZoom(UUID())
     #expect(!doc.canUndo)
 }
 
@@ -161,7 +110,7 @@ private func document(_ duration: Double = 10) -> StudioDocument {
 
 @Test func editsRoundTripThroughJSONWithTheirVersion() throws {
     var doc = document(12)
-    doc.split(atOutput: 5)
+    doc.addTrim(atSource: 5, length: 1)
     doc.addZoom(atSource: 2)
     doc.set(\.background, .color(RGBAColor(red: 0.2, green: 0.4, blue: 0.6)))
     doc.set(\.audio, .volume(0.5))
@@ -176,5 +125,5 @@ private func document(_ duration: Double = 10) -> StudioDocument {
     #expect(plain.background == StudioBackground.none)
     #expect(plain.canvas.padding == 0 && plain.canvas.cornerRadius == 0 && plain.canvas.shadow == 0)
     let studio = StudioEdits(sourceDuration: 5, look: .studio)
-    #expect(studio.canvas.padding > 0)
+    #expect(studio.background != StudioBackground.none)
 }

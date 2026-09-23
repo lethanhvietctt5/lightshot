@@ -5,19 +5,17 @@ import Foundation
 // it. Ranges are clamped by `normalized()`, which every command runs, so a stored or decoded
 // value is always renderable.
 
-/// A kept range of the source movie, played at `speed` (spec 0007, stories 6–8). Times are
-/// **source seconds**.
-public struct StudioClip: Equatable, Codable, Sendable, Identifiable {
+/// A kept range of the source movie, played at `speed` (spec 0007). Times are **source seconds**.
+/// Derived from the trim and speed regions (round 3); stored only by projects saved before it.
+public struct StudioClip: Equatable, Codable, Sendable {
     public static let minimumLength = 0.1
     public static let speedRange = 0.25...4.0
 
-    public var id: UUID
     public var start: Double
     public var end: Double
     public var speed: Double
 
-    public init(id: UUID = UUID(), start: Double, end: Double, speed: Double = 1) {
-        self.id = id
+    public init(start: Double, end: Double, speed: Double = 1) {
         self.start = start
         self.end = end
         self.speed = speed
@@ -25,6 +23,48 @@ public struct StudioClip: Equatable, Codable, Sendable, Identifiable {
 
     public var sourceLength: Double { end - start }
     public var outputLength: Double { sourceLength / speed }
+}
+
+/// A pill on one of the timeline's region lanes (zoom, trim, speed): a source-time span that never
+/// overlaps another pill of its lane.
+public protocol TimelineRegion: Identifiable, Equatable where ID == UUID {
+    static var minimumLength: Double { get }
+    var start: Double { get set }
+    var end: Double { get set }
+}
+
+/// A span of the source left out of the output (round 3, story 34): playback and export skip it.
+public struct TrimRegion: TimelineRegion, Codable, Sendable {
+    public static let defaultLength = 2.0
+    public static let minimumLength = 0.2
+
+    public var id: UUID
+    public var start: Double
+    public var end: Double
+
+    public init(id: UUID = UUID(), start: Double, end: Double) {
+        self.id = id
+        self.start = start
+        self.end = end
+    }
+}
+
+/// A span of the source played faster or slower (round 3, story 35).
+public struct SpeedRegion: TimelineRegion, Codable, Sendable {
+    public static let defaultLength = 2.0
+    public static let minimumLength = 0.2
+
+    public var id: UUID
+    public var start: Double
+    public var end: Double
+    public var speed: Double
+
+    public init(id: UUID = UUID(), start: Double, end: Double, speed: Double) {
+        self.id = id
+        self.start = start
+        self.end = end
+        self.speed = speed
+    }
 }
 
 /// Where a zoom looks (story 11): a fixed point of the frame (normalised, top-left origin), or the
@@ -36,7 +76,7 @@ public enum ZoomFocus: Equatable, Codable, Sendable {
 
 /// A zoom pill on the timeline (stories 10–13). Times are **source seconds**, so a cut hides the
 /// part of a zoom it removes rather than shifting it.
-public struct ZoomRegion: Equatable, Codable, Sendable, Identifiable {
+public struct ZoomRegion: TimelineRegion, Codable, Sendable {
     public static let defaultLength = 2.0
     public static let minimumLength = 0.5
     public static let defaultScale = 2.0
@@ -200,12 +240,25 @@ public enum ClickEffect: String, CaseIterable, Codable, Sendable {
     public var title: String { rawValue.capitalized }
 }
 
-/// The cursor, re-drawn from recorded data (stories 14–19).
+/// The cursor's look (round 3, story 36): vector arrow presets the renderer draws.
+public enum CursorTheme: String, CaseIterable, Codable, Sendable {
+    case macOS, white, pink, mint, violet, blue, neon, outline, bold, yellow
+
+    public var title: String {
+        switch self {
+        case .macOS: return "macOS"
+        default: return rawValue.capitalized
+        }
+    }
+}
+
+/// The cursor, re-drawn from recorded data (stories 14–19, 36).
 public struct CursorStyle: Equatable, Codable, Sendable {
     public static let minimumSize = 0.5
     public static let maximumSize = 3.0
 
     public var visible: Bool
+    public var theme: CursorTheme
     /// Scale over the system arrow's natural size.
     public var size: Double
     /// `0` follows the samples exactly; `1` is the heaviest glide.
@@ -219,11 +272,12 @@ public struct CursorStyle: Equatable, Codable, Sendable {
     public var motionBlur: Double
 
     public init(
-        visible: Bool = true, size: Double = 1.5, smoothing: Double = 0.5, hideWhenIdle: Bool = false,
+        visible: Bool = true, theme: CursorTheme = .macOS, size: Double = 1.5, smoothing: Double = 0.5, hideWhenIdle: Bool = false,
         idleDelay: Double = 2, clickEffect: ClickEffect = .ripple,
         clickColor: RGBAColor = RGBAColor(red: 0.2, green: 0.5, blue: 1), motionBlur: Double = 0.4
     ) {
         self.visible = visible
+        self.theme = theme
         self.size = size
         self.smoothing = smoothing
         self.hideWhenIdle = hideWhenIdle
@@ -231,6 +285,24 @@ public struct CursorStyle: Equatable, Codable, Sendable {
         self.clickEffect = clickEffect
         self.clickColor = clickColor
         self.motionBlur = motionBlur
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case visible, theme, size, smoothing, hideWhenIdle, idleDelay, clickEffect, clickColor, motionBlur
+    }
+
+    /// `theme` is optional in the file, so a project saved before round 3 still opens.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        visible = try c.decode(Bool.self, forKey: .visible)
+        theme = try c.decodeIfPresent(CursorTheme.self, forKey: .theme) ?? .macOS
+        size = try c.decode(Double.self, forKey: .size)
+        smoothing = try c.decode(Double.self, forKey: .smoothing)
+        hideWhenIdle = try c.decode(Bool.self, forKey: .hideWhenIdle)
+        idleDelay = try c.decode(Double.self, forKey: .idleDelay)
+        clickEffect = try c.decode(ClickEffect.self, forKey: .clickEffect)
+        clickColor = try c.decode(RGBAColor.self, forKey: .clickColor)
+        motionBlur = try c.decode(Double.self, forKey: .motionBlur)
     }
 }
 
@@ -315,7 +387,8 @@ public struct StudioOutput: Equatable, Codable, Sendable {
 
 /// All of a Studio session's edits (spec 0007). Codable and versioned: it is `project.json`.
 public struct StudioEdits: Equatable, Codable, Sendable {
-    public static let currentVersion = 1
+    /// 2: trims and speeds replace stored clips (round 3).
+    public static let currentVersion = 2
     public static let transitionRange = 0.2...1.5
 
     /// Where the defaults come from: a studio take gets the designed look; a plain MP4 starts
@@ -324,7 +397,10 @@ public struct StudioEdits: Equatable, Codable, Sendable {
 
     public var version: Int
     public var sourceDuration: Double
-    public var clips: [StudioClip]
+    /// Spans skipped by playback and export (round 3, story 34).
+    public var trims: [TrimRegion]
+    /// Spans played faster or slower (round 3, story 35).
+    public var speeds: [SpeedRegion]
     public var zooms: [ZoomRegion]
     /// Seconds a zoom takes to ease in or out (story 13).
     public var zoomTransition: Double
@@ -345,14 +421,16 @@ public struct StudioEdits: Equatable, Codable, Sendable {
     public init(sourceDuration: Double, look: Look) {
         version = Self.currentVersion
         self.sourceDuration = max(sourceDuration, StudioClip.minimumLength)
-        clips = [StudioClip(start: 0, end: self.sourceDuration)]
+        trims = []
+        speeds = []
         zooms = []
         zoomTransition = 0.6
         zoomMotionBlur = 0.3
         switch look {
         case .studio:
             background = .wallpaper(.aurora)
-            canvas = CanvasStyle(padding: 0.08, cornerRadius: 0.02, shadow: 0.6, aspect: .auto, backgroundBlur: 0)
+            // No padding or corners until the user asks for them (round 3, story 37).
+            canvas = CanvasStyle(padding: 0, cornerRadius: 0, shadow: 0.6, aspect: .auto, backgroundBlur: 0)
         case .plain:
             background = .none
             canvas = CanvasStyle()
@@ -367,16 +445,26 @@ public struct StudioEdits: Equatable, Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, sourceDuration, clips, zooms, zoomTransition, zoomMotionBlur, background, canvas, cursor, camera
+        case version, sourceDuration, trims, speeds, zooms, zoomTransition, zoomMotionBlur, background, canvas, cursor, camera
         case keystrokes, audio, output, captions, annotations
+        /// Version 1 stored the kept clips; read only to migrate.
+        case clips
     }
 
-    /// Round-2 fields are optional in the file, so a project saved before them still opens.
+    /// Round-2 fields are optional in the file, so a project saved before them still opens; a
+    /// version-1 project's clips become trims (the gaps) and speed regions.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        version = try c.decode(Int.self, forKey: .version)
+        _ = try c.decode(Int.self, forKey: .version)
+        version = Self.currentVersion
         sourceDuration = try c.decode(Double.self, forKey: .sourceDuration)
-        clips = try c.decode([StudioClip].self, forKey: .clips)
+        if let trims = try c.decodeIfPresent([TrimRegion].self, forKey: .trims) {
+            self.trims = trims
+            speeds = try c.decodeIfPresent([SpeedRegion].self, forKey: .speeds) ?? []
+        } else {
+            let clips = try c.decodeIfPresent([StudioClip].self, forKey: .clips) ?? []
+            (trims, speeds) = Self.regions(migrating: clips, sourceDuration: sourceDuration)
+        }
         zooms = try c.decode([ZoomRegion].self, forKey: .zooms)
         zoomTransition = try c.decode(Double.self, forKey: .zoomTransition)
         zoomMotionBlur = try c.decode(Double.self, forKey: .zoomMotionBlur)
@@ -391,6 +479,61 @@ public struct StudioEdits: Equatable, Codable, Sendable {
         annotations = try c.decodeIfPresent([TextAnnotation].self, forKey: .annotations) ?? []
     }
 
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(version, forKey: .version)
+        try c.encode(sourceDuration, forKey: .sourceDuration)
+        try c.encode(trims, forKey: .trims)
+        try c.encode(speeds, forKey: .speeds)
+        try c.encode(zooms, forKey: .zooms)
+        try c.encode(zoomTransition, forKey: .zoomTransition)
+        try c.encode(zoomMotionBlur, forKey: .zoomMotionBlur)
+        try c.encode(background, forKey: .background)
+        try c.encode(canvas, forKey: .canvas)
+        try c.encode(cursor, forKey: .cursor)
+        try c.encode(camera, forKey: .camera)
+        try c.encode(keystrokes, forKey: .keystrokes)
+        try c.encode(audio, forKey: .audio)
+        try c.encode(output, forKey: .output)
+        try c.encode(captions, forKey: .captions)
+        try c.encode(annotations, forKey: .annotations)
+    }
+
+    /// Version-1 clips as regions: the gaps between them are trims, a sped clip a speed region.
+    static func regions(migrating clips: [StudioClip], sourceDuration: Double) -> ([TrimRegion], [SpeedRegion]) {
+        guard !clips.isEmpty else { return ([], []) }
+        var trims: [TrimRegion] = []
+        var cursor = 0.0
+        for clip in clips.sorted(by: { $0.start < $1.start }) {
+            if clip.start > cursor { trims.append(TrimRegion(start: cursor, end: clip.start)) }
+            cursor = max(cursor, clip.end)
+        }
+        if cursor < sourceDuration { trims.append(TrimRegion(start: cursor, end: sourceDuration)) }
+        let speeds = clips.filter { $0.speed != 1 }.map { SpeedRegion(start: $0.start, end: $0.end, speed: $0.speed) }
+        return (trims, speeds)
+    }
+
+    /// What plays (round 3): the source minus the trims, split where a speed region starts or ends,
+    /// each piece at its region's speed. Empty only when the trims cover everything.
+    public var clips: [StudioClip] {
+        var kept: [(Double, Double)] = []
+        var cursor = 0.0
+        for trim in trims.sorted(by: { $0.start < $1.start }) {
+            if trim.start > cursor { kept.append((cursor, trim.start)) }
+            cursor = max(cursor, trim.end)
+        }
+        if cursor < sourceDuration { kept.append((cursor, sourceDuration)) }
+        let edges = speeds.flatMap { [$0.start, $0.end] }
+        return kept.flatMap { lower, upper -> [StudioClip] in
+            let cuts = ([lower, upper] + edges.filter { $0 > lower && $0 < upper }).sorted()
+            return zip(cuts, cuts.dropFirst()).compactMap { start, end in
+                guard end - start > 1e-6 else { return nil }
+                let middle = (start + end) / 2
+                let speed = speeds.first { $0.start <= middle && middle < $0.end }?.speed ?? 1
+                return StudioClip(start: start, end: end, speed: speed)
+            }
+        }
+    }
     /// How a take looks when it is shared without the editor (S8 / LIG-57): exactly as the
     /// recording was set up — the cursor if "Show cursor" was on, a click ripple if clicks were
     /// highlighted, the keystroke pill and camera bubble if they were on — and nothing a studio
@@ -417,14 +560,23 @@ public struct StudioEdits: Equatable, Codable, Sendable {
         return edits.normalized()
     }
 
-    /// Every range clamped, clips and zooms in source order and inside the source.
+    /// A lane's regions inside the source, in order, none overlapping the one before it.
+    private static func lane<R: TimelineRegion>(_ regions: [R], duration: Double) -> [R] {
+        var result: [R] = []
+        for var r in regions.sorted(by: { $0.start < $1.start }) {
+            r.start = min(max(r.start, result.last?.end ?? 0), duration)
+            r.end = min(max(r.end, 0), duration)
+            if r.end > r.start { result.append(r) }
+        }
+        return result
+    }
+
+    /// Every range clamped; trims, speeds and zooms in source order and inside the source.
     public func normalized() -> StudioEdits {
         var e = self
         func clamp(_ v: Double, _ r: ClosedRange<Double>) -> Double { min(max(v, r.lowerBound), r.upperBound) }
-        e.clips = e.clips
-            .map { var c = $0; c.start = clamp(c.start, 0...e.sourceDuration); c.end = clamp(c.end, 0...e.sourceDuration); c.speed = clamp(c.speed, StudioClip.speedRange); return c }
-            .filter { $0.sourceLength > 0 }
-            .sorted { $0.start < $1.start }
+        e.trims = Self.lane(e.trims, duration: e.sourceDuration)
+        e.speeds = Self.lane(e.speeds.map { var s = $0; s.speed = clamp(s.speed, StudioClip.speedRange); return s }, duration: e.sourceDuration)
         e.zooms = e.zooms
             .map { var z = $0; z.start = clamp(z.start, 0...e.sourceDuration); z.end = clamp(z.end, 0...e.sourceDuration); z.scale = clamp(z.scale, ZoomRegion.minimumScale...ZoomRegion.maximumScale)
                 if case let .point(p) = z.focus { z.focus = .point(Point(x: clamp(p.x, 0...1), y: clamp(p.y, 0...1))) }

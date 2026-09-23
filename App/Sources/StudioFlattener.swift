@@ -17,7 +17,8 @@ final class StudioFlattener: StudioFlattening {
         // The session clock and the movie can differ by a frame or two: render the whole movie.
         var edits = edits
         edits.sourceDuration = sources.duration
-        edits.clips = [StudioClip(start: 0, end: sources.duration)]
+        edits.trims = []
+        edits.speeds = []
         edits = edits.normalized()
         let state = StudioRenderState(
             edits: edits, input: store.loadInput(project), sourceSize: sources.pixelSize,

@@ -1,11 +1,10 @@
 import Foundation
 
-/// Output time ↔ source time across cuts and speed changes (spec 0007, stories 5–8). The clips
-/// play one after another; a clip at speed 2 takes half its source length in the output.
+/// Output time ↔ source time across trims and speed changes (spec 0007). The clips play one after
+/// another; a clip at speed 2 takes half its source length in the output.
 public struct StudioTimeline: Equatable, Sendable {
     /// One clip placed on the output timeline.
     public struct Segment: Equatable, Sendable {
-        public let clipID: StudioClip.ID
         public let sourceStart: Double
         public let sourceEnd: Double
         public let outputStart: Double
@@ -21,7 +20,7 @@ public struct StudioTimeline: Equatable, Sendable {
         var output = 0.0
         segments = clips.map { clip in
             let segment = Segment(
-                clipID: clip.id, sourceStart: clip.start, sourceEnd: clip.end,
+                sourceStart: clip.start, sourceEnd: clip.end,
                 outputStart: output, outputEnd: output + clip.outputLength, speed: clip.speed
             )
             output = segment.outputEnd
@@ -51,5 +50,13 @@ public struct StudioTimeline: Equatable, Sendable {
         guard let segment = segments.first(where: { time >= $0.sourceStart && time < $0.sourceEnd })
                 ?? segments.last(where: { time == $0.sourceEnd }) else { return nil }
         return segment.outputStart + (time - segment.sourceStart) / segment.speed
+    }
+
+    /// Where playback is when the playhead is put at a source time: the time itself, or — inside a
+    /// trim — where the output resumes after it (round 3, story 34).
+    public func playableOutputTime(atSource time: Double) -> Double {
+        outputTime(atSource: time)
+            ?? segments.first { $0.sourceStart >= time }?.outputStart
+            ?? outputDuration
     }
 }

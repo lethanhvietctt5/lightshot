@@ -48,12 +48,20 @@ private func spans(_ doc: StudioDocument) -> [[Double]] {
     #expect(doc.timeline.outputDuration == 8)
 }
 
-@Test func cuttingAcrossClipEdgesTrimsAndRemoves() {
+@Test func cuttingAcrossTrimsMergesThem() {
     var doc = document(10)
-    doc.split(atOutput: 4)
-    doc.split(atOutput: 6)                                              // [0,4] [4,6] [6,10]
+    doc.cut(sourceRange: 4...5)
+    doc.cut(sourceRange: 6...6.5)                                       // [0,4] [5,6] [6.5,10]
     doc.cut(sourceRange: 3...7)
     #expect(spans(doc) == [[0, 3], [7, 10]])
+    #expect(doc.edits.trims.map { [$0.start, $0.end] } == [[3, 7]])
+}
+
+@Test func aSliverLeftBetweenCutsIsCutToo() {
+    var doc = document(10)
+    doc.cut(sourceRange: 2...4)
+    doc.cut(sourceRange: 4.05...6)
+    #expect(spans(doc) == [[0, 2], [6, 10]])
 }
 
 @Test func cuttingEverythingIsRefused() {

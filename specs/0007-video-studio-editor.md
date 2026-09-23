@@ -1,7 +1,7 @@
 # Spec 0007 — Video Studio editor
 
 **Status:** accepted — decisions taken at the end; sub-issues implemented in order
-**Linear:** epic [LIG-49](https://linear.app/light-shot/issue/LIG-49) with sub-issues LIG-50 … LIG-53 (round 1) and LIG-54 … LIG-56 (round 2)
+**Linear:** epic [LIG-49](https://linear.app/light-shot/issue/LIG-49) with sub-issues LIG-50 … LIG-53 (round 1), LIG-54 … LIG-56 (round 2) and [LIG-66](https://linear.app/light-shot/issue/LIG-66) (round 3)
 **Platform:** Native macOS (Swift / SwiftUI + AppKit), macOS 14+ (ScreenCaptureKit, AVFoundation, Core Image)
 **Scope:** Local-only. Turns the recording video editor (spec 0006 R14, LIG-43) into a **studio editor** on par with CleanShot X 5.0's Studio Mode and OpenScreen: smart zooms that follow the cursor, a cursor re-drawn from recorded data (size, smoothing, click effects, motion blur, hide when idle), backgrounds with padding / rounded corners / shadow, social aspect ratios, cuts and per-segment speed, the camera and keystrokes adjustable after the take, undo/redo, and a local export. No cloud, no accounts, no network, no AI agent.
 
@@ -127,11 +127,30 @@ Round 1 (S1–S4) shipped the studio core, capture, renderer and editor. Compari
 | S7 | LIG-56 | Camera drag on the preview, `TimelineSnap`, audio waveform | 33 |
 | S8 | LIG-57 | Every recording is a studio take: clean capture + data for all takes, rendered for quick shares, linked back to its project | 1–4, 14–19 on every take |
 
+## Round 3 — trim and speed pills, cursor styles (2026-09-24, LIG-66)
+
+Trimming by dragging clip edges did not match the rest of the timeline, which edits with pills. Round 3 makes trims and speed changes pills too, adds cursor styles, and starts studio projects without padding.
+
+### Stories
+
+34. As a user, I want to **add a trim at the playhead** and drag or resize its pill on a Trim track, like a zoom or a text, so that the trimmed part is **skipped** in the preview and left out of the export.
+35. As a user, I want to **speed up or slow down** a stretch with a pill on a Speed track (0.25×–4×), so that boring parts play fast and key moments play slowly.
+36. As a user, I want to pick a **cursor style** from a grid of presets (as in OpenScreen), so that the cursor matches the video's look.
+37. As a user, I want a new studio project to start with **no padding and no corner radius**, so that the recording fills the frame until I decide otherwise.
+
+### Decisions
+
+- **The timeline shows source time.** The whole recording stays on the timeline and trimmed spans are shaded on the filmstrip. The playhead shows the source time of the playing frame. Clicking inside a trim seeks to where playback resumes.
+- **Trims and speed changes are regions, like zooms.** `StudioEdits.trims: [TrimRegion]` and `speeds: [SpeedRegion]` are in source seconds, and regions in one lane never overlap. `StudioEdits.clips` is **derived**: the source minus the trims, split at the speed regions' edges. So `StudioTimeline`, the composition, the preview and the export skip trims and apply speed unchanged. A change that would trim everything is refused.
+- **Split and clip-edge trimming are removed** (this supersedes stories 6–8). `cut(sourceRange:)`, transcript cuts and Remove Silences add trim regions. Projects saved before round 3 migrate on load: the gaps between their clips become trims and clip speeds become speed regions (`StudioEdits.currentVersion` 2).
+- **Cursor styles are vector presets** drawn by the renderer: macOS (default), White, Pink, Mint, Violet, Blue, Neon, Outline, Bold and Yellow (`CursorTheme`). `CursorStyle.theme` is decoded with a default, so old projects still open. The Cursor panel shows the presets as a tile grid rendered from the same art. This supersedes decision 3.
+- **Studio look default:** padding 0 and corner radius 0. Existing projects keep what they saved.
+
 ## Out of Scope
 
 - AI editing agents, cloud rendering, translation.
 - Arrow / image annotations on the video (text annotations are round 2).
-- Recording the system cursor's changing shape (the studio cursor is the arrow in v1).
+- Recording the system cursor's changing shape (the studio cursor is an arrow, in the chosen style).
 - Multi-display studio takes; editing several takes into one video.
 
 ## Issue breakdown (Linear issues)

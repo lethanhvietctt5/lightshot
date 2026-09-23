@@ -124,6 +124,7 @@ struct StudioInspector: View {
         } else {
             toggle("Show Cursor", \.cursor.visible)
             if model.edits.cursor.visible {
+                section("Cursor Style") { cursorStyles }
                 slider("Size", value: \.cursor.size, in: CursorStyle.minimumSize...CursorStyle.maximumSize, format: { String(format: "%.1f×", $0) })
                 slider("Smoothing", value: \.cursor.smoothing, in: 0...1, percent: true)
                 slider("Motion Blur", value: \.cursor.motionBlur, in: 0...1, percent: true)
@@ -140,6 +141,31 @@ struct StudioInspector: View {
                     ), supportsOpacity: false)
                     .font(.system(size: 13))
                 }
+            }
+        }
+    }
+
+    /// The cursor presets as tiles drawn from the renderer's own art (round 3, story 36).
+    private var cursorStyles: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
+            ForEach(CursorTheme.allCases, id: \.self) { theme in
+                let selected = model.edits.cursor.theme == theme
+                Button { model.set(\.cursor.theme, theme) } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9).fill(StudioStyle.control)
+                        if let image = StudioFrameRenderer.cursorArt(theme).cgImage {
+                            Image(decorative: image, scale: 8).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                                .frame(height: 30)
+                        }
+                    }
+                    .frame(height: 44)
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(selected ? Color.theme(.selectionRing) : .clear, lineWidth: 2))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(theme.title)
+                .accessibilityLabel("\(theme.title) cursor")
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
     }
@@ -306,8 +332,8 @@ struct StudioInspector: View {
                     }
                 }
             }
-            if model.edits.clips.contains(where: { $0.speed != 1 }) {
-                Text("Sped-up and slowed clips keep their pitch.").font(.system(size: 12)).foregroundStyle(StudioStyle.secondary)
+            if model.edits.speeds.contains(where: { $0.speed != 1 }) {
+                Text("Sped-up and slowed parts keep their pitch.").font(.system(size: 12)).foregroundStyle(StudioStyle.secondary)
             }
         }
     }

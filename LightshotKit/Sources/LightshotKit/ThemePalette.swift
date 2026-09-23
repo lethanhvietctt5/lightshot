@@ -21,7 +21,7 @@ public enum ThemeToken: String, CaseIterable, Sendable {
     case studioCanvas, studioDivider, studioControl, studioClip, clipEdge, selectionRing, previewShadow
 
     // Accents: the same hue in both appearances.
-    case accentBlue, playhead, timelineSelection, zoomAccent, textAccent, studioPink, studioViolet
+    case accentBlue, playhead, timelineSelection, zoomAccent, textAccent, trimAccent, speedAccent, studioPink, studioViolet
 }
 
 /// Every `ThemeToken`'s colour in Light and Dark (spec 0008). The Dark values are the dark chrome
@@ -82,6 +82,8 @@ public enum ThemePalette {
         case .timelineSelection: return same(RGBAColor(red: 1, green: 0.8, blue: 0.2))
         case .zoomAccent: return same(RGBAColor(red: 0.45, green: 0.35, blue: 0.95))
         case .textAccent: return same(RGBAColor(red: 0.95, green: 0.55, blue: 0.2))
+        case .trimAccent: return same(RGBAColor(red: 0.88, green: 0.24, blue: 0.3))
+        case .speedAccent: return same(RGBAColor(red: 0.08, green: 0.55, blue: 0.42))
         case .studioPink: return same(RGBAColor(red: 0.95, green: 0.4, blue: 0.6))
         case .studioViolet: return same(RGBAColor(red: 0.6, green: 0.45, blue: 0.95))
         }
@@ -151,6 +153,8 @@ public enum ThemePalette {
             // Labels on accents.
             pair(.onAccent, on: .accentBlue, glyphContrast),
             pair(.onAccent, on: .zoomAccent, glyphContrast),
+            pair(.onAccent, on: .trimAccent, glyphContrast),
+            pair(.onAccent, on: .speedAccent, glyphContrast),
         ]
     }()
 }

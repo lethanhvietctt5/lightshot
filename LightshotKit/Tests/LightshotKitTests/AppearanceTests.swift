@@ -77,7 +77,7 @@ func everyLegibilityPairMeetsItsContrastInBothAppearances(appearance: Appearance
 }
 
 @Test func accentsKeepTheirHueInBothAppearances() {
-    for token in [ThemeToken.accentBlue, .playhead, .timelineSelection, .zoomAccent, .textAccent, .studioPink, .studioViolet, .onAccent] {
+    for token in [ThemeToken.accentBlue, .playhead, .timelineSelection, .zoomAccent, .textAccent, .trimAccent, .speedAccent, .studioPink, .studioViolet, .onAccent] {
         #expect(ThemePalette.color(token, in: .light) == ThemePalette.color(token, in: .dark), "\(token)")
     }
 }
