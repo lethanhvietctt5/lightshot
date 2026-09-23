@@ -55,9 +55,10 @@ final class AppController: NSObject, CaptureUI {
     private let cameraBubble: CameraBubbleController
     /// The 3-2-1 before a take (story 10).
     private let countdown = CountdownOverlayController()
-    /// The pause / stop / restart / discard pill and the outside-the-frame dimming (stories 12–16).
+    /// The pause / stop / restart / discard pill (stories 12–15), and the red border and outside-the-
+    /// frame dimming around the recording area (story 16, LIG-65).
     private let recordingControls = RecordingControlsController()
-    private let recordingDim = RecordingDimController()
+    private let recordingFrame = RecordingFrameController()
     /// The previous recording state, so `presentRecordingState` can play the start / stop cues on
     /// the transitions that deserve them.
     private var lastRecordingState: RecordingSession.State = .idle
@@ -514,8 +515,9 @@ final class AppController: NSObject, CaptureUI {
         updateRecordingSurfaces(session)
     }
 
-    /// The pill and the dimming follow the session: shown while recording or paused (per Settings),
-    /// gone otherwise — including during the countdown, when the user is still setting up.
+    /// The pill, the red border and the dimming follow the session: shown while recording or paused
+    /// (the pill and the dimming per Settings), gone otherwise — including during the countdown, when
+    /// the user is still setting up.
     private func updateRecordingSurfaces(_ session: RecordingSession) {
         let defaults = settings.recordingDefaults
         switch session.state {
@@ -537,12 +539,16 @@ final class AppController: NSObject, CaptureUI {
                     )
                 )
             }
-            if defaults.dimScreenWhileRecording, let region = session.options?.region {
-                recordingDim.show(outside: region)
+            if let region = session.options?.region {
+                recordingFrame.show(
+                    around: region,
+                    dimsOutside: defaults.dimScreenWhileRecording,
+                    isPaused: session.state == .paused
+                )
             }
         default:
             recordingControls.hide()
-            recordingDim.hide()
+            recordingFrame.hide()
         }
         // The camera preview outlives the toolbar for the countdown and the take (the last frames
         // still composite it while stopping); it goes when the take does — finished, failed,
@@ -685,6 +691,16 @@ final class AppController: NSObject, CaptureUI {
             position: .bottom, isPaused: false, elapsed: { 12 }, audioLevel: { 0.4 }, systemAudioLevel: nil,
             actions: .init(pauseResume: {}, stop: {}, restart: {}, discard: {})
         )
+    }
+
+    /// `-previewRecordingFrame x,y,w,h|display [-previewPaused YES] [-previewDim YES]`: the red
+    /// border (LIG-65) around an area (screen points, top-left origin) or the main display.
+    func debugShowRecordingFrame(_ spec: String, paused: Bool, dims: Bool) {
+        let parts = spec.split(separator: ",").compactMap { Double($0) }
+        let region: CaptureRegion = parts.count == 4
+            ? .rect(Rect(x: parts[0], y: parts[1], width: parts[2], height: parts[3]))
+            : .display(id: CGMainDisplayID())
+        recordingFrame.show(around: region, dimsOutside: dims, isPaused: paused)
     }
 
     func debugSeekStudio(to time: Double) { videoEditor.debugSeek(to: time) }
