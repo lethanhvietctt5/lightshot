@@ -105,21 +105,17 @@ enum StudioFrameRenderer {
                 let moved = abs(previous.scale - viewport.scale) > 0.002 || abs(previous.rect.midX - viewport.rect.midX) > 0.001
                     || abs(previous.rect.midY - viewport.rect.midY) > 0.001
                 if moved {
+                    // A running average of viewports spread back over the frame: the k-th sample is
+                    // dissolved in at 1/k, which blends premultiplied pixels correctly (a colour
+                    // matrix works unpremultiplied and washes the picture out).
                     let samples = 4
-                    var sum: CIImage?
-                    for i in 0..<samples {
+                    for i in 1..<samples {
                         let back = frameDuration * edits.zoomMotionBlur * Double(i) / Double(samples - 1)
-                        let v = i == 0 ? viewport : state.zoom.viewport(at: t - back)
-                        let weighted = screenLayer(screen, viewport: v, state: state, contentCI: contentCI)
-                            .applyingFilter("CIColorMatrix", parameters: [
-                                "inputRVector": CIVector(x: 1.0 / CGFloat(samples), y: 0, z: 0, w: 0),
-                                "inputGVector": CIVector(x: 0, y: 1.0 / CGFloat(samples), z: 0, w: 0),
-                                "inputBVector": CIVector(x: 0, y: 0, z: 1.0 / CGFloat(samples), w: 0),
-                                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1.0 / CGFloat(samples)),
-                            ])
-                        sum = sum.map { weighted.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: $0]) } ?? weighted
+                        let sample = screenLayer(screen, viewport: state.zoom.viewport(at: t - back), state: state, contentCI: contentCI)
+                        layer = layer.applyingFilter("CIDissolveTransition", parameters: [
+                            kCIInputTargetImageKey: sample, kCIInputTimeKey: 1.0 / Double(i + 1),
+                        ]).cropped(to: contentCI)
                     }
-                    if let sum { layer = sum }
                 }
             }
             let mask = roundedRect(contentCI, radius: layout.cornerRadius, color: .white)

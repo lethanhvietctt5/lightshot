@@ -610,6 +610,15 @@ public final class AppCoordinator {
         )
     }
 
+    /// A Studio export (spec 0007, story 27) is filed like a finished recording: into history
+    /// (best-effort, as for any take), then saved to the save location — under `name` when given,
+    /// else the filename pattern. Returns where it landed, `nil` on a failed save (reported).
+    public func fileStudioExport(at file: URL, named name: String?) async -> URL? {
+        let kind: RecordingOutputKind = file.pathExtension.lowercased() == "gif" ? .gif : .video
+        let archived = await archive(PendingRecording(file: file, kind: kind, duration: 0))
+        return deliver(archived, as: name)
+    }
+
     /// The most recent studio projects, newest first, for the menu bar (spec 0007, story 4).
     public func recentStudioProjects(limit: Int = 10) -> [StudioProject] {
         studioProjects?.recent(limit: limit) ?? []
