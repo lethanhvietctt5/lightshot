@@ -391,6 +391,32 @@ public struct StudioEdits: Equatable, Codable, Sendable {
         annotations = try c.decodeIfPresent([TextAnnotation].self, forKey: .annotations) ?? []
     }
 
+    /// How a take looks when it is shared without the editor (S8 / LIG-57): exactly as the
+    /// recording was set up — the cursor if "Show cursor" was on, a click ripple if clicks were
+    /// highlighted, the keystroke pill and camera bubble if they were on — and nothing a studio
+    /// would add (no background, padding, zoom or smoothing). Rendered at the source's size, frame
+    /// rate and codec; a GIF take is rendered as a movie first, then converted.
+    public static func flattenLook(options: RecordingOptions, sourceDuration: Double) -> StudioEdits {
+        var edits = StudioEdits(sourceDuration: sourceDuration, look: .plain)
+        edits.zoomMotionBlur = 0
+        edits.cursor = CursorStyle(
+            visible: options.showCursor, size: 1, smoothing: 0, hideWhenIdle: false,
+            clickEffect: options.highlightClicks ? .ripple : .none,
+            clickColor: options.clickHighlight.color.rgb.map { RGBAColor(red: $0.red, green: $0.green, blue: $0.blue) }
+                ?? RGBAColor(red: 0.2, green: 0.5, blue: 1),
+            motionBlur: 0
+        )
+        edits.keystrokes = StudioKeystrokeStyle(visible: options.showKeystrokes, overlay: options.keystrokeOverlay)
+        edits.camera = StudioCameraStyle(visible: options.camera.isOn, bubble: options.cameraBubble)
+        var output = StudioOutput(resolution: .source, format: .mp4)
+        if case let .video(video) = options.output {
+            output.fps = video.fps
+            output.codec = video.codec == .hevc ? .hevc : .h264
+        }
+        edits.output = output
+        return edits.normalized()
+    }
+
     /// Every range clamped, clips and zooms in source order and inside the source.
     public func normalized() -> StudioEdits {
         var e = self

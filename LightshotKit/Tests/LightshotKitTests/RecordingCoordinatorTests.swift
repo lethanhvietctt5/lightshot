@@ -172,6 +172,13 @@ private final class SpyUI: CaptureUI {
     func openVideoEditor(at url: URL, input: URL?) { editors.append(url); editorInputs.append(input) }
     private(set) var studios: [StudioProject] = []
     func openStudio(_ project: StudioProject) { studios.append(project) }
+    private(set) var preparations = 0
+    private(set) var preparationDismissals = 0
+    private(set) var preparationProgress: [Double] = []
+    var preparationCancel: (() -> Void)?
+    func presentRecordingPreparation(cancel: @escaping () -> Void) { preparations += 1; preparationCancel = cancel }
+    func updateRecordingPreparation(progress: Double) { preparationProgress.append(progress) }
+    func dismissRecordingPreparation() { preparationDismissals += 1 }
     func presentGIFConversion(cancel: @escaping () -> Void) { gifPopups += 1; gifCancel = cancel }
     func updateGIFConversion(progress: Double) { gifProgress.append(progress) }
     func dismissGIFConversion() { gifDismissals += 1 }
@@ -242,6 +249,23 @@ private final class ManualClock {
     }
 }
 
+/// Renders a studio take for sharing (S8): writes a stand-in movie, or fails / is cancelled.
+@MainActor
+private final class FakeFlattener: StudioFlattening {
+    enum Outcome { case succeed, fail, cancel }
+    var outcome = Outcome.succeed
+    private(set) var calls: [(project: StudioProject, edits: StudioEdits)] = []
+    func flatten(_ project: StudioProject, edits: StudioEdits, to output: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+        calls.append((project, edits))
+        progress(0.5)
+        switch outcome {
+        case .succeed: try Data("rendered".utf8).write(to: output)
+        case .fail: throw RecordingError.systemFailure("render failed")
+        case .cancel: throw CancellationError()
+        }
+    }
+}
+
 @MainActor
 private final class Harness {
     let service: FakeRecordingService
@@ -263,8 +287,10 @@ private final class Harness {
     var waits: [TimeInterval] { clock.waits }
 
     let studioDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("coordinator-studio-\(UUID().uuidString)")
+    let flattener = FakeFlattener()
 
-    init(service: FakeRecordingService = FakeRecordingService(), withHistory: Bool = false, metadata: VideoMetadata? = FakeMetadata().result) {
+    /// `studio: false` wires no project store: the plain (pre-S8) path, for tests of that path alone.
+    init(service: FakeRecordingService = FakeRecordingService(), withHistory: Bool = false, metadata: VideoMetadata? = FakeMetadata().result, studio: Bool = true) {
         self.service = service
         let clock = self.clock
         history = withHistory ? HistoryStore(directory: historyDirectory) : nil
@@ -280,7 +306,8 @@ private final class Harness {
             gifEncoder: gif,
             mediaMetadata: withHistory ? FakeMetadata(result: metadata) : nil,
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
-            studioProjects: StudioProjectStore(directory: studioDirectory),
+            studioProjects: studio ? StudioProjectStore(directory: studioDirectory) : nil,
+            studioFlattener: flattener,
             sleep: { seconds in await clock.sleep(seconds) },
             clock: { clock.now },
             ui: ui
@@ -513,7 +540,7 @@ private func materialisedTake() throws -> URL {
 
 @Test @MainActor func unreadableMetadataLeavesTheTakeInScratchAndRoutesItAnyway() async throws {
     let take = try materialisedTake()
-    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true, metadata: nil)
+    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true, metadata: nil, studio: false)
     defer { try? FileManager.default.removeItem(at: h.historyDirectory) }
     await finishedTake(h, after: .showOverlay)
     #expect(h.history!.all().isEmpty)
@@ -569,7 +596,7 @@ private func materialisedTake() throws -> URL {
     CGImageDestinationAddImage(destination, context.makeImage()!, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]] as CFDictionary)
     CGImageDestinationFinalize(destination)
     _ = gifFile
-    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true)
+    let h = Harness(service: FakeRecordingService(stopResult: .success(take)), withHistory: true, studio: false)
     defer { try? FileManager.default.removeItem(at: h.historyDirectory) }
     h.settings.recordingDefaults.afterRecording = .saveSilently
     await h.coordinator.startRecording(region: display, output: .gif)
@@ -1125,19 +1152,13 @@ private func studioTake() throws -> URL {
 @Test @MainActor func aRecentStudioProjectReopensInTheStudio() async throws {
     let screen = try studioTake()
     let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
-    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(studio: true))
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor, studio: true))
     await h.coordinator.stopRecording()
     let project = try #require(h.ui.studios.first)
     h.coordinator.openStudioProject(at: project.url)
     #expect(h.ui.studios.count == 2 && h.ui.studios.last == project)
 }
 
-@Test @MainActor func aPlainTakeIsNotAStudioProject() async {
-    let h = Harness()
-    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
-    await h.coordinator.stopRecording()
-    #expect(h.ui.studios.isEmpty && h.ui.editors.count == 1)
-}
 
 @Test @MainActor func aStudioExportIsFiledIntoHistoryAndSavedLikeARecording() async throws {
     let h = Harness(withHistory: true)
@@ -1172,24 +1193,95 @@ private func plainTakeWithInput() throws -> URL {
     return movie
 }
 
-@Test @MainActor func anOrdinaryTakesInputTravelsIntoHistoryAndReachesTheEditor() async throws {
+@Test @MainActor func anOrdinaryTakeFromBeforeS8ReopensWithItsInputData() async throws {
+    // Takes recorded before every take became a project carry only their input sidecar.
     let movie = try plainTakeWithInput()
-    let h = Harness(service: FakeRecordingService(stopResult: .success(movie)), withHistory: true)
-    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
-    await h.coordinator.stopRecording()
-    let record = try #require(h.history?.all().first)
+    let h = Harness(withHistory: true)
+    let record = try h.history!.add(mediaAt: movie, kind: .video, pixelWidth: 10, pixelHeight: 10, duration: 1, thumbnail: Data([1]), source: .recording)
     let sidecar = StudioTake.inputURL(forScreen: record.fileURL)
     #expect(FileManager.default.fileExists(atPath: sidecar.path))                    // moved with the take
-    #expect(!FileManager.default.fileExists(atPath: StudioTake.inputURL(forScreen: movie).path))
-    #expect(h.ui.editorInputs == [sidecar])
-    // Reopening it from history hands the same data to the editor.
     h.coordinator.reopenRecording(record)
-    #expect(h.ui.editorInputs.last == sidecar)
+    #expect(h.ui.editorInputs == [sidecar] && h.ui.studios.isEmpty)
 }
 
-@Test @MainActor func aTakeWithoutInputOpensTheEditorWithoutIt() async {
+@Test @MainActor func everyTakeBecomesAProjectWithItsInputData() async throws {
+    let movie = try plainTakeWithInput()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(movie)))
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
+    await h.coordinator.stopRecording()
+    let project = try #require(h.ui.studios.first)
+    #expect(StudioProjectStore(directory: h.studioDirectory).loadInput(project)?.clicks.count == 1)
+}
+
+@Test @MainActor func aTakeWhoseFileIsMissingStillRoutesThePlainWay() async {
+    // The project can't be made from a file that isn't there; the take routes as before.
     let h = Harness(withHistory: true)
     await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
     await h.coordinator.stopRecording()
-    #expect(h.ui.editorInputs == [nil])
+    #expect(h.ui.studios.isEmpty && h.ui.editorInputs == [nil])
+}
+
+// MARK: - Every take is a studio take (S8 / LIG-57)
+
+@Test @MainActor func aTakeForTheOverlayIsRenderedWithItsOwnLookAndLinkedToItsProject() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)), withHistory: true)
+    h.settings.recordingDefaults.afterRecording = .showOverlay
+    h.settings.recordingDefaults.highlightClicks = true
+    await h.coordinator.startRecording(region: display)
+    h.now = 110
+    await h.coordinator.stopRecording()
+    #expect(h.flattener.calls.count == 1)
+    #expect(h.flattener.calls.first?.edits.cursor.clickEffect == .ripple)           // the take's own look
+    #expect(h.ui.preparations == 1 && h.ui.preparationDismissals == 1 && h.ui.preparationProgress == [0.5])
+    #expect(h.ui.studios.isEmpty)
+    let pending = try #require(h.ui.overlays.first)                                // the rendered movie, in history
+    let project = try #require(h.flattener.calls.first?.project)
+    #expect(StudioTake.linkedProjectURL(forScreen: pending.file) == project.url)
+    // Open Video Editor from the overlay opens the editable project, not the rendered copy.
+    h.coordinator.openPendingRecordingInEditor()
+    #expect(h.ui.studios.map(\.url) == [project.url] && h.ui.editors.isEmpty)
+    // …and so does reopening it from history.
+    let record = try #require(h.history?.all().first)
+    h.coordinator.reopenRecording(record)
+    #expect(h.ui.studios.count == 2)
+}
+
+@Test @MainActor func openEditorAfterRecordingOpensTheProjectWithoutRendering() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
+    h.settings.recordingDefaults.afterRecording = .openEditor
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.stopRecording()
+    #expect(h.ui.studios.count == 1 && h.flattener.calls.isEmpty && h.ui.preparations == 0)
+}
+
+@Test @MainActor func cancellingTheRenderOpensTheProjectSoTheTakeIsNeverLost() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
+    h.settings.recordingDefaults.afterRecording = .saveSilently
+    h.flattener.outcome = .cancel
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.stopRecording()
+    #expect(h.ui.studios.count == 1 && h.ui.finished.isEmpty && h.ui.preparationDismissals == 1)
+}
+
+@Test @MainActor func aFailedRenderIsReportedAndTheProjectOpens() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
+    h.settings.recordingDefaults.afterRecording = .saveSilently
+    h.flattener.outcome = .fail
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.stopRecording()
+    #expect(h.ui.studios.count == 1 && h.ui.recordingFailures.count == 1 && h.ui.finished.isEmpty)
+}
+
+@Test @MainActor func aSilentlySavedTakeIsTheRenderedMovie() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
+    h.settings.recordingDefaults.afterRecording = .saveSilently
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.stopRecording()
+    #expect(h.ui.finished.count == 1 && h.sink.saves.count == 1)
+    #expect(try Data(contentsOf: h.sink.saves[0].from) == Data("rendered".utf8))
 }

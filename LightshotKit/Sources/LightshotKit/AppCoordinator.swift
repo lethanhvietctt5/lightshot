@@ -50,6 +50,11 @@ public protocol CaptureUI: AnyObject {
     func openVideoEditor(at url: URL, input: URL?)
     /// Open a studio project in the Studio editor (spec 0007, stories 3–4).
     func openStudio(_ project: StudioProject)
+    /// A take is being rendered for sharing (S8 / LIG-57): show progress with a Cancel that calls
+    /// `cancel` (cancelling opens the take's project instead).
+    func presentRecordingPreparation(cancel: @escaping () -> Void)
+    func updateRecordingPreparation(progress: Double)
+    func dismissRecordingPreparation()
     /// A GIF take is converting (stories 37–38): show progress with a Cancel that calls `cancel`.
     func presentGIFConversion(cancel: @escaping () -> Void)
     func updateGIFConversion(progress: Double)
@@ -83,6 +88,10 @@ public final class AppCoordinator {
     private let scratchDirectory: URL
     /// Where studio takes become projects (spec 0007); `nil` files them as ordinary recordings.
     private let studioProjects: StudioProjectStore?
+    /// Renders a take's project for sharing without the editor (S8 / LIG-57).
+    private let studioFlattener: StudioFlattening?
+    /// The render in flight, so Cancel can reach it.
+    private var preparation: Task<Void, Error>?
     private let sleep: (TimeInterval) async -> Void
     private let clock: () -> TimeInterval
     private unowned let ui: CaptureUI
@@ -120,6 +129,7 @@ public final class AppCoordinator {
         mediaMetadata: MediaMetadataSource? = nil,
         scratchDirectory: URL = FileManager.default.temporaryDirectory,
         studioProjects: StudioProjectStore? = nil,
+        studioFlattener: StudioFlattening? = nil,
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
         },
@@ -138,6 +148,7 @@ public final class AppCoordinator {
         self.mediaSink = mediaSink
         self.scratchDirectory = scratchDirectory
         self.studioProjects = studioProjects
+        self.studioFlattener = studioFlattener
         self.sleep = sleep
         self.clock = clock
         self.ui = ui
@@ -525,24 +536,52 @@ public final class AppCoordinator {
     /// A take finished. A GIF take is converted first (stories 37–38): the video is what was
     /// recorded, the GIF is what the user asked for; cancelling offers the video instead. Then
     /// the result is routed by the after-recording setting.
-    private func finished(_ file: URL) async {
+    private func finished(_ take: URL) async {
         let duration = recordingSession.elapsed(at: clock())
-        // A studio take (spec 0007) is ingredients, not a finished video: it becomes a project and
-        // opens in the Studio editor, whose export is what gets saved and filed into history.
-        if recordingSession.options?.studio == true, let studioProjects {
-            let name = settings.recordingDestination(pathExtension: "mp4").deletingPathExtension().lastPathComponent
-            do {
-                ui.openStudio(try studioProjects.create(fromTake: file, name: name))
+        // Read now: the take's own options (its after-recording choice, its look) outlive the
+        // session, which is idle again by the time a render or a GIF conversion ends.
+        let options = recordingSession.options
+        let after = options?.afterRecording ?? settings.recordingDefaults.afterRecording
+        var prepared = take
+        // Every take is a studio take (spec 0007, S8 / LIG-57): its ingredients become a project.
+        // The editor route opens it; any other route first renders it with the take's own look,
+        // and the rendered movie — linked to the project — goes on as a finished recording.
+        if let options, options.studio, let studioProjects,
+           let project = try? studioProjects.create(
+               fromTake: take, name: settings.recordingDestination(pathExtension: "mp4").deletingPathExtension().lastPathComponent
+           ) {
+            guard after != .openEditor, let studioFlattener else {
+                ui.openStudio(project)
                 return
-            } catch {
-                ui.presentRecordingFailure(.systemFailure("The studio project could not be created: \(error.localizedDescription)"))
+            }
+            let movie = scratchDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            let edits = StudioEdits.flattenLook(options: options, sourceDuration: duration)
+            let render = Task {
+                try await studioFlattener.flatten(project, edits: edits, to: movie) { [weak self] progress in
+                    Task { @MainActor in self?.ui.updateRecordingPreparation(progress: progress) }
+                }
+            }
+            preparation = render
+            ui.presentRecordingPreparation(cancel: { render.cancel() })
+            let outcome = await render.result
+            preparation = nil
+            ui.dismissRecordingPreparation()
+            switch outcome {
+            case .success:
+                try? StudioTake.writeProjectLink(project, forScreen: movie)
+                prepared = movie
+            case .failure(is CancellationError):
+                ui.openStudio(project)                // never lost: the take is its project
+                return
+            case let .failure(error):
+                ui.presentRecordingFailure(.systemFailure("The recording could not be prepared: \(error.localizedDescription). It is open in the Studio editor instead."))
+                ui.openStudio(project)
+                return
             }
         }
-        // Read now: the take's own after-recording choice (Studio Mode → the editor) outlives
-        // the session, which is idle again by the time a GIF conversion ends.
-        let after = recordingSession.options?.afterRecording ?? settings.recordingDefaults.afterRecording
+        let file = prepared
         let routeVideo = { await self.archiveAndRoute(PendingRecording(file: file, kind: .video, duration: duration), after: after) }
-        guard case let .gif(gifSettings)? = recordingSession.options?.output, let gifEncoder, let mediaSink else {
+        guard case let .gif(gifSettings)? = options?.output, let gifEncoder, let mediaSink else {
             await routeVideo()
             return
         }
@@ -562,6 +601,11 @@ public final class AppCoordinator {
         case .success:
             // The intermediate video is not a file the user ever saw (spec: deleted after a
             // successful conversion); a delete failure only leaves it in scratch.
+            // The GIF inherits the movie's companions (its project link), then the movie goes.
+            for (from, to) in zip(StudioTake.sidecars(forScreen: file), StudioTake.sidecars(forScreen: gif))
+            where FileManager.default.fileExists(atPath: from.path) {
+                try? FileManager.default.moveItem(at: from, to: to)
+            }
             try? mediaSink.delete(file)
             await archiveAndRoute(PendingRecording(file: gif, kind: .gif, duration: duration), after: after)
         case .failure(is CancellationError):
@@ -621,6 +665,11 @@ public final class AppCoordinator {
         return deliver(archived, as: name)
     }
 
+    /// The studio project a rendered take came from (S8 / LIG-57), when it still exists.
+    private func linkedProject(for file: URL) -> StudioProject? {
+        StudioTake.linkedProjectURL(forScreen: file).flatMap { studioProjects?.open($0) }
+    }
+
     /// A take's pointer / click data, kept beside its file (in scratch, or in history once filed).
     private func takeInput(for file: URL) -> URL? {
         let url = StudioTake.inputURL(forScreen: file)
@@ -671,7 +720,11 @@ public final class AppCoordinator {
         )
         switch record.kind {
         case .video:
-            if let copy = deliver(recording, as: nil) { ui.openVideoEditor(at: copy, input: takeInput(for: recording.file)) }
+            if let project = linkedProject(for: recording.file) {
+                ui.openStudio(project)                        // the editable project, not the rendered copy
+            } else if let copy = deliver(recording, as: nil) {
+                ui.openVideoEditor(at: copy, input: takeInput(for: recording.file))
+            }
         case .gif:
             pendingRecording = recording
             ui.presentPostRecordingOverlay(recording)
@@ -749,8 +802,10 @@ public final class AppCoordinator {
     @discardableResult
     public func openPendingRecordingInEditor(as name: String? = nil) -> URL? {
         let input = pendingRecording.flatMap { takeInput(for: $0.file) }
+        let project = pendingRecording.flatMap { linkedProject(for: $0.file) }
         guard let saved = savePendingRecording(as: name) else { return nil }
-        ui.openVideoEditor(at: saved, input: input)
+        // A take rendered from a studio project edits as that project (S8 / LIG-57).
+        if let project { ui.openStudio(project) } else { ui.openVideoEditor(at: saved, input: input) }
         return saved
     }
 

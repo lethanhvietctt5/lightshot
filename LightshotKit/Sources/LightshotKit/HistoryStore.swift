@@ -218,12 +218,7 @@ public final class HistoryStore {
         )
         do {
             let record = try append(entry)
-            // A take's pointer / click data (spec 0007) lives beside it and moves in with it, so
-            // the editor can still steer zooms from it when the take is reopened.
-            let sidecar = StudioTake.inputURL(forScreen: url)
-            if fileManager.fileExists(atPath: sidecar.path) {
-                try? fileManager.moveItem(at: sidecar, to: StudioTake.inputURL(forScreen: mediaURL))
-            }
+            moveSidecars(from: url, to: mediaURL)
             return record
         } catch {
             entries.removeAll { $0.id == id }
@@ -319,9 +314,18 @@ public final class HistoryStore {
         }
     }
 
+    /// A take's companions (spec 0007) — its pointer / click data and the link to its studio
+    /// project — live beside it and move in with it, so reopening it still reaches them.
+    private func moveSidecars(from source: URL, to media: URL) {
+        for (from, to) in zip(StudioTake.sidecars(forScreen: source), StudioTake.sidecars(forScreen: media))
+        where fileManager.fileExists(atPath: from.path) {
+            try? fileManager.moveItem(at: from, to: to)
+        }
+    }
+
     private func deleteFiles(for entry: StoredEntry) {
         let media = directory.appendingPathComponent(entry.imageFile)
-        try? fileManager.removeItem(at: StudioTake.inputURL(forScreen: media))
+        for sidecar in StudioTake.sidecars(forScreen: media) { try? fileManager.removeItem(at: sidecar) }
         try? fileManager.removeItem(at: media)
         try? fileManager.removeItem(at: directory.appendingPathComponent(entry.thumbnailFile))
     }
