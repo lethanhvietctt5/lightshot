@@ -5,7 +5,7 @@ import LightshotKit
 /// The recording overlay surface (spec 0006, stories 3–9): a dimmed full-screen canvas with the
 /// editable selection — border, corner brackets and edge bars over the eight handles, live pixel
 /// readout — the hovered window's highlight before anything is selected, and the recorder toolbar
-/// laid out like CleanShot's (LIG-42): a dark pill centred in the selection with settings, the
+/// laid out like CleanShot's (LIG-42): a slate pill centred in the selection with settings, the
 /// typed size, Fullscreen and the ratio menu on one row, the five toggles on the next, and a
 /// two-row Record GIF / Record Video menu under it.
 ///
@@ -78,36 +78,35 @@ struct RecordingOverlayView: View {
                 recordMenu
                 studioRow
                 if model.cameraWithoutMicrophone {
-                    note("Camera on, no microphone — the recording will be silent", systemImage: "exclamationmark.triangle", tint: .orange)
+                    note("Camera on, no microphone — the recording will be silent", systemImage: "exclamationmark.triangle", tint: .theme(.warning))
                 } else if !model.hasSelection {
                     note("Drag an area or click a window · Esc to cancel", systemImage: nil, tint: .secondary)
                 }
             }
             .frame(width: Self.toolbarWidth)
-            .environment(\.colorScheme, .dark)
             .position(controlsCenter(in: geometry.size))
         }
     }
 
     /// Row 1: settings · W × H with Fullscreen · ratio. Row 2: the toggles, each on one filled
-    /// dark with a check under it. Hairlines between the cells, as CleanShot draws them.
+    /// darker with a check under it. Hairlines between the cells, as CleanShot draws them.
     private var toolbarPanel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 iconButton("slider.horizontal.3", title: "Recording settings", corners: .init(topLeading: Self.radius)) { model.openSettings() }
                 HStack(spacing: 6) {
                     sizeField($widthText, title: "Width in pixels") { model.setWidth(pixels: $0) }
-                    Text("×").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+                    Text("×").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.theme(.glyphOff))
                     sizeField($heightText, title: "Height in pixels") { model.setHeight(pixels: $0) }
                     Button { model.chooseFullscreen() } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                             .font(.system(size: 10, weight: .semibold))
                             .frame(width: 24, height: 24)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.35)))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.theme(.well)))
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Color.theme(.textStrong))
                     .toolbarControl("Fullscreen")
                 }
                 .frame(width: Self.cellWidth * 3, height: Self.sizeRowHeight)
@@ -135,7 +134,7 @@ struct RecordingOverlayView: View {
                 }
             }
         }
-        .background(ToolbarGrid(cellWidth: Self.cellWidth, firstRowHeight: Self.sizeRowHeight).stroke(Color.white.opacity(0.09), lineWidth: 1))
+        .background(ToolbarGrid(cellWidth: Self.cellWidth, firstRowHeight: Self.sizeRowHeight).stroke(Color.theme(.gridLine), lineWidth: 1))
         .toolbarPanel()
     }
 
@@ -148,15 +147,15 @@ struct RecordingOverlayView: View {
                     .foregroundStyle(ToolbarChrome.slate)
                     .padding(.horizontal, 3.5)
                     .padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.white))
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.theme(.textPrimary)))
             }
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+            Rectangle().fill(Color.theme(.panelEdge)).frame(height: 1)
             RecordRow(title: "Record Video", shortcut: "↩", enabled: model.hasSelection, action: model.startVideo) {
                 Image(systemName: "video.fill").font(.system(size: 15, weight: .medium))
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: ToolbarChrome.panelRadius))
-        .toolbarPanel(border: 0.18)
+        .toolbarPanel(edge: .strong)
     }
 
     /// CleanShot's third panel: a video take that opens straight in the video editor.
@@ -166,9 +165,9 @@ struct RecordingOverlayView: View {
         } trailing: {
             Image(systemName: "questionmark")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.theme(.textPrimary))
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(Color.white.opacity(0.22)))
+                .background(Circle().fill(Color.theme(.helpFill)))
                 .toolbarControl("Records a video and opens it in the video editor as soon as it stops")
         }
         .background(
@@ -177,7 +176,7 @@ struct RecordingOverlayView: View {
                 .fill(LinearGradient(colors: [Self.studioPink.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing))
         )
         .clipShape(RoundedRectangle(cornerRadius: ToolbarChrome.panelRadius))
-        .toolbarPanel(border: 0, tipEdge: .bottom)
+        .toolbarPanel(edge: .none, tipEdge: .bottom)
         .overlay(
             RoundedRectangle(cornerRadius: ToolbarChrome.panelRadius)
                 .stroke(LinearGradient(colors: [Self.studioPink, Self.studioViolet], startPoint: .leading, endPoint: .trailing).opacity(0.7), lineWidth: 1)
@@ -209,7 +208,7 @@ struct RecordingOverlayView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(0.75))
+        .foregroundStyle(Color.theme(.glyph))
         .toolbarControl(title, shape: .cell(corners))
     }
 
@@ -225,7 +224,7 @@ struct RecordingOverlayView: View {
                 .font(.system(size: 17, weight: .light))
                 .frame(width: Self.cellWidth, height: Self.sizeRowHeight)
                 .contentShape(Rectangle())
-                .foregroundStyle(model.ratio == .freeform ? Color.white.opacity(0.75) : Color.accentColor)
+                .foregroundStyle(model.ratio == .freeform ? Color.theme(.glyph) : Color.accentColor)
         }
         .modifier(PlainMenu())
         .frame(width: Self.cellWidth, height: Self.sizeRowHeight)
@@ -274,11 +273,11 @@ struct RecordingOverlayView: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
                         .frame(width: 16, height: 14)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.14)))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.theme(.controlOn)))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(Color.theme(.textStrong))
                 .padding(3)
                 .help("Choose the \(title.lowercased())")
                 .accessibilityLabel("Choose the \(title.lowercased())")
@@ -309,7 +308,7 @@ struct RecordingOverlayView: View {
                     .padding(.bottom, 5)
                     .opacity(on ? 1 : 0)
             }
-        .foregroundStyle(on ? Color.white : Color.white.opacity(0.6))
+        .foregroundStyle(on ? Color.theme(.textPrimary) : Color.theme(.glyphOff))
         .contentShape(Rectangle())
     }
 
@@ -341,7 +340,7 @@ struct RecordingOverlayView: View {
             .font(.system(size: 15, weight: .medium).monospacedDigit())
             .multilineTextAlignment(.center)
             .frame(width: 54, height: 28)
-            .background(RoundedRectangle(cornerRadius: 7).fill(Color.black.opacity(0.35)))
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.theme(.well)))
             .toolbarControl(title)
             .disabled(!model.hasSelection)
             .onSubmit {
@@ -381,6 +380,7 @@ struct RecordingOverlayView: View {
         let box: CGRect? = model.hasSelection ? model.selection.rect?.cgRect : model.hovered?.frame.cgRect
         OverlayCanvas.dim(&context, size: size, punchingOut: box)
         guard let box else { return }
+        // Content, not chrome (spec 0008): the border reads against the screen in either appearance.
         context.stroke(Path(box), with: .color(.white.opacity(model.hasSelection ? 0.8 : 1)), style: StrokeStyle(lineWidth: model.hasSelection ? 1 : 2))
 
         if model.showsHandles, let rect = model.selection.rect {
@@ -423,17 +423,17 @@ private struct RecordRow<Glyph: View, Trailing: View>: View {
                 Text(title).font(.system(size: 15, weight: .semibold))
                 Spacer()
                 if let shortcut {
-                    Text(shortcut).font(.system(size: 14)).foregroundStyle(.white.opacity(0.85))
+                    Text(shortcut).font(.system(size: 14)).foregroundStyle(Color.theme(enabled ? .textStrong : .textDisabled))
                 }
                 trailing
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
             .contentShape(Rectangle())
-            .background(isHovered && enabled ? Color.white.opacity(0.08) : Color.clear)
+            .background(isHovered && enabled ? Color.theme(.rowHover) : Color.clear)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.white : Color.white.opacity(0.35))
+        .foregroundStyle(Color.theme(enabled ? .textPrimary : .textDisabled))
         .disabled(!enabled)
         .onHover { isHovered = $0 }
     }
@@ -485,7 +485,7 @@ private struct DevicePickerList: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(Color.theme(.textTertiary))
                 .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 2)
             row("System Default", isSelected: selected == nil) { select(nil) }
             ForEach(devices, id: \.id) { device in
@@ -496,9 +496,8 @@ private struct DevicePickerList: View {
         }
         .padding(6)
         .frame(minWidth: 240)
-        .foregroundStyle(.white)
-        .environment(\.colorScheme, .dark)
-        // The toolbar's own dark slate, not the light popover material behind white text.
+        .foregroundStyle(Color.theme(.textPrimary))
+        // The toolbar's own slate, so the picker reads as part of it in either appearance.
         .presentationBackground(ToolbarChrome.slate)
     }
 
@@ -523,6 +522,7 @@ private struct DevicePickerRow: View {
                 Text(name).font(.system(size: 13)).lineLimit(1)
                 Spacer(minLength: 0)
             }
+            .foregroundStyle(hovered ? Color.theme(.onAccent) : Color.theme(.textPrimary))
             .padding(.horizontal, 8)
             .frame(height: 26)
             .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Color.accentColor.opacity(0.85) : .clear))
