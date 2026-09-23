@@ -3,7 +3,7 @@ import Foundation
 /// An RGBA color with normalized `0.0...1.0` components.
 ///
 /// A pure value so the domain core never reaches for `NSColor` / `CGColor`.
-public struct RGBAColor: Equatable, Sendable {
+public struct RGBAColor: Equatable, Codable, Sendable {
     public var red: Double
     public var green: Double
     public var blue: Double
