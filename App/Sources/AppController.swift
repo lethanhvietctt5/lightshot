@@ -120,6 +120,7 @@ final class AppController: NSObject, CaptureUI {
         store: settings,
         applyHotkeys: { [weak self] bindings in self?.applyHotkeys(bindings) ?? [] },
         applyRetention: { [weak self] retention in self?.applyRetention(retention) },
+        applyAppearance: { AppAppearance.apply($0) },
         permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false }
     )
 
@@ -636,7 +637,49 @@ final class AppController: NSObject, CaptureUI {
         coordinator.openStudioProject(at: url)
     }
 
+    /// Draw in the stored appearance (spec 0008) before any window opens.
+    func applyStoredAppearance() {
+        AppAppearance.apply(settings.appearance)
+    }
+
     #if DEBUG
+    /// Development aid (spec 0008): open one surface without capturing or recording, so it can be
+    /// looked at in Light and Dark. `file` is an image (editor, post-capture, pin) or a movie
+    /// (post-recording); a generated sample image stands in when it is missing.
+    func debugPreviewSurface(_ name: String, file: URL?) {
+        let image = file.flatMap { try? FileImageSource().loadImage(from: $0).get() } ?? Self.debugSampleImage()
+        switch name {
+        case "editor": openEditor(with: image)
+        case "settings": showSettings()
+        case "history": showHistory()
+        case "onboarding": showPermissionOnboarding()
+        case "postCapture":
+            presentPostCaptureToolbar(for: image, at: .rect(Rect(x: 200, y: 160, width: 640, height: 400)))
+        case "pin": pin(AnnotationDocument(baseImage: image))
+        case "postRecording":
+            guard let file else { return }
+            presentPostRecordingOverlay(PendingRecording(file: file, kind: .video, duration: 5, origin: .historyItem(id: UUID())))
+        case "preparing": presentRecordingPreparation(cancel: {})
+        default: break
+        }
+    }
+
+    /// A colourful 1280×800 stand-in screenshot.
+    private static func debugSampleImage() -> CapturedImage {
+        let width = 1280, height = 800
+        let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        let colors = [CGColor(srgbRed: 0.2, green: 0.45, blue: 0.9, alpha: 1), CGColor(srgbRed: 0.95, green: 0.5, blue: 0.6, alpha: 1)] as CFArray
+        let gradient = CGGradient(colorsSpace: context.colorSpace, colors: colors, locations: [0, 1])!
+        context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: width, y: height), options: [])
+        context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.9))
+        context.fill(CGRect(x: 160, y: 160, width: 960, height: 480))
+        let rep = NSBitmapImageRep(cgImage: context.makeImage()!)
+        return CapturedImage(pixelWidth: width, pixelHeight: height, data: rep.representation(using: .png, properties: [:])!)
+    }
+
     func debugShowRecordingControls() {
         recordingControls.show(
             position: .bottom, isPaused: false, elapsed: { 12 }, audioLevel: { 0.4 }, systemAudioLevel: nil,

@@ -46,6 +46,9 @@ public protocol SettingsStore: AnyObject {
     /// The region the last recording used, kept for `rememberLastRecordingArea`; `nil` until the
     /// first recording. Persisted so it survives a relaunch.
     var lastRecordingRegion: CaptureRegion? { get set }
+
+    /// How Lightshot's chrome looks (spec 0008): follow macOS, or pin Light or Dark.
+    var appearance: AppearancePreference { get set }
 }
 
 public extension SettingsStore {
