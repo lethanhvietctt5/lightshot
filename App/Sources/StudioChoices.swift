@@ -20,7 +20,7 @@ struct StudioChoices<Value: Hashable>: View {
                         .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
                         .frame(height: 26)
-                        .foregroundStyle(selected ? Color.white : Color.white.opacity(0.85))
+                        .foregroundStyle(selected ? StudioStyle.onAccent : Color.theme(.textStrong))
                         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? StudioStyle.blue : StudioStyle.control))
                         .contentShape(Rectangle())
                 }

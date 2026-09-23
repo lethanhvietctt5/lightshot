@@ -105,7 +105,7 @@ struct StudioInspector: View {
                     RoundedRectangle(cornerRadius: 7)
                         .fill(fill(item))
                         .frame(height: 38)
-                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(item == selected ? Color.white : .clear, lineWidth: 2))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(item == selected ? Color.theme(.selectionRing) : .clear, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
                 .help(item[keyPath: title])
@@ -233,6 +233,7 @@ struct StudioInspector: View {
         return Button { model.set(\.camera.bubble.anchor, anchor) } label: {
             Image(systemName: symbol)
                 .frame(maxWidth: .infinity).frame(height: 30)
+                .foregroundStyle(selected ? StudioStyle.onAccent : Color.theme(.textPrimary))
                 .background(RoundedRectangle(cornerRadius: 7).fill(selected ? StudioStyle.blue : StudioStyle.control))
         }
         .buttonStyle(.plain)

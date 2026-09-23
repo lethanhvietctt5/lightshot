@@ -65,8 +65,7 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
         )
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(white: 0.12, alpha: 1)
+        window.backgroundColor = .theme(.studioCanvas)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         // The content draws the title and its own divider under the transparent toolbar.
@@ -139,7 +138,6 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
               let item = window?.toolbar?.items.first(where: { $0.itemIdentifier == Self.exportItem }) else { return }
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView: StudioExportPanel(model: model))
         popover.show(relativeTo: item)
         exportPopover = popover

@@ -162,7 +162,7 @@ private struct StudioTracks: View {
             for tick in scale.ticks() {
                 let x = scale.x(for: tick) + Self.rulerOverhang
                 context.draw(
-                    Text(TimelineScale.label(tick)).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(Color.white.opacity(0.75)),
+                    Text(TimelineScale.label(tick)).font(.system(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(Color.theme(.glyph)),
                     at: CGPoint(x: x, y: 12)
                 )
                 var line = Path()
@@ -204,11 +204,13 @@ private struct StudioClipView: View {
                 .frame(width: width, height: StudioTracks.clipHeight)
                 .overlay(alignment: .bottom) { waveform }
                 .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isSelected ? StudioStyle.selection : Color.white.opacity(0.15), lineWidth: isSelected ? 3 : 1))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isSelected ? StudioStyle.selection : Color.theme(.clipEdge), lineWidth: isSelected ? 3 : 1))
             if segment.speed != 1 {
                 Text(speedLabel(segment.speed))
                     .font(.system(size: 11, weight: .bold).monospacedDigit())
+                    .foregroundStyle(StudioStyle.onAccent)
                     .padding(.horizontal, 6).frame(height: 18)
+                    // Over the filmstrip (content), so dark in either appearance.
                     .background(Capsule().fill(Color.black.opacity(0.65)))
                     .padding(6)
             }
@@ -338,6 +340,7 @@ private struct StudioZoomPill: View {
                 Text(String(format: "%.1f×", zoom.scale)).monospacedDigit()
             }
             .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(StudioStyle.onAccent)
             .opacity(width > 60 ? 1 : 0)
             HStack {
                 edgeHandle(leading: true)
@@ -409,7 +412,7 @@ private struct StudioAnnotationPill: View {
     let scale: TimelineScale
     @State private var dragOrigin: (annotation: TextAnnotation, outputStart: Double, outputEnd: Double)?
     private static let edge: CGFloat = 8
-    static let color = Color(red: 0.95, green: 0.55, blue: 0.2)
+    static let color = Color.theme(.textAccent)
 
     private var isSelected: Bool { model.selection == .annotation(annotation.id) }
     private var width: CGFloat { max(14, scale.x(for: span.upperBound) - scale.x(for: span.lowerBound)) }
@@ -422,6 +425,7 @@ private struct StudioAnnotationPill: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isSelected ? Color.white : .clear, lineWidth: 2))
             Label(annotation.text, systemImage: "textformat")
                 .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(StudioStyle.onAccent)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
                 .opacity(width > 50 ? 1 : 0)

@@ -91,6 +91,7 @@ struct StudioTextPanel: View {
         Button(action: action) {
             Text(title).font(.system(size: 13, weight: .medium))
                 .frame(maxWidth: .infinity).frame(height: 30)
+                .foregroundStyle(prominent ? StudioStyle.onAccent : Color.theme(.textPrimary))
                 .background(RoundedRectangle(cornerRadius: 7).fill(prominent ? StudioStyle.blue : StudioStyle.control))
                 .contentShape(Rectangle())
         }
