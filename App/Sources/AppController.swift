@@ -101,6 +101,7 @@ final class AppController: NSObject, CaptureUI {
         )
         // A studio project's export is filed like a finished recording (spec 0007, story 27).
         videoEditor.fileExport = { [weak self] file, name in await self?.coordinator.fileStudioExport(at: file, named: name) }
+        videoEditor.ensureSpeechPermission = { [weak self] in await self?.ensurePermission(.speechRecognition) ?? false }
         // Enforce the persisted retention setting on the history store at launch (story 54): the
         // value lives in `SettingsStore` (LIG-15), the trimming lives here in the `HistoryStore` seam.
         applyRetention(settings.historyRetention)
@@ -383,6 +384,7 @@ final class AppController: NSObject, CaptureUI {
         case .microphone: return AVCapturePermission.microphone
         case .camera: return AVCapturePermission.camera
         case .inputMonitoring: return InputMonitoringPermission()
+        case .speechRecognition: return SpeechRecognitionPermission()
         }
     }
 
@@ -398,6 +400,11 @@ final class AppController: NSObject, CaptureUI {
 
     func ensurePermission(for toggle: RecordingToggle) async -> Bool {
         guard let kind = toggle.requiredPermission else { return true }
+        return await ensurePermission(kind)
+    }
+
+    /// Any grant, through the same gate — the Studio editor's Speech Recognition (spec 0007).
+    func ensurePermission(_ kind: PermissionKind) async -> Bool {
         switch await PermissionGate.ensure(permissionSource(for: kind)) {
         case .granted:
             return true
@@ -628,6 +635,7 @@ final class AppController: NSObject, CaptureUI {
 
     #if DEBUG
     func debugSeekStudio(to time: Double) { videoEditor.debugSeek(to: time) }
+    func debugStudioPanel(_ name: String) { videoEditor.debugPanel(name) }
     #endif
 
     func presentGIFConversion(cancel: @escaping () -> Void) {

@@ -149,7 +149,57 @@ enum StudioFrameRenderer {
             if let pills = keystrokeLayer(state: state, at: t, over: image, contentCI: contentCI) { image = pills.composited(over: image) }
         }
 
+        // Captions from the transcript (round 2, story 29).
+        if edits.captions.visible, let line = edits.captions.line(at: t),
+           let caption = captionLayer(line.text, style: edits.captions.style, contentCI: contentCI) {
+            image = caption.composited(over: image)
+        }
+
         return image.cropped(to: state.canvasRect)
+    }
+
+    /// One caption line, centred at the bottom (or top) of the screen card, shrunk to fit its width.
+    private static func captionLayer(_ text: String, style: CaptionStyle, contentCI: CGRect) -> CIImage? {
+        guard !text.isEmpty else { return nil }
+        var fontSize = CGFloat(style.size.fraction) * contentCI.height
+        func line(_ size: CGFloat) -> CTLine {
+            let font = NSFont.systemFont(ofSize: size, weight: .semibold)
+            let c = style.textColor
+            return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+                .font: font, .foregroundColor: NSColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: c.alpha),
+            ]))
+        }
+        var ctLine = line(fontSize)
+        var width = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        let maxWidth = contentCI.width * 0.88
+        if width > maxWidth {
+            fontSize *= maxWidth / width
+            ctLine = line(fontSize)
+            width = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        }
+        var ascent: CGFloat = 0, descent: CGFloat = 0
+        CTLineGetTypographicBounds(ctLine, &ascent, &descent, nil)
+        let padX = fontSize * 0.6, padY = fontSize * 0.3
+        let box = CGSize(width: ceil(width + 2 * padX), height: ceil(ascent + descent + 2 * padY))
+        guard let context = CGContext(
+            data: nil, width: Int(box.width), height: Int(box.height), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        let rect = CGRect(origin: .zero, size: box)
+        if style.backdrop {
+            context.addPath(CGPath(roundedRect: rect, cornerWidth: box.height * 0.3, cornerHeight: box.height * 0.3, transform: nil))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.7))
+            context.fillPath()
+        } else {
+            context.setShadow(offset: .zero, blur: fontSize * 0.25, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.9))
+        }
+        context.textPosition = CGPoint(x: padX, y: padY + descent)
+        CTLineDraw(ctLine, context)
+        guard let cg = context.makeImage() else { return nil }
+        let margin = contentCI.height * 0.06
+        let x = contentCI.midX - box.width / 2
+        let y = style.position == .bottom ? contentCI.minY + margin : contentCI.maxY - margin - box.height
+        return CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: x.rounded(), y: y.rounded()))
     }
 
     // MARK: - Layers

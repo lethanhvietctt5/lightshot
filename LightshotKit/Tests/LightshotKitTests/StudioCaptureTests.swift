@@ -128,3 +128,12 @@ private func take(in directory: URL, camera: Bool = true) throws -> URL {
     #expect(store.recent(limit: 1).count == 1)
     #expect(store.open(new.url)?.screenURL == new.screenURL)
 }
+
+@Test func aTranscriptIsSavedAndLoadedWithTheProject() throws {
+    let store = StudioProjectStore(directory: tempDirectory())
+    let project = try store.create(fromTake: try take(in: tempDirectory()), name: "Talk")
+    #expect(store.loadTranscript(project) == nil)
+    let transcript = StudioTranscript(locale: "en-US", words: [TranscriptWord(text: "hello", start: 0.2, end: 0.6)])
+    try store.save(transcript, to: project)
+    #expect(store.loadTranscript(project) == transcript)
+}

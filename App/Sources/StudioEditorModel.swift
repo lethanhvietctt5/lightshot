@@ -21,13 +21,14 @@ final class StudioEditorModel {
     }
 
     enum Panel: String, CaseIterable {
-        case background, cursor, zoom, camera, keys, audio, output
+        case background, cursor, zoom, captions, camera, keys, audio, output
 
         var title: String {
             switch self {
             case .background: return "Background"
             case .cursor: return "Cursor"
             case .zoom: return "Zoom"
+            case .captions: return "Captions"
             case .camera: return "Camera"
             case .keys: return "Keystrokes"
             case .audio: return "Audio"
@@ -40,6 +41,7 @@ final class StudioEditorModel {
             case .background: return "photo.fill"
             case .cursor: return "cursorarrow"
             case .zoom: return "plus.magnifyingglass"
+            case .captions: return "captions.bubble"
             case .camera: return "person.crop.circle"
             case .keys: return "keyboard"
             case .audio: return "speaker.wave.2.fill"
@@ -87,6 +89,15 @@ final class StudioEditorModel {
     @ObservationIgnored var onLoaded: (() -> Void)?
     /// Files a project's export into history and the save location (spec 0007, story 27).
     @ObservationIgnored var fileExport: ((URL, String?) async -> URL?)?
+    /// Asks for Speech Recognition through the app's permission gate (round 2, story 29).
+    @ObservationIgnored var ensureSpeechPermission: (() async -> Bool)?
+
+    // Captions (round 2, stories 29–31)
+    private(set) var transcript: StudioTranscript?
+    private(set) var isTranscribing = false
+    private(set) var transcriptionError: String?
+    /// Indices into `transcript.words` picked in the transcript for cutting.
+    var selectedWords: Set<Int> = []
 
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -164,6 +175,7 @@ final class StudioEditorModel {
         switch session {
         case let .project(project, store):
             input = store.loadInput(project)
+            transcript = store.loadTranscript(project)
             cameraURL = project.cameraURL
         case .file:
             cameraURL = nil
@@ -384,6 +396,75 @@ final class StudioEditorModel {
         case .file:
             set(\.background, .image(fileName: url.path))
         }
+    }
+
+    // MARK: - Captions and transcript editing (round 2, stories 29–31)
+
+    /// Transcribe the narration on this Mac and make caption lines from it.
+    func transcribe() {
+        guard !isTranscribing else { return }
+        transcriptionError = nil
+        isTranscribing = true
+        Task {
+            defer { isTranscribing = false }
+            guard await ensureSpeechPermission?() ?? true else {
+                transcriptionError = "Speech Recognition permission is needed to transcribe."
+                return
+            }
+            do {
+                let result = try await SpeechTranscriber.transcribe(movie: screenURL)
+                transcript = result
+                selectedWords = []
+                if case let .project(project, store) = session { try? store.save(result, to: project) }
+                set(\.captions.lines, CaptionBuilder.lines(from: result.words))
+            } catch is CancellationError {
+            } catch {
+                transcriptionError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Rebuild the caption lines from the transcript (drops hand edits to their text).
+    func regenerateCaptions() {
+        guard let transcript else { return }
+        set(\.captions.lines, CaptionBuilder.lines(from: transcript.words))
+    }
+
+    func editCaption(_ id: CaptionLine.ID, text: String) { edit { $0.editCaption(id, text: text) } }
+
+    /// Whether a word was cut from the output (its middle falls in a cut).
+    func isCut(_ word: TranscriptWord) -> Bool {
+        timeline.outputTime(atSource: (word.start + word.end) / 2) == nil
+    }
+
+    /// Cut the selected words (story 30): each contiguous run of selected words is one cut, all of
+    /// them one undo step.
+    func cutSelectedWords() {
+        guard let words = transcript?.words, !selectedWords.isEmpty else { return }
+        var runs: [[TranscriptWord]] = []
+        var previous: Int?
+        for index in selectedWords.sorted() where words.indices.contains(index) {
+            if let previous, index == previous + 1 { runs[runs.count - 1].append(words[index]) } else { runs.append([words[index]]) }
+            previous = index
+        }
+        document.beginChange()
+        for run in runs { edit { $0.cut(words: run) } }
+        endChange()
+        selectedWords = []
+    }
+
+    /// Cut every pause longer than `minimumGap` seconds (story 31); returns how many.
+    @discardableResult
+    func removeSilences(minimumGap: Double) -> Int {
+        guard let words = transcript?.words else { return 0 }
+        var count = 0
+        edit { count = $0.removeSilences(words: words, minimumGap: minimumGap) }
+        return count
+    }
+
+    /// Jump the playhead to a word (if it survived the cuts).
+    func seek(toWord word: TranscriptWord) {
+        if let time = timeline.outputTime(atSource: word.start) { seek(to: time) }
     }
 
     // MARK: - Autosave (story 3)

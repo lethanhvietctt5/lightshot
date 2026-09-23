@@ -210,6 +210,70 @@ public struct StudioDocument: Equatable, Sendable {
         return added.map(\.id)
     }
 
+    // MARK: - Transcript editing (round 2, stories 30–31)
+
+    /// Remove a source range from the output: a clip it falls inside is split, clips it overlaps
+    /// are trimmed, clips it covers go. Refused when nothing would be left.
+    public mutating func cut(sourceRange range: ClosedRange<Double>) {
+        cut(sourceRanges: [range])
+    }
+
+    /// Cut the span of a run of words (story 30): from the first word's start to the last's end.
+    public mutating func cut(words: [TranscriptWord]) {
+        guard let start = words.map(\.start).min(), let end = words.map(\.end).max(), end > start else { return }
+        cut(sourceRange: start...end)
+    }
+
+    /// Cut every pause longer than `minimumGap` (story 31) — before the first word, between words,
+    /// after the last — keeping `padding` of it next to the speech. One undo step; returns how many
+    /// pauses were cut.
+    @discardableResult
+    public mutating func removeSilences(words: [TranscriptWord], minimumGap: Double = 1, padding: Double = 0.15) -> Int {
+        let sorted = words.sorted { $0.start < $1.start }
+        guard !sorted.isEmpty else { return 0 }
+        var ranges: [ClosedRange<Double>] = []
+        if sorted[0].start >= minimumGap { ranges.append(0...(sorted[0].start - padding)) }
+        var speechEnd = sorted[0].end
+        for word in sorted.dropFirst() {
+            if word.start - speechEnd >= minimumGap { ranges.append((speechEnd + padding)...(word.start - padding)) }
+            speechEnd = max(speechEnd, word.end)
+        }
+        if edits.sourceDuration - speechEnd >= minimumGap { ranges.append((speechEnd + padding)...edits.sourceDuration) }
+        let before = edits
+        cut(sourceRanges: ranges)
+        return edits == before ? 0 : ranges.count
+    }
+
+    private mutating func cut(sourceRanges ranges: [ClosedRange<Double>]) {
+        var clips = edits.clips
+        for range in ranges where range.upperBound > range.lowerBound {
+            var next: [StudioClip] = []
+            for clip in clips {
+                if range.upperBound <= clip.start || range.lowerBound >= clip.end {
+                    next.append(clip)                                            // untouched
+                } else if range.lowerBound > clip.start && range.upperBound < clip.end {
+                    var left = clip, right = StudioClip(start: range.upperBound, end: clip.end, speed: clip.speed)
+                    left.end = range.lowerBound
+                    next += [left, right]                                        // split around it
+                } else if range.lowerBound > clip.start {
+                    var left = clip; left.end = range.lowerBound; next.append(left)
+                } else if range.upperBound < clip.end {
+                    var right = clip; right.start = range.upperBound; next.append(right)
+                }                                                                // else covered: dropped
+            }
+            clips = next.filter { $0.sourceLength >= StudioClip.minimumLength }
+        }
+        guard !clips.isEmpty else { return }
+        perform { $0.clips = clips }
+    }
+
+    /// Correct a caption's text (story 30).
+    public mutating func editCaption(_ id: CaptionLine.ID, text: String) {
+        perform { edits in
+            if let index = edits.captions.lines.firstIndex(where: { $0.id == id }) { edits.captions.lines[index].text = text }
+        }
+    }
+
     private mutating func updateZoom(_ id: ZoomRegion.ID, _ change: @escaping (inout ZoomRegion) -> Void) {
         perform { edits in
             if let index = edits.zooms.firstIndex(where: { $0.id == id }) { change(&edits.zooms[index]) }

@@ -337,6 +337,10 @@ public struct StudioEdits: Equatable, Codable, Sendable {
     public var keystrokes: StudioKeystrokeStyle
     public var audio: AudioEdit
     public var output: StudioOutput
+    /// Burned-in captions (round 2, stories 29–30).
+    public var captions: StudioCaptions
+    /// Text annotations (round 2, story 32).
+    public var annotations: [TextAnnotation]
 
     public init(sourceDuration: Double, look: Look) {
         version = Self.currentVersion
@@ -358,6 +362,33 @@ public struct StudioEdits: Equatable, Codable, Sendable {
         keystrokes = StudioKeystrokeStyle()
         audio = .unchanged
         output = StudioOutput()
+        captions = StudioCaptions()
+        annotations = []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, sourceDuration, clips, zooms, zoomTransition, zoomMotionBlur, background, canvas, cursor, camera
+        case keystrokes, audio, output, captions, annotations
+    }
+
+    /// Round-2 fields are optional in the file, so a project saved before them still opens.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        sourceDuration = try c.decode(Double.self, forKey: .sourceDuration)
+        clips = try c.decode([StudioClip].self, forKey: .clips)
+        zooms = try c.decode([ZoomRegion].self, forKey: .zooms)
+        zoomTransition = try c.decode(Double.self, forKey: .zoomTransition)
+        zoomMotionBlur = try c.decode(Double.self, forKey: .zoomMotionBlur)
+        background = try c.decode(StudioBackground.self, forKey: .background)
+        canvas = try c.decode(CanvasStyle.self, forKey: .canvas)
+        cursor = try c.decode(CursorStyle.self, forKey: .cursor)
+        camera = try c.decode(StudioCameraStyle.self, forKey: .camera)
+        keystrokes = try c.decode(StudioKeystrokeStyle.self, forKey: .keystrokes)
+        audio = try c.decode(AudioEdit.self, forKey: .audio)
+        output = try c.decode(StudioOutput.self, forKey: .output)
+        captions = try c.decodeIfPresent(StudioCaptions.self, forKey: .captions) ?? StudioCaptions()
+        annotations = try c.decodeIfPresent([TextAnnotation].self, forKey: .annotations) ?? []
     }
 
     /// Every range clamped, clips and zooms in source order and inside the source.
@@ -386,6 +417,20 @@ public struct StudioEdits: Equatable, Codable, Sendable {
         e.cursor.motionBlur = clamp(e.cursor.motionBlur, 0...1)
         if case let .volume(v) = e.audio { e.audio = .volume(clamp(v, 0...1)) }
         e.output.quality = clamp(e.output.quality, 0...1)
+        e.captions.lines = e.captions.lines
+            .map { var l = $0; l.start = clamp(l.start, 0...e.sourceDuration); l.end = clamp(l.end, 0...e.sourceDuration); return l }
+            .filter { $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+        e.annotations = e.annotations.map { a in
+            var a = a
+            a.start = clamp(a.start, 0...e.sourceDuration)
+            a.end = clamp(a.end, 0...e.sourceDuration)
+            if a.end - a.start < 0.2 { a.end = min(e.sourceDuration, a.start + 0.2); a.start = min(a.start, a.end - 0.2) }
+            a.center = Point(x: clamp(a.center.x, 0...1), y: clamp(a.center.y, 0...1))
+            a.size = clamp(a.size, 0.02...0.25)
+            a.fade = clamp(a.fade, 0...2)
+            return a
+        }.sorted { $0.start < $1.start }
         if !StudioOutput.frameRates.contains(e.output.fps) {
             e.output.fps = StudioOutput.frameRates.min { abs($0 - e.output.fps) < abs($1 - e.output.fps) } ?? 30
         }

@@ -1,7 +1,7 @@
 # Spec 0007 — Video Studio editor
 
 **Status:** accepted — decisions taken at the end; sub-issues implemented in order
-**Linear:** epic [LIG-49](https://linear.app/light-shot/issue/LIG-49) with sub-issues LIG-50 … LIG-53 (see §Issue breakdown)
+**Linear:** epic [LIG-49](https://linear.app/light-shot/issue/LIG-49) with sub-issues LIG-50 … LIG-53 (round 1) and LIG-54 … LIG-56 (round 2)
 **Platform:** Native macOS (Swift / SwiftUI + AppKit), macOS 14+ (ScreenCaptureKit, AVFoundation, Core Image)
 **Scope:** Local-only. Turns the recording video editor (spec 0006 R14, LIG-43) into a **studio editor** on par with CleanShot X 5.0's Studio Mode and OpenScreen: smart zooms that follow the cursor, a cursor re-drawn from recorded data (size, smoothing, click effects, motion blur, hide when idle), backgrounds with padding / rounded corners / shadow, social aspect ratios, cuts and per-segment speed, the camera and keystrokes adjustable after the take, undo/redo, and a local export. No cloud, no accounts, no network, no AI agent.
 
@@ -96,10 +96,38 @@ A raw screen recording is hard to watch: the interesting part is small, the curs
 
 Pure and tested in `LightshotKit`: `StudioDocument` commands and undo/redo (split, delete, trim, speed, zoom add/move/resize/remove, coalesced slider changes, Codable round trip and version), `StudioTimeline` mapping both ways across cuts and speeds, `ZoomCamera` (no zoom = full frame, eased transition midpoint, follow-cursor clamped inside the frame, dead zone, blended adjacent zooms), `CursorPath` (raw at smoothing 0, smoothing lags then converges, idle detection, click progress), `AutoZoom` clustering and merge, `CanvasLayout` for every aspect and padding, `OutputSize`, `StudioInput` Codable, `StudioInputRecorder` clock (pause excluded), `StudioProjectStore` against a temp directory (create moves files, save/load edits, recent list order), and coordinator routing with fakes (studio take → project → `openStudio`; plain take unchanged). The compositor, composition building and export are verified by an offline harness (synthetic screen movie + synthetic input → exported frames checked for background colour, content-rect edges, zoomed crop and cursor position) and a manual checklist.
 
+## Round 2 — closing the OpenScreen gaps (2026-09-23)
+
+Round 1 (S1–S4) shipped the studio core, capture, renderer and editor. Comparing it feature by feature with OpenScreen left three gaps, now in scope.
+
+### Stories
+
+29. As a user, I want to **transcribe the narration on this Mac** and see it as **captions** burned into the video — font size, position (top / bottom), colours, a backdrop — so that a muted autoplay still reads.
+30. As a user, I want to **edit a caption's text** and **delete a word or phrase from the transcript to cut it** from the video, so that editing speech is as easy as editing text.
+31. As a user, I want **Remove Silences** to cut every pause longer than a threshold, so that dead air goes in one click.
+32. As a user, I want to add **text annotations** — a title card or a callout — on their own timeline track with a time range, position, size, colours and a fade, so that I can label what is happening.
+33. As a user, I want to **drag the camera bubble and annotations on the preview**, pills and handles to **snap** to the playhead and each other, and an **audio waveform** on the clip track, so that precise edits are direct.
+
+### Decisions
+
+- **Transcription is on-device only.** `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true` (macOS 14+), asked for through the lazy permission gate (`PermissionKind.speechRecognition`, `NSSpeechRecognitionUsageDescription`); where the locale has no on-device model the panel says so — nothing is ever sent to a server (local-only guardrail). The first audio track is exported to M4A and transcribed; words land in `transcript.json` beside the project (`StudioTranscript`: words with source times) — an analysis of the take, not an edit.
+- **Captions are edits.** `StudioEdits.captions` holds the caption lines (source times + text, built by the pure `CaptionBuilder` from the words: a new line after 42 characters, a pause over 0.6 s, or sentence punctuation) and their style; editing a line's text is an undoable command. The renderer draws the line under the source time on the content, like the keystroke pills.
+- **Transcript cuts are clip edits.** `StudioDocument.cut(sourceRange:)` removes a source range from the clips (splitting a clip it falls inside, trimming ones it overlaps, deleting ones it covers); deleting words cuts their span; `removeSilences(words:minimumGap:padding:)` cuts every gap between words longer than `minimumGap`, keeping `padding` either side. All pure and tested.
+- **Annotations are edits too.** `StudioEdits.annotations: [TextAnnotation]` — source time range, text, centre (normalised to the content), size, text / background colours, fade — drawn above the camera. Dragging on the preview moves one; one drag is one undo step.
+- **Snapping and waveform are view concerns.** Pill and handle drags snap within 8 points to the playhead and to clip / zoom / annotation edges (pure `TimelineSnap` in the kit); the waveform is peak data read once from the audio track (`AVAssetReader`) and drawn under the filmstrip.
+
+### Issue breakdown (round 2)
+
+| # | Linear | Scope | Stories |
+|---|---|---|---|
+| S5 | LIG-54 | On-device transcription, `StudioTranscript`, `CaptionBuilder`, captions in edits + renderer, transcript panel, `cut(sourceRange:)`, Remove Silences | 29–31 |
+| S6 | LIG-55 | Text annotations: model, renderer, timeline track, inspector, drag on preview | 32 |
+| S7 | LIG-56 | Camera drag on the preview, `TimelineSnap`, audio waveform | 33 |
+
 ## Out of Scope
 
-- Transcription / captions (on-device Speech is a follow-up spec), AI editing agents, cloud rendering.
-- Text / arrow / image annotations on the video timeline.
+- AI editing agents, cloud rendering, translation.
+- Arrow / image annotations on the video (text annotations are round 2).
 - Recording the system cursor's changing shape (the studio cursor is the arrow in v1).
 - Multi-display studio takes; editing several takes into one video.
 

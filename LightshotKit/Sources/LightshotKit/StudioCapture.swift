@@ -94,6 +94,7 @@ public struct StudioProject: Equatable, Sendable {
     public var screenURL: URL { url.appendingPathComponent(StudioProjectStore.screenFile) }
     public var inputURL: URL { url.appendingPathComponent(StudioProjectStore.inputFile) }
     public var editsURL: URL { url.appendingPathComponent(StudioProjectStore.editsFile) }
+    public var transcriptURL: URL { url.appendingPathComponent(StudioProjectStore.transcriptFile) }
     /// The camera movie, when the take recorded one.
     public var cameraURL: URL? {
         let url = url.appendingPathComponent(StudioProjectStore.cameraFile)
@@ -112,6 +113,7 @@ public struct StudioProjectStore: Sendable {
     static let inputFile = "input.json"
     static let cameraFile = "camera.mov"
     static let editsFile = "project.json"
+    static let transcriptFile = "transcript.json"
 
     public let directory: URL
 
@@ -155,6 +157,15 @@ public struct StudioProjectStore: Sendable {
     public func loadInput(_ project: StudioProject) -> StudioInput? {
         guard let data = try? Data(contentsOf: project.inputURL) else { return nil }
         return try? JSONDecoder().decode(StudioInput.self, from: data)
+    }
+
+    public func loadTranscript(_ project: StudioProject) -> StudioTranscript? {
+        guard let data = try? Data(contentsOf: project.transcriptURL) else { return nil }
+        return try? JSONDecoder().decode(StudioTranscript.self, from: data)
+    }
+
+    public func save(_ transcript: StudioTranscript, to project: StudioProject) throws {
+        try JSONEncoder().encode(transcript).write(to: project.transcriptURL, options: .atomic)
     }
 
     public func loadEdits(_ project: StudioProject) -> StudioEdits? {
