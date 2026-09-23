@@ -316,6 +316,69 @@ final class EditorModel {
     /// step. The view calls this when a slider ends editing (story 35).
     func commitStyleEdit() { document.endCoalescing() }
 
+    // MARK: - Auto redact (spec 0009)
+
+    /// What auto redact looks for, remembered across launches.
+    private(set) var autoRedactCategories: Set<SensitiveCategory> = EditorModel.storedAutoRedactCategories
+
+    /// True while a scan is in flight; the button shows progress and a second press is ignored.
+    private(set) var isAutoRedacting = false
+
+    /// The notice after a run, or nil once it has gone away.
+    private(set) var autoRedactNotice: AutoRedactNotice?
+
+    func setAutoRedact(_ category: SensitiveCategory, enabled: Bool) {
+        if enabled { autoRedactCategories.insert(category) } else { autoRedactCategories.remove(category) }
+        Self.storedAutoRedactCategories = autoRedactCategories
+    }
+
+    /// Recognises the document's backdrop on-device, then adds a redaction over every detection
+    /// in the current redaction style and strength — the whole batch one undo step.
+    func autoRedact() {
+        guard !isAutoRedacting,
+              let backdrop = redactionBackdrop(document, below: document.elements.count) else { return }
+        let categories = autoRedactCategories
+        isAutoRedacting = true
+        autoRedactNotice = nil
+        Task { @MainActor in
+            defer { isAutoRedacting = false }
+            do {
+                let input = try await SensitiveContentRecognizer.recognize(
+                    backdrop, faces: categories.contains(.face), codes: categories.contains(.code)
+                )
+                let detections = SensitiveDataScanner.scan(input, categories: categories)
+                // Planned against the document as it is now, so a crop made mid-scan counts.
+                let plan = AutoRedactPlan(detections: detections, in: document, style: redactionStyle, strength: redactionStrength)
+                document.add(contentsOf: plan.elements)
+                document.select(nil)
+                show(.finished(plan, style: redactionStyle))
+            } catch {
+                show(AutoRedactNotice(lines: [error.localizedDescription], isError: true))
+            }
+        }
+    }
+
+    func dismissAutoRedactNotice() { autoRedactNotice = nil }
+
+    private func show(_ notice: AutoRedactNotice) {
+        autoRedactNotice = notice
+        Task { @MainActor [id = notice.id] in
+            try? await Task.sleep(for: .seconds(6))
+            if autoRedactNotice?.id == id { autoRedactNotice = nil }
+        }
+    }
+
+    private static var storedAutoRedactCategories: Set<SensitiveCategory> {
+        get {
+            guard let raw = UserDefaults.standard.stringArray(forKey: autoRedactCategoriesKey) else {
+                return SensitiveCategory.defaultEnabled
+            }
+            return Set(raw.compactMap(SensitiveCategory.init(rawValue:)))
+        }
+        set { UserDefaults.standard.set(newValue.map(\.rawValue).sorted(), forKey: autoRedactCategoriesKey) }
+    }
+    private static let autoRedactCategoriesKey = "editor.autoRedactCategories"
+
     private func applyStyleToSelection() {
         if let id = document.selectedID { document.setStyle(id, style) }
     }
@@ -801,5 +864,31 @@ private struct CropSession {
             let resized = origin.resized(handle: handle, dx: point.x - start.x, dy: point.y - start.y)
             return bounds.intersection(resized) ?? origin
         }
+    }
+}
+
+/// What the editor says after an auto-redact run (spec 0009). It never calls the result
+/// secure or complete: recognition is best-effort, and blur/pixelate only obscure.
+struct AutoRedactNotice: Equatable {
+    let id = UUID()
+    let lines: [String]
+    var isError = false
+
+    static func finished(_ plan: AutoRedactPlan, style: RedactionStyle) -> AutoRedactNotice {
+        let total = plan.elements.count
+        guard total > 0 else {
+            return AutoRedactNotice(lines: ["Found nothing to redact — text recognition can miss things, so check before sharing."])
+        }
+        let parts = plan.counts.map { $0.category.counted($0.count) }.joined(separator: ", ")
+        var lines = [
+            "Redacted \(total) \(total == 1 ? "item" : "items") — \(parts).",
+            "Text recognition can miss things — check before sharing.",
+        ]
+        switch style {
+        case .blackout: break
+        case .pixelate: lines.append("Pixelate isn't secure — use Blackout for passwords and keys.")
+        case .blur: lines.append("Blur isn't secure — use Blackout for passwords and keys.")
+        }
+        return AutoRedactNotice(lines: lines)
     }
 }

@@ -16,9 +16,9 @@ import CoreImage
 /// in the document's visible frame. Costly to build, cheap to cut patches from — the editor
 /// keeps one per redaction and re-cuts the patch as the region is dragged.
 public struct RedactionBackdrop {
-    let image: CGImage
+    public let image: CGImage
     /// The image-space frame `image` covers (the crop rect, or the whole image).
-    let frame: Rect
+    public let frame: Rect
 
     /// The obscured pixels for a `blur` / `pixelate` redaction over `rect`, clipped to the
     /// frame. `nil` for `blackout` (an opaque fill needs no pixels) or an empty region.
@@ -58,6 +58,10 @@ public struct RedactionBackdrop {
     /// Gaussian sigma, in image pixels, across the strength range.
     private static let blurSigmas: ClosedRange<Double> = 3...30
 }
+
+// `CGImage` is immutable, so a backdrop can be handed to background work (auto redact's
+// on-device recognition, spec 0009) without a race.
+extension RedactionBackdrop: @unchecked Sendable {}
 
 /// Obscured pixels plus the image-space rect they cover (the redaction clipped to the frame).
 public struct RedactionPatch {
