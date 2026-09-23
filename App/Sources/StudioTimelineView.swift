@@ -202,6 +202,7 @@ private struct StudioClipView: View {
         ZStack(alignment: .topLeading) {
             filmstrip
                 .frame(width: width, height: StudioTracks.clipHeight)
+                .overlay(alignment: .bottom) { waveform }
                 .clipShape(RoundedRectangle(cornerRadius: 7))
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(isSelected ? StudioStyle.selection : Color.white.opacity(0.15), lineWidth: isSelected ? 3 : 1))
             if segment.speed != 1 {
@@ -229,6 +230,27 @@ private struct StudioClipView: View {
                 }
             }
             Button("Delete Clip") { model.selection = .clip(segment.clipID); model.deleteSelection() }
+        }
+    }
+
+    /// The clip's audio as peak bars along its bottom (story 33).
+    @ViewBuilder
+    private var waveform: some View {
+        if !model.waveform.isEmpty {
+            Canvas { context, size in
+                let bars = max(1, Int(size.width / 3))
+                let span = segment.sourceEnd - segment.sourceStart
+                var path = Path()
+                for i in 0..<bars {
+                    let time = segment.sourceStart + (Double(i) + 0.5) / Double(bars) * span
+                    let height = max(1, CGFloat(model.waveformPeak(atSource: time)) * size.height)
+                    path.addRoundedRect(in: CGRect(x: CGFloat(i) * 3, y: size.height - height, width: 2, height: height), cornerSize: CGSize(width: 1, height: 1))
+                }
+                context.fill(path, with: .color(Color.white.opacity(0.85)))
+            }
+            .frame(height: 20)
+            .background(LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .top, endPoint: .bottom))
+            .allowsHitTesting(false)
         }
     }
 
@@ -270,7 +292,14 @@ private struct StudioClipView: View {
                         if leading {
                             model.trimClip(origin.id, start: origin.start + delta, end: origin.end)
                         } else {
-                            model.trimClip(origin.id, start: origin.start, end: origin.end + delta)
+                            // The trailing edge snaps in output time (the leading edge's output
+                            // position never moves, so it has nothing to snap to).
+                            let outputEnd = segment.outputStart + (origin.end + delta - origin.start) / origin.speed
+                            let snapped = TimelineSnap.snap(
+                                outputEnd, to: model.snapTargets().filter { abs($0 - segment.outputEnd) > 1e-6 },
+                                tolerance: Double(8 / pointsPerSecond)
+                            )
+                            model.trimClip(origin.id, start: origin.start, end: origin.start + (snapped - segment.outputStart) * origin.speed)
                         }
                     }
                     .onEnded { _ in
@@ -350,14 +379,19 @@ private struct StudioZoomPill: View {
                 guard let origin = dragOrigin else { return }
                 let dt = Double(value.translation.width / pointsPerSecond)
                 let timeline = model.timeline
+                // Snap to the playhead and nearby edges within 8 points (story 33).
+                let targets = model.snapTargets(excluding: origin.zoom.id)
+                let tolerance = Double(8 / pointsPerSecond)
                 switch kind {
                 case .move:
-                    let newStart = timeline.sourceTime(atOutput: origin.outputStart + dt)
-                    model.moveZoom(origin.zoom.id, toStart: newStart)
+                    let start = TimelineSnap.snapSpan(start: origin.outputStart + dt, length: origin.outputEnd - origin.outputStart, to: targets, tolerance: tolerance)
+                    model.moveZoom(origin.zoom.id, toStart: timeline.sourceTime(atOutput: start))
                 case .leading:
-                    model.resizeZoom(origin.zoom.id, start: timeline.sourceTime(atOutput: origin.outputStart + dt), end: origin.zoom.end)
+                    let start = TimelineSnap.snap(origin.outputStart + dt, to: targets, tolerance: tolerance)
+                    model.resizeZoom(origin.zoom.id, start: timeline.sourceTime(atOutput: start), end: origin.zoom.end)
                 case .trailing:
-                    model.resizeZoom(origin.zoom.id, start: origin.zoom.start, end: timeline.sourceTime(atOutput: origin.outputEnd + dt))
+                    let end = TimelineSnap.snap(origin.outputEnd + dt, to: targets, tolerance: tolerance)
+                    model.resizeZoom(origin.zoom.id, start: origin.zoom.start, end: timeline.sourceTime(atOutput: end))
                 }
             }
             .onEnded { _ in
@@ -431,13 +465,18 @@ private struct StudioAnnotationPill: View {
                 guard let origin = dragOrigin else { return }
                 let dt = Double(value.translation.width / pointsPerSecond)
                 let timeline = model.timeline
+                let targets = model.snapTargets(excluding: origin.annotation.id)
+                let tolerance = Double(8 / pointsPerSecond)
                 switch kind {
                 case .move:
-                    model.moveAnnotation(origin.annotation.id, toStart: timeline.sourceTime(atOutput: origin.outputStart + dt))
+                    let start = TimelineSnap.snapSpan(start: origin.outputStart + dt, length: origin.outputEnd - origin.outputStart, to: targets, tolerance: tolerance)
+                    model.moveAnnotation(origin.annotation.id, toStart: timeline.sourceTime(atOutput: start))
                 case .leading:
-                    model.resizeAnnotation(origin.annotation.id, start: timeline.sourceTime(atOutput: origin.outputStart + dt), end: origin.annotation.end)
+                    let start = TimelineSnap.snap(origin.outputStart + dt, to: targets, tolerance: tolerance)
+                    model.resizeAnnotation(origin.annotation.id, start: timeline.sourceTime(atOutput: start), end: origin.annotation.end)
                 case .trailing:
-                    model.resizeAnnotation(origin.annotation.id, start: origin.annotation.start, end: timeline.sourceTime(atOutput: origin.outputEnd + dt))
+                    let end = TimelineSnap.snap(origin.outputEnd + dt, to: targets, tolerance: tolerance)
+                    model.resizeAnnotation(origin.annotation.id, start: origin.annotation.start, end: timeline.sourceTime(atOutput: end))
                 }
             }
             .onEnded { _ in
