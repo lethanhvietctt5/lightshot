@@ -637,6 +637,13 @@ final class AppController: NSObject, CaptureUI {
     }
 
     #if DEBUG
+    func debugShowRecordingControls() {
+        recordingControls.show(
+            position: .bottom, isPaused: false, elapsed: { 12 }, audioLevel: { 0.4 }, systemAudioLevel: nil,
+            actions: .init(pauseResume: {}, stop: {}, restart: {}, discard: {})
+        )
+    }
+
     func debugSeekStudio(to time: Double) { videoEditor.debugSeek(to: time) }
     func debugStudioPanel(_ name: String) { videoEditor.debugPanel(name) }
     #endif

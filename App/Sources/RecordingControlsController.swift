@@ -47,7 +47,10 @@ final class RecordingControlsController {
         panel.level = .screenSaver
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        panel.hasShadow = true
+        // No window shadow: the pill draws its own soft one (`toolbarPanel`). The panel is taller
+        // than the pill (room for the hover tips), and the system shadow traced that faint soft
+        // shadow into a hard outline around the whole panel — a border floating around the pill.
+        panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         // Hover highlights and tips need pointer moves even while another app is active.
         panel.acceptsMouseMovedEvents = true

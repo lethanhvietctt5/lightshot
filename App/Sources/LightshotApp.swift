@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Surface any take a crashed session left behind (spec 0006, story 18).
         controller.recoverOrphanedRecordings()
         #if DEBUG
+        // Development aid: `-previewRecordingControls YES` shows the controls pill as during a take.
+        if UserDefaults.standard.bool(forKey: "previewRecordingControls") { controller.debugShowRecordingControls() }
         // Development aid: `-openStudioProject <folder>` opens a studio project at launch, so the
         // Studio editor can be exercised without recording a take.
         if let path = UserDefaults.standard.string(forKey: "openStudioProject") {
