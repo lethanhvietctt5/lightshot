@@ -5,7 +5,7 @@
 **Platform:** Native macOS (Swift / SwiftUI + AppKit), macOS 14+ (ScreenCaptureKit `SCStream`, AVFoundation)
 **Scope:** Local-only. The biggest follow-up Spec 0001 deferred: record an area, a window or a display as MP4 or GIF, with microphone / computer audio, a webcam bubble, click and keystroke visualisation, and a trim/convert step afterwards. No cloud, no accounts, no network.
 
-Parity reference: [`docs/research/cleanshot-x-recording-inventory.md`](../docs/research/cleanshot-x-recording-inventory.md) — what CleanShot X 4.8.3 actually does, with evidence. Vocabulary in [`CONTEXT.md`](../CONTEXT.md) gains the terms in §Vocabulary once this spec is accepted.
+Parity reference: CleanShot X's published features, changelog and FAQ (cleanshot.com). Vocabulary in [`CONTEXT.md`](../CONTEXT.md) gains the terms in §Vocabulary once this spec is accepted.
 
 ---
 
