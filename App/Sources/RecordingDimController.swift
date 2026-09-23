@@ -6,6 +6,7 @@ import LightshotKit
 /// sees what is in and out of frame. A transparent full-screen window that ignores the mouse, just
 /// below the controls pill; Lightshot's own window, so the content filter keeps it out of the file.
 /// A whole-display take has nothing outside the frame, so no dimming is shown.
+/// Content, not chrome (spec 0008): the same colours in Light and Dark, since it is read against the screen.
 @MainActor
 final class RecordingDimController {
     private var window: NSWindow?

@@ -3,6 +3,7 @@ import LightshotKit
 
 /// The window-capture overlay surface (stories 6–7): a dimmed full-screen canvas that highlights the
 /// window under the pointer so the user sees exactly what a click will grab.
+/// Content, not chrome (spec 0008): the same colours in Light and Dark, since it is read against the screen.
 ///
 /// A thin projection of `WindowHoverOverlayModel`: it punches the hovered window's frame out of the
 /// dimming and outlines it, and routes pointer moves/clicks into the model. Keyboard resolution

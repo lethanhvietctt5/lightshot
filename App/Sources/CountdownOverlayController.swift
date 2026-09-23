@@ -4,7 +4,8 @@ import LightshotKit
 
 /// The 3-2-1 countdown before a take (spec 0006, story 10): a large number centred on the main
 /// screen in a transparent, screen-saver-level window, ticking once a second with a sound, until
-/// zero — or until Escape, which resolves `false` so the coordinator discards the take.
+/// zero — or until Escape, which resolves `false` so the coordinator discards the take. A dark HUD
+/// in either appearance (spec 0008): it is read against the screen.
 ///
 /// A thin OS wrapper. The window is Lightshot's own, so the content filter keeps it out of the
 /// recording (story 15). It ignores the mouse, so the user can click into the app they are about

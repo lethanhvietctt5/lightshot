@@ -3,6 +3,7 @@ import LightshotKit
 
 /// Drawing shared by the three overlay surfaces (screenshot rect, window hover, recording): the
 /// even-odd dimming that punches the live region out, and the pixel-dimension readout pill.
+/// Content, not chrome (spec 0008): the same colours in Light and Dark, since it is read against the screen.
 enum OverlayCanvas {
     /// Dim the whole screen, punching `box` out so the live region shows the real screen through
     /// the transparent window.
