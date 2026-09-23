@@ -365,9 +365,17 @@ final class StudioEditorModel {
     // MARK: - Commands
 
     /// Every edit funnels through here: apply, then refresh the preview and autosave.
+    ///
+    /// The change runs on a copy that is stored back afterwards, so a command's closure may read the
+    /// model (the playhead's `sourceTime`, the `timeline`) freely. Mutating `document` in place
+    /// would hold exclusive access to it for the whole closure, and any such read aborted the app
+    /// ("simultaneous accesses") — Add Zoom and Add Text did exactly that.
     private func edit(_ change: (inout StudioDocument) -> Void) {
         let before = document.edits
-        change(&document)
+        var next = document
+        change(&next)
+        // Stored even when the edits are equal: undo bookkeeping (a gesture ending) may have moved.
+        document = next
         guard document.edits != before else { return }
         if case let .zoom(id) = selection, !document.edits.zooms.contains(where: { $0.id == id }) { selection = nil }
         if case let .clip(id) = selection, !document.edits.clips.contains(where: { $0.id == id }) { selection = nil }
