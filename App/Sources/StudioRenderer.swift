@@ -144,6 +144,14 @@ enum StudioFrameRenderer {
             image = cameraLayer(camera, settings: edits.camera.bubble, contentCI: contentCI).composited(over: image)
         }
 
+        // Text annotations (round 2, story 32), above the camera.
+        for annotation in edits.annotations {
+            let opacity = annotation.opacity(at: t)
+            if opacity > 0, let layer = annotationLayer(annotation, opacity: opacity, contentCI: contentCI) {
+                image = layer.composited(over: image)
+            }
+        }
+
         // Keystrokes replayed from the recorded events (story 24).
         if edits.keystrokes.visible, !state.keyEvents.isEmpty {
             if let pills = keystrokeLayer(state: state, at: t, over: image, contentCI: contentCI) { image = pills.composited(over: image) }
@@ -156,6 +164,50 @@ enum StudioFrameRenderer {
         }
 
         return image.cropped(to: state.canvasRect)
+    }
+
+    /// A title card / callout: the text on its rounded background, centred at its point of the card,
+    /// shrunk to fit the card's width, faded by `opacity`.
+    private static func annotationLayer(_ annotation: TextAnnotation, opacity: Double, contentCI: CGRect) -> CIImage? {
+        guard !annotation.text.isEmpty else { return nil }
+        var fontSize = CGFloat(annotation.size) * contentCI.height
+        let c = annotation.textColor
+        func line(_ size: CGFloat) -> CTLine {
+            CTLineCreateWithAttributedString(NSAttributedString(string: annotation.text, attributes: [
+                .font: NSFont.systemFont(ofSize: size, weight: .bold),
+                .foregroundColor: NSColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: c.alpha),
+            ]))
+        }
+        var ctLine = line(fontSize)
+        var width = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        if width > contentCI.width * 0.92 {
+            fontSize *= contentCI.width * 0.92 / width
+            ctLine = line(fontSize)
+            width = CGFloat(CTLineGetTypographicBounds(ctLine, nil, nil, nil))
+        }
+        var ascent: CGFloat = 0, descent: CGFloat = 0
+        CTLineGetTypographicBounds(ctLine, &ascent, &descent, nil)
+        let padX = fontSize * 0.55, padY = fontSize * 0.32
+        let box = CGSize(width: ceil(width + 2 * padX), height: ceil(ascent + descent + 2 * padY))
+        guard let context = CGContext(
+            data: nil, width: Int(box.width), height: Int(box.height), bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setAlpha(CGFloat(opacity))
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        let b = annotation.background
+        if b.alpha > 0 {
+            context.addPath(CGPath(roundedRect: CGRect(origin: .zero, size: box), cornerWidth: box.height * 0.28, cornerHeight: box.height * 0.28, transform: nil))
+            context.setFillColor(CGColor(srgbRed: b.red, green: b.green, blue: b.blue, alpha: b.alpha))
+            context.fillPath()
+        }
+        context.textPosition = CGPoint(x: padX, y: padY + descent)
+        CTLineDraw(ctLine, context)
+        context.endTransparencyLayer()
+        guard let cg = context.makeImage() else { return nil }
+        let cx = contentCI.minX + annotation.center.x * contentCI.width
+        let cy = contentCI.maxY - annotation.center.y * contentCI.height
+        return CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: (cx - box.width / 2).rounded(), y: (cy - box.height / 2).rounded()))
     }
 
     /// One caption line, centred at the bottom (or top) of the screen card, shrunk to fit its width.

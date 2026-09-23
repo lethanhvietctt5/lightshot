@@ -176,6 +176,7 @@ private struct StudioCaptionLineRow: View {
     let model: StudioEditorModel
     let line: CaptionLine
     @State private var draft = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -186,6 +187,11 @@ private struct StudioCaptionLineRow: View {
             TextField("Caption", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
+                .focused($focused)
+                .onChange(of: focused) { _, isFocused in
+                    model.isEditingText = isFocused
+                    if !isFocused { commit() }
+                }
                 .onSubmit { commit() }
                 .onChange(of: line.text, initial: true) { _, text in draft = text }
         }

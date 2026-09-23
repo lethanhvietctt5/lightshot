@@ -55,7 +55,7 @@ struct StudioEditorView: View {
             }
             StudioStyle.divider.frame(height: 1)
             StudioTimelineView(model: model)
-                .frame(height: 250)
+                .frame(height: 262)
         }
     }
 
@@ -66,9 +66,13 @@ struct StudioEditorView: View {
             Button("Undo") { model.undo() }.keyboardShortcut("z", modifiers: .command)
             Button("Redo") { model.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
             Button("Split") { model.splitAtPlayhead() }.keyboardShortcut("b", modifiers: .command)
-            Button("Split") { model.splitAtPlayhead() }.keyboardShortcut("s", modifiers: [])
-            Button("Delete") { model.deleteSelection() }.keyboardShortcut(.delete, modifiers: [])
-            Button("Play") { model.togglePlay() }.keyboardShortcut(.space, modifiers: [])
+            // Single-key shortcuts stand down while a text field has focus, so typing stays typing.
+            Group {
+                Button("Split") { model.splitAtPlayhead() }.keyboardShortcut("s", modifiers: [])
+                Button("Delete") { model.deleteSelection() }.keyboardShortcut(.delete, modifiers: [])
+                Button("Play") { model.togglePlay() }.keyboardShortcut(.space, modifiers: [])
+            }
+            .disabled(model.isEditingText)
             Button("Deselect") { model.selection = nil; model.isPickingFocus = false }.keyboardShortcut(.escape, modifiers: [])
         }
         .opacity(0)
@@ -141,6 +145,7 @@ struct StudioRailButton: View {
 /// The rendered canvas; a click toggles playback, or sets the selected zoom's focus while picking.
 private struct StudioPreview: View {
     let model: StudioEditorModel
+    @State private var isDragging = false
 
     var body: some View {
         ZStack {
@@ -149,6 +154,21 @@ private struct StudioPreview: View {
                 GeometryReader { geometry in
                     StudioPlayerSurface(player: model.player)
                         .contentShape(Rectangle())
+                        // Drag a selected text annotation around the card (story 32); one drag, one undo.
+                        .gesture(
+                            DragGesture(minimumDistance: 3)
+                                .onChanged { value in
+                                    guard model.selectedAnnotation != nil else { return }
+                                    if !isDragging { isDragging = true; model.beginChange() }
+                                    model.dragSelectedAnnotation(toCanvas: CGPoint(
+                                        x: value.location.x / geometry.size.width, y: value.location.y / geometry.size.height
+                                    ))
+                                }
+                                .onEnded { _ in
+                                    if isDragging { isDragging = false; model.endChange() }
+                                },
+                            including: model.selectedAnnotation != nil ? .all : .subviews
+                        )
                         .onTapGesture(coordinateSpace: .local) { location in
                             if model.isPickingFocus {
                                 model.pickFocus(atCanvas: CGPoint(x: location.x / geometry.size.width, y: location.y / geometry.size.height))

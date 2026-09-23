@@ -21,7 +21,7 @@ final class StudioEditorModel {
     }
 
     enum Panel: String, CaseIterable {
-        case background, cursor, zoom, captions, camera, keys, audio, output
+        case background, cursor, zoom, captions, text, camera, keys, audio, output
 
         var title: String {
             switch self {
@@ -29,6 +29,7 @@ final class StudioEditorModel {
             case .cursor: return "Cursor"
             case .zoom: return "Zoom"
             case .captions: return "Captions"
+            case .text: return "Text"
             case .camera: return "Camera"
             case .keys: return "Keystrokes"
             case .audio: return "Audio"
@@ -42,6 +43,7 @@ final class StudioEditorModel {
             case .cursor: return "cursorarrow"
             case .zoom: return "plus.magnifyingglass"
             case .captions: return "captions.bubble"
+            case .text: return "textformat"
             case .camera: return "person.crop.circle"
             case .keys: return "keyboard"
             case .audio: return "speaker.wave.2.fill"
@@ -53,6 +55,7 @@ final class StudioEditorModel {
     enum Selection: Equatable {
         case clip(StudioClip.ID)
         case zoom(ZoomRegion.ID)
+        case annotation(TextAnnotation.ID)
     }
 
     enum SaveMode: Hashable { case newFile, replace }
@@ -71,6 +74,8 @@ final class StudioEditorModel {
     /// Waiting for a click on the preview to set the selected zoom's focus (story 11).
     var isPickingFocus = false
     var timelineZoom: Double = 1
+    /// A text field (caption line, annotation) has focus: single-key shortcuts must not fire.
+    var isEditingText = false
     private(set) var isPlaying = false
     /// Output seconds.
     private(set) var currentTime: Double = 0
@@ -146,6 +151,11 @@ final class StudioEditorModel {
     var selectedZoom: ZoomRegion? {
         guard case let .zoom(id) = selection else { return nil }
         return edits.zooms.first { $0.id == id }
+    }
+
+    var selectedAnnotation: TextAnnotation? {
+        guard case let .annotation(id) = selection else { return nil }
+        return edits.annotations.first { $0.id == id }
     }
 
     var selectedClip: StudioClip? {
@@ -312,6 +322,7 @@ final class StudioEditorModel {
         guard document.edits != before else { return }
         if case let .zoom(id) = selection, !document.edits.zooms.contains(where: { $0.id == id }) { selection = nil }
         if case let .clip(id) = selection, !document.edits.clips.contains(where: { $0.id == id }) { selection = nil }
+        if case let .annotation(id) = selection, !document.edits.annotations.contains(where: { $0.id == id }) { selection = nil }
         rebuild()
         scheduleSave()
     }
@@ -334,6 +345,7 @@ final class StudioEditorModel {
         switch selection {
         case let .clip(id): edit { $0.deleteClip(id) }
         case let .zoom(id): edit { $0.removeZoom(id) }
+        case let .annotation(id): edit { $0.removeAnnotation(id) }
         case nil: break
         }
     }
@@ -396,6 +408,34 @@ final class StudioEditorModel {
         case .file:
             set(\.background, .image(fileName: url.path))
         }
+    }
+
+    // MARK: - Text annotations (round 2, story 32)
+
+    func addAnnotation() {
+        edit { doc in
+            let id = doc.addAnnotation(atSource: sourceTime)
+            selection = .annotation(id)
+            panel = .text
+        }
+    }
+
+    func moveAnnotation(_ id: TextAnnotation.ID, toStart start: Double) { edit { $0.moveAnnotation(id, toStart: start) } }
+    func resizeAnnotation(_ id: TextAnnotation.ID, start: Double, end: Double) { edit { $0.resizeAnnotation(id, start: start, end: end) } }
+    func updateAnnotation(_ id: TextAnnotation.ID, _ change: (inout TextAnnotation) -> Void) { edit { $0.updateAnnotation(id, change) } }
+
+    /// The screen card in preview-view fractions (0…1 of the rendered canvas), for hit-testing drags.
+    var contentFraction: CGRect? {
+        guard let layout = previewState?.layout else { return nil }
+        return CGRect(x: layout.content.minX / layout.canvas.width, y: layout.content.minY / layout.canvas.height,
+                      width: layout.content.width / layout.canvas.width, height: layout.content.height / layout.canvas.height)
+    }
+
+    /// Move the selected annotation to a point of the preview (0…1 of the canvas), during a drag.
+    func dragSelectedAnnotation(toCanvas point: CGPoint) {
+        guard let annotation = selectedAnnotation, let content = contentFraction else { return }
+        let center = Point(x: (point.x - content.minX) / content.width, y: (point.y - content.minY) / content.height)
+        updateAnnotation(annotation.id) { $0.center = center }
     }
 
     // MARK: - Captions and transcript editing (round 2, stories 29–31)
