@@ -49,7 +49,7 @@ A **Record Screen** action next to the capture actions. It reuses the selection 
 13. As a user, I want to **pause and resume**, so that a break in the middle doesn't have to be trimmed out later.
 14. As a user, I want **restart** and **discard** to confirm before throwing away footage, so that a mis-click doesn't cost me a take.
 15. As a user, I want the controls and the toolbar to be **excluded from the recording**, so that the output shows only my content.
-16. As a user, I want the screen outside the recording area **dimmed** (optional), so that I can see what is in and out of frame.
+16. As a user, I want the screen outside the recording area **dimmed** (optional), so that I can see what is in and out of frame. *Amended by [LIG-65](https://linear.app/light-shot/issue/LIG-65):* the recording area is also outlined by a **red 3 pt border** while recording or paused, with or without dimming — pulsing (opacity 1 ↔ 0.3, 1 s each way) while recording, steady while paused. It sits just outside the area so it never covers recorded content (pulled back on screen where the area meets a display edge; a whole-display take gets it along the display's edges), and it is drawn in the same Lightshot window as the dimming, so the content filter keeps it out of the file.
 17. As a user, I want the display to **not sleep** while recording, so that a long demo isn't cut short.
 18. As a user, I want a recording to be **recovered if the app crashes** mid-session, so that I don't lose a long take.
 19. As a user, I want the cursor **shown or hidden** in recordings (setting), so that I can point at things or keep the output clean.
