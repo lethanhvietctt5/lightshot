@@ -9,7 +9,7 @@ public enum PointerEvent: Equatable, Sendable {
 }
 
 /// The modifier keys held with a key press (story 30), in the order macOS prints them.
-public struct KeyModifiers: OptionSet, Sendable {
+public struct KeyModifiers: OptionSet, Codable, Sendable {
     public let rawValue: Int
     public init(rawValue: Int) { self.rawValue = rawValue }
 
@@ -35,7 +35,7 @@ public struct KeyModifiers: OptionSet, Sendable {
 }
 
 /// One key going down, already resolved to what the overlay prints (story 30).
-public struct KeyPress: Equatable, Sendable {
+public struct KeyPress: Equatable, Codable, Sendable {
     /// The key's label: a letter, digit or symbol as typed without modifiers, or a glyph such as
     /// `↩`, `⎋`, `←` (see `KeyLabel`).
     public let label: String
@@ -54,7 +54,7 @@ public struct KeyPress: Equatable, Sendable {
 }
 
 /// A keyboard event from the OS tap (story 30).
-public enum KeyEvent: Equatable, Sendable {
+public enum KeyEvent: Equatable, Codable, Sendable {
     case keyDown(KeyPress)
     /// The held modifiers changed (a modifier went down or up) — `modifiers` is the full new set.
     case modifiersChanged(KeyModifiers)

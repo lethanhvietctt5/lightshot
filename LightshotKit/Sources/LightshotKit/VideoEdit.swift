@@ -96,7 +96,7 @@ public enum VideoDimensions {
 }
 
 /// What to do with the sound (story 35).
-public enum AudioEdit: Equatable, Sendable {
+public enum AudioEdit: Equatable, Codable, Sendable {
     case unchanged
     case mute
     case volume(Double)
