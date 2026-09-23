@@ -54,7 +54,8 @@ final class StudioEditorModel {
     }
 
     enum Selection: Equatable {
-        case clip(StudioClip.ID)
+        case trim(TrimRegion.ID)
+        case speed(SpeedRegion.ID)
         case zoom(ZoomRegion.ID)
         case annotation(TextAnnotation.ID)
     }
@@ -164,9 +165,9 @@ final class StudioEditorModel {
         return edits.annotations.first { $0.id == id }
     }
 
-    var selectedClip: StudioClip? {
-        guard case let .clip(id) = selection else { return nil }
-        return edits.clips.first { $0.id == id }
+    var selectedSpeed: SpeedRegion? {
+        guard case let .speed(id) = selection else { return nil }
+        return edits.speeds.first { $0.id == id }
     }
 
     /// The export canvas (story 25), for the Output panel.
@@ -268,17 +269,14 @@ final class StudioEditorModel {
         return waveform[min(max(i, 0), waveform.count - 1)]
     }
 
-    /// Output times a timeline drag snaps to (story 33): the ends, the playhead, every clip
-    /// boundary, and the edges of zooms and texts — except the dragged item's own.
+    /// Source times a timeline drag snaps to (story 33): the ends, the playhead, and the edges of
+    /// trims, speeds, zooms and texts — except the dragged item's own.
     func snapTargets(excluding excluded: UUID? = nil) -> [Double] {
-        var targets = [0, duration, currentTime]
-        targets += timeline.segments.flatMap { [$0.outputStart, $0.outputEnd] }
-        for zoom in edits.zooms where zoom.id != excluded {
-            targets += [timeline.outputTime(atSource: zoom.start), timeline.outputTime(atSource: zoom.end)].compactMap { $0 }
-        }
-        for annotation in edits.annotations where annotation.id != excluded {
-            targets += [timeline.outputTime(atSource: annotation.start), timeline.outputTime(atSource: annotation.end)].compactMap { $0 }
-        }
+        var targets = [0, edits.sourceDuration, sourceTime]
+        for trim in edits.trims where trim.id != excluded { targets += [trim.start, trim.end] }
+        for speed in edits.speeds where speed.id != excluded { targets += [speed.start, speed.end] }
+        for zoom in edits.zooms where zoom.id != excluded { targets += [zoom.start, zoom.end] }
+        for annotation in edits.annotations where annotation.id != excluded { targets += [annotation.start, annotation.end] }
         return targets
     }
 
@@ -364,6 +362,11 @@ final class StudioEditorModel {
         }
     }
 
+    /// Put the playhead at a source time; inside a trim it lands where playback resumes.
+    func seek(toSource time: Double) {
+        seek(to: timeline.playableOutputTime(atSource: time))
+    }
+
     func skipToStart() { seek(to: 0) }
     func skipToEnd() { seek(to: duration) }
 
@@ -377,15 +380,19 @@ final class StudioEditorModel {
     /// ("simultaneous accesses") — Add Zoom and Add Text did exactly that.
     private func edit(_ change: (inout StudioDocument) -> Void) {
         let before = document.edits
+        let playhead = sourceTime
         var next = document
         change(&next)
         // Stored even when the edits are equal: undo bookkeeping (a gesture ending) may have moved.
         document = next
         guard document.edits != before else { return }
         if case let .zoom(id) = selection, !document.edits.zooms.contains(where: { $0.id == id }) { selection = nil }
-        if case let .clip(id) = selection, !document.edits.clips.contains(where: { $0.id == id }) { selection = nil }
+        if case let .trim(id) = selection, !document.edits.trims.contains(where: { $0.id == id }) { selection = nil }
+        if case let .speed(id) = selection, !document.edits.speeds.contains(where: { $0.id == id }) { selection = nil }
         if case let .annotation(id) = selection, !document.edits.annotations.contains(where: { $0.id == id }) { selection = nil }
         rebuild()
+        // A trim or speed change moves output time under the playhead: keep it on the same frame.
+        if document.edits.clips != before.clips { seek(toSource: playhead) }
         scheduleSave()
     }
 
@@ -397,23 +404,35 @@ final class StudioEditorModel {
     var canUndo: Bool { document.canUndo }
     var canRedo: Bool { document.canRedo }
 
-    func splitAtPlayhead() {
-        edit { doc in
-            if let id = doc.split(atOutput: currentTime) { selection = .clip(id) }
-        }
-    }
-
     func deleteSelection() {
         switch selection {
-        case let .clip(id): edit { $0.deleteClip(id) }
+        case let .trim(id): edit { $0.removeTrim(id) }
+        case let .speed(id): edit { $0.removeSpeed(id) }
         case let .zoom(id): edit { $0.removeZoom(id) }
         case let .annotation(id): edit { $0.removeAnnotation(id) }
         case nil: break
         }
     }
 
-    func trimClip(_ id: StudioClip.ID, start: Double, end: Double) { edit { $0.trimClip(id, start: start, end: end) } }
-    func setSpeed(_ id: StudioClip.ID, _ speed: Double) { edit { $0.setSpeed(id, speed) } }
+    // MARK: - Trim and speed (round 3, stories 34–35)
+
+    func addTrim() {
+        edit { doc in
+            if let id = doc.addTrim(atSource: sourceTime) { selection = .trim(id) }
+        }
+    }
+
+    func addSpeed(_ speed: Double) {
+        edit { doc in
+            if let id = doc.addSpeed(atSource: sourceTime, speed: speed) { selection = .speed(id) }
+        }
+    }
+
+    func moveTrim(_ id: TrimRegion.ID, toStart start: Double) { edit { $0.moveTrim(id, toStart: start) } }
+    func resizeTrim(_ id: TrimRegion.ID, start: Double, end: Double) { edit { $0.resizeTrim(id, start: start, end: end) } }
+    func moveSpeed(_ id: SpeedRegion.ID, toStart start: Double) { edit { $0.moveSpeed(id, toStart: start) } }
+    func resizeSpeed(_ id: SpeedRegion.ID, start: Double, end: Double) { edit { $0.resizeSpeed(id, start: start, end: end) } }
+    func setSpeed(_ id: SpeedRegion.ID, _ speed: Double) { edit { $0.setSpeed(id, speed) } }
 
     func addZoom() {
         edit { doc in

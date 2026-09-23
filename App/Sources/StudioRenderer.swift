@@ -50,37 +50,96 @@ final class StudioRenderState: @unchecked Sendable {
 /// motion blur → click effects → camera → keystroke pills. Core Image, in canvas pixels with a
 /// bottom-left origin; `StudioRenderState` supplies the geometry.
 enum StudioFrameRenderer {
-    /// The arrow the studio cursor is drawn with (spec 0007, decision 3): the macOS arrow as a
-    /// vector path — black body, white rim — rasterised once at 8× so it stays sharp when zoomed.
+    /// A cursor preset's picture (round 3, story 36): the macOS arrow as a vector path in the
+    /// theme's fill, rim and shadow or glow, rasterised once at 8× so it stays sharp when zoomed.
     /// Drawn here rather than taken from `NSCursor`, whose image depends on AppKit state.
     /// `size` is in cursor points; the hot spot is the tip, top-left based.
-    static let arrow: (image: CIImage, hotSpot: CGPoint, size: CGSize) = {
-        let size = CGSize(width: 14, height: 22)
+    struct CursorArt {
+        let image: CIImage
+        let cgImage: CGImage?
+        let hotSpot: CGPoint
+        let size: CGSize
+    }
+
+    static func cursorArt(_ theme: CursorTheme) -> CursorArt { cursorArts[theme] ?? cursorArts[.macOS]! }
+
+    private static let cursorArts: [CursorTheme: CursorArt] = Dictionary(
+        uniqueKeysWithValues: CursorTheme.allCases.map { ($0, makeCursorArt($0)) }
+    )
+
+    private static func makeCursorArt(_ theme: CursorTheme) -> CursorArt {
+        func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGColor { CGColor(red: r, green: g, blue: b, alpha: 1) }
+        let white = rgb(1, 1, 1), black = rgb(0, 0, 0)
+        // fill (nil = hollow), rim colour, rim width in points, glow (instead of a drop shadow).
+        let look: (fill: CGColor?, rim: CGColor, rimWidth: CGFloat, glow: CGColor?)
+        switch theme {
+        case .macOS: look = (black, white, 2.2, nil)
+        case .white: look = (white, black, 1.6, nil)
+        case .pink: look = (rgb(1, 0.56, 0.78), white, 2.2, nil)
+        case .mint: look = (rgb(0.45, 0.9, 0.62), rgb(0.06, 0.36, 0.2), 1.5, nil)
+        case .violet: look = (rgb(0.49, 0.3, 1), white, 2.2, nil)
+        case .blue: look = (rgb(0.18, 0.48, 1), white, 2.2, nil)
+        case .neon: look = (rgb(0.17, 0.08, 0.32), rgb(1, 0.24, 0.65), 1.8, rgb(1, 0.24, 0.65))
+        case .outline: look = (nil, black, 1.6, nil)
+        case .bold: look = (white, black, 3, nil)
+        case .yellow: look = (rgb(1, 0.82, 0.25), black, 1.4, nil)
+        }
+        // Room around the arrow for the rim and the shadow or glow.
+        let margin: CGFloat = 4
+        let size = CGSize(width: 14 + margin * 2, height: 22 + margin * 2)
         let scale: CGFloat = 8
+        let hotSpot = CGPoint(x: 1 + margin, y: 1 + margin)
         let path = CGMutablePath()
-        // Top-left based points, tip at (1, 1).
+        // Top-left based points, tip at (1, 1) before the margin.
         let points: [CGPoint] = [
             CGPoint(x: 1, y: 1), CGPoint(x: 1, y: 17), CGPoint(x: 5, y: 13.2), CGPoint(x: 8, y: 20),
             CGPoint(x: 10.6, y: 18.9), CGPoint(x: 7.7, y: 12.3), CGPoint(x: 12.8, y: 12.3),
         ]
-        path.addLines(between: points.map { CGPoint(x: $0.x * scale, y: (size.height - $0.y) * scale) })
+        path.addLines(between: points.map { CGPoint(x: ($0.x + margin) * scale, y: (size.height - $0.y - margin) * scale) })
         path.closeSubpath()
         let width = Int(size.width * scale), height = Int(size.height * scale)
         guard let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return (CIImage.empty(), CGPoint(x: 1, y: 1), size) }
+        ) else { return CursorArt(image: CIImage.empty(), cgImage: nil, hotSpot: hotSpot, size: size) }
         context.setLineJoin(.round)
+        if let glow = look.glow {
+            context.setShadow(offset: .zero, blur: 3.5 * scale, color: glow)
+        } else {
+            context.setShadow(offset: CGSize(width: 0, height: -0.8 * scale), blur: 1.6 * scale, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.35))
+        }
+        // One layer, so the shadow falls from the whole arrow, not from rim and fill separately.
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        if look.fill == nil {
+            // Hollow: a white halo keeps the dark outline readable on dark content.
+            context.addPath(path)
+            context.setStrokeColor(white)
+            context.setLineWidth((look.rimWidth + 2) * scale)
+            context.strokePath()
+        }
         context.addPath(path)
-        context.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        context.setLineWidth(2.2 * scale)
+        context.setStrokeColor(look.rim)
+        context.setLineWidth(look.rimWidth * scale)
         context.strokePath()
-        context.addPath(path)
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fillPath()
-        let image = context.makeImage().map { CIImage(cgImage: $0) } ?? CIImage.empty()
-        return (image, CGPoint(x: 1, y: 1), size)
-    }()
+        if let fill = look.fill {
+            context.addPath(path)
+            context.setFillColor(fill)
+            context.fillPath()
+        } else {
+            // Clear the inside so only the outline stays.
+            context.addPath(path)
+            context.setBlendMode(.clear)
+            context.fillPath()
+            context.setBlendMode(.normal)
+            context.addPath(path)
+            context.setStrokeColor(look.rim)
+            context.setLineWidth(look.rimWidth / 2 * scale)
+            context.strokePath()
+        }
+        context.endTransparencyLayer()
+        let cgImage = context.makeImage()
+        return CursorArt(image: cgImage.map { CIImage(cgImage: $0) } ?? CIImage.empty(), cgImage: cgImage, hotSpot: hotSpot, size: size)
+    }
 
     static func render(_ state: StudioRenderState, screen: CIImage?, camera: CIImage?, outputTime: Double, frameDuration: Double) -> CIImage {
         let edits = state.edits
@@ -284,6 +343,7 @@ enum StudioFrameRenderer {
         let normalized = Point(x: position.x / state.regionSize.width, y: position.y / state.regionSize.height)
         let tip = canvasPoint(normalized, viewport: viewport, contentCI: contentCI)
         let points = state.edits.cursor.size * scale                // canvas pixels per cursor point
+        let arrow = cursorArt(state.edits.cursor.theme)
         let image = arrow.image
         let sx = arrow.size.width * points / max(image.extent.width, 1)
         let sy = arrow.size.height * points / max(image.extent.height, 1)
