@@ -66,7 +66,7 @@ public struct Style: Equatable, Sendable {
     public init(
         color: RGBAColor = .red,
         strokeWidth: Double = 6,
-        fontSize: Double = 32,
+        fontSize: Double = 20,
         fill: RGBAColor? = nil
     ) {
         self.color = color
