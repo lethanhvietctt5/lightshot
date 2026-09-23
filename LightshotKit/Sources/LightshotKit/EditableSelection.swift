@@ -184,6 +184,19 @@ public struct EditableSelection: Equatable, Sendable {
     }
 
     /// Replace the selection with `frame` (a picked window), clipped to the bounds.
+    /// The area Record Screen starts with when nothing is remembered: a centred 16:9 rect, 1280
+    /// points wide at most and never more than 60 % of the display's width (or 70 % of its height),
+    /// so the take starts at a shareable size and the rest of the screen stays visible around it.
+    public static func defaultRecordingRect(in bounds: Rect) -> Rect {
+        var width = min(1280, bounds.width * 0.6)
+        var height = width * 9 / 16
+        if height > bounds.height * 0.7 {
+            height = bounds.height * 0.7
+            width = height * 16 / 9
+        }
+        return Rect(x: bounds.minX + (bounds.width - width) / 2, y: bounds.minY + (bounds.height - height) / 2, width: width, height: height)
+    }
+
     public mutating func snap(to frame: Rect) {
         drag = nil
         rect = frame.standardized.intersection(bounds)

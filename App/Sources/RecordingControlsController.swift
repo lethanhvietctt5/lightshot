@@ -17,6 +17,8 @@ final class RecordingControlsController {
 
     private var panel: NSPanel?
     private var model: RecordingControlsModel?
+    /// Transparent margin around the pill that holds its soft shadow.
+    static let shadowRoom: CGFloat = 32
 
     /// `audioLevel` is `nil` when the take has no microphone and `systemAudioLevel` when it has no
     /// computer audio; otherwise the meters poll them (stories 23, 25).
@@ -58,7 +60,8 @@ final class RecordingControlsController {
 
         let screen = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let x = screen.midX - size.width / 2
-        let y = position == .top ? screen.maxY - size.height - 16 : screen.minY + 16
+        // The pill itself stays 16 points from the screen edge; its shadow room reaches past it.
+        let y = position == .top ? screen.maxY - size.height - 16 : screen.minY + 16 - (Self.shadowRoom + 6)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
         self.panel = panel
         panel.orderFrontRegardless()
@@ -139,9 +142,12 @@ private struct RecordingControlsView: View {
         }
         .padding(10)
         .toolbarPanel()
-        // Room for the tips above and the panel's shadow around it.
+        // Room for the tips above, and for the whole soft shadow around it: `toolbarPanel`'s shadow
+        // (radius 14, 6 down) must fade out inside the window — clipped at the window's edge it
+        // shows the window's rectangle as a grey box on light backgrounds.
         .padding(.top, 44)
-        .padding([.horizontal, .bottom], 8)
+        .padding(.horizontal, RecordingControlsController.shadowRoom)
+        .padding(.bottom, RecordingControlsController.shadowRoom + 6)
     }
 
     /// Small bars that follow the microphone and computer-audio levels (stories 23, 25), with the
