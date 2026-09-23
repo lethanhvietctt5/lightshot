@@ -13,6 +13,8 @@ struct EditorView: View {
     /// Keyboard focus of the font-size field. It must not hold focus while the user draws or
     /// presses ⌫ / ⌘Z, so the canvas and the tool buttons take it back.
     @FocusState private var fontSizeFocused: Bool
+    /// Whether the Auto Redact category checklist is open (spec 0009).
+    @State private var showsAutoRedactCategories = false
 
     init(
         document: AnnotationDocument,
@@ -322,40 +324,56 @@ struct EditorView: View {
         autoRedactButton
     }
 
-    /// Auto Redact (spec 0009): a click runs it in the current style; press and hold (or
-    /// right-click) picks what it looks for. One icon wide, so the redact options still leave
-    /// room for Copy and Done in a small editor window.
+    /// Auto Redact (spec 0009): the wand runs it in the current style; the chevron beside it
+    /// opens the checklist of what it looks for.
     private var autoRedactButton: some View {
-        Menu {
-            autoRedactCategoryToggles
-        } label: {
-            Image(systemName: "wand.and.sparkles")
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 26, height: 26)
-                .contentShape(Rectangle())
-        } primaryAction: {
-            model.autoRedact()
+        HStack(spacing: 0) {
+            Button { model.autoRedact() } label: {
+                Image(systemName: "wand.and.sparkles")
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(model.isAutoRedacting)
+            .help("Auto Redact (⇧⌘R): find and redact sensitive text and codes in the current style. Runs on this Mac and can miss things.")
+            .accessibilityLabel("Auto Redact")
+
+            Button { showsAutoRedactCategories.toggle() } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .frame(width: 14, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Choose what Auto Redact looks for")
+            .accessibilityLabel("Auto Redact categories")
+            .popover(isPresented: $showsAutoRedactCategories, arrowEdge: .bottom) {
+                autoRedactCategories
+            }
         }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
         .fixedSize()
-        .contextMenu { autoRedactCategoryToggles }
-        .disabled(model.isAutoRedacting)
-        .help("Auto Redact (⇧⌘R): find and redact sensitive text and codes in the current style. Hold or right-click to choose what it looks for. Runs on this Mac and can miss things.")
-        .accessibilityLabel("Auto Redact")
     }
 
-    @ViewBuilder
-    private var autoRedactCategoryToggles: some View {
-        Section("Look for") {
+    /// The checklist of sensitive-data categories, remembered across launches.
+    private var autoRedactCategories: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Look for")
+                .font(.headline)
             ForEach(SensitiveCategory.allCases, id: \.self) { category in
                 Toggle(category.title, isOn: Binding(
                     get: { model.autoRedactCategories.contains(category) },
                     set: { model.setAutoRedact(category, enabled: $0) }
                 ))
+                .toggleStyle(.checkbox)
             }
+            Divider().padding(.vertical, 2)
+            Text("Recognition runs on this Mac and can miss things.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .padding(14)
+        .fixedSize()
     }
 
     private var redactionHelp: String {

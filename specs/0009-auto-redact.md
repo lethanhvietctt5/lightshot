@@ -19,7 +19,7 @@ Before I share a screenshot I have to find every secret in it myself: the email 
 
 The redact tool gains an **Auto Redact** button (⇧⌘R). Pressing it recognises the text in the capture on-device, finds the sensitive parts, and immediately adds a redaction over each one. Every new redaction uses the **redaction style and strength currently selected** in the redact tool (pixelate by default, or blur, or blackout). The whole batch is one undo step. The redactions are ordinary: I can move, resize, restyle or delete each one afterwards.
 
-Pressing and holding the button (or right-clicking it) opens a checklist of sensitive-data categories (secrets, payment cards, emails, phone numbers, faces, …), remembered across launches. After a run, a short notice says what was redacted and reminds me that recognition can miss text. When the selected style is blur or pixelate, it also says that style is not secure.
+A small chevron next to the button opens a checklist of sensitive-data categories (secrets, payment cards, emails, phone numbers, faces, …), remembered across launches. After a run, a short notice says what was redacted and reminds me that recognition can miss text. When the selected style is blur or pixelate, it also says that style is not secure.
 
 ## User Stories
 
@@ -67,7 +67,7 @@ Pressing and holding the button (or right-clicking it) opens a checklist of sens
 
 ### Categories
 
-34. As a user, I want a checklist of categories on the button, so that I choose what counts as sensitive for my work.
+34. As a user, I want a checklist of categories next to the button, so that I choose what counts as sensitive for my work.
 35. As a user, I want my category choices remembered across launches, so that I set them once.
 36. As a user, I want sensible defaults on first use, so that the button is useful before I open the checklist.
 37. As a user, I want the checklist to say which categories are on, so that I know what a run will look for.
@@ -156,7 +156,7 @@ The scanner's input and output, in prose (names may change in implementation):
 
 ### UI placement
 
-- The redact tool's options bar gets a one-icon Auto Redact button (`wand.and.sparkles`) after the "Secure"/"Not secure" label. A click runs it; press-and-hold or right-click opens the category checklist. Its tooltip names the shortcut and the hold gesture. It is one icon wide, not a split button, because a split button pushed Copy and Done into the toolbar's overflow in a 1180 px editor window.
+- The redact tool's options bar gets an Auto Redact button (`wand.and.sparkles`) after the "Secure"/"Not secure" label, with a narrow chevron beside it. The wand runs Auto Redact; the chevron opens a popover with the category checklist (checkboxes). The wand's tooltip names the shortcut. The pair is compact (about 40 px), not a bordered split button, because a split button pushed Copy and Done into the toolbar's overflow in a 1180 px editor window.
 - ⇧⌘R is bound in the editor window and works whichever tool is active. It's unused in the editor today.
 
 ## Testing Decisions
@@ -219,7 +219,7 @@ The scanner's input and output, in prose (names may change in implementation):
 
 ## As built
 
-- **Button.** A one-icon button instead of a split button with a chevron: a click runs Auto Redact, press-and-hold or right-click opens the checklist (see *UI placement*). Even so, in an editor window narrower than about 1215 px, Done moves into the toolbar's `>>` overflow while the redact tool is active. Without the button that happens below about 1175 px; ⌘S still works either way.
+- **Button.** A compact wand plus a narrow chevron instead of a bordered split button: the wand runs Auto Redact, the chevron opens a popover with the checklist (see *UI placement*). Press-and-hold was tried first and dropped as hard to discover. Even so, in an editor window narrower than about 1230 px, Done moves into the toolbar's `>>` overflow while the redact tool is active. Without the button that happens below about 1175 px; ⌘S still works either way.
 - **Category storage.** User defaults via the editor, not `SettingsStore` (see *Default categories*).
 - **Labels need a separator**, a bare label takes the next column, key-block lines are covered one by one, and phone numbers are capped at 15 digits (see *Scanning rules*).
 - **Progress** shows in the notice area (see *Recognition*).
