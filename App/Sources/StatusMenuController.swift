@@ -61,14 +61,19 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     /// A red stop glyph and `mm:ss`; clicking stops the take directly instead of opening the menu.
+    /// The glyph is drawn red itself (not through `contentTintColor`, which the macOS 26+ menu
+    /// bar ignores, leaving glyph and time black on a dark bar); the time keeps the menu bar's own
+    /// text colour, so it reads on a light or dark bar like every other item.
     private func showRecordingStatusItem() {
         guard recordingTimer == nil else { return }
         statusItem.length = NSStatusItem.variableLength
-        let icon = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop Recording")
-        icon?.isTemplate = true
+        let red = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+        let icon = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop Recording")?
+            .withSymbolConfiguration(red)
+        icon?.isTemplate = false
         statusItem.button?.image = icon
         statusItem.button?.imagePosition = .imageLeading
-        statusItem.button?.contentTintColor = .systemRed
+        statusItem.button?.contentTintColor = nil
         statusItem.button?.toolTip = "Stop Recording"
         statusItem.menu = nil
         statusItem.button?.target = self
@@ -90,6 +95,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let seconds = Int(controller.recordingElapsed.rounded(.down))
         statusItem.button?.title = String(format: " %02d:%02d", seconds / 60, seconds % 60)
     }
+
+    #if DEBUG
+    /// Development aid: the recording look of the status item, without a take.
+    func debugShowRecordingItem() { showRecordingStatusItem() }
+    #endif
 
     @objc private func stopRecordingClicked() {
         controller.toggleRecording()
