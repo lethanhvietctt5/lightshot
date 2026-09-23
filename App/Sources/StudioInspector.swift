@@ -16,6 +16,7 @@ struct StudioInspector: View {
                 case .cursor: cursor
                 case .zoom: zoom
                 case .captions: StudioCaptionsPanel(model: model)
+                case .text: StudioTextPanel(model: model)
                 case .camera: camera
                 case .keys: keys
                 case .audio: audio

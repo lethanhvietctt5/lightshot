@@ -425,7 +425,10 @@ public struct StudioEdits: Equatable, Codable, Sendable {
             var a = a
             a.start = clamp(a.start, 0...e.sourceDuration)
             a.end = clamp(a.end, 0...e.sourceDuration)
-            if a.end - a.start < 0.2 { a.end = min(e.sourceDuration, a.start + 0.2); a.start = min(a.start, a.end - 0.2) }
+            if a.end - a.start < TextAnnotation.minimumLength {
+                a.end = min(e.sourceDuration, a.start + TextAnnotation.minimumLength)
+                a.start = max(0, min(a.start, a.end - TextAnnotation.minimumLength))
+            }
             a.center = Point(x: clamp(a.center.x, 0...1), y: clamp(a.center.y, 0...1))
             a.size = clamp(a.size, 0.02...0.25)
             a.fade = clamp(a.fade, 0...2)

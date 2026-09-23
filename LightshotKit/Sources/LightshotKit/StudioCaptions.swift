@@ -133,6 +133,7 @@ public enum CaptionBuilder {
 /// from `start` to `end` (source seconds), centred at `center` (normalised to the screen card).
 public struct TextAnnotation: Equatable, Codable, Sendable, Identifiable {
     public static let defaultLength = 3.0
+    public static let minimumLength = 0.2
 
     public var id: UUID
     public var start: Double

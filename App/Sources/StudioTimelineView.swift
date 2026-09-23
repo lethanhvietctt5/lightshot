@@ -54,6 +54,7 @@ private struct StudioTimelineHeader: View {
             tool("plus.magnifyingglass", "Add Zoom at Playhead") { model.addZoom() }
             tool("wand.and.stars", "Auto Zoom on Clicks") { model.autoZoom() }
                 .disabled(!model.hasClicks)
+            tool("textformat", "Add Text at Playhead") { model.addAnnotation() }
             Spacer()
             tool("arrow.uturn.backward", "Undo (⌘Z)") { model.undo() }.disabled(!model.canUndo)
             tool("arrow.uturn.forward", "Redo (⇧⌘Z)") { model.redo() }.disabled(!model.canRedo)
@@ -83,6 +84,8 @@ private struct StudioTracks: View {
     static let clipHeight: CGFloat = 60
     static let zoomTop: CGFloat = 104
     static let zoomHeight: CGFloat = 30
+    static let textTop: CGFloat = 142
+    static let textHeight: CGFloat = 26
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -116,6 +119,17 @@ private struct StudioTracks: View {
                         .offset(x: scale.x(for: span.lowerBound), y: Self.zoomTop)
                 }
             }
+            // The text lane (round 2, story 32).
+            RoundedRectangle(cornerRadius: 6).fill(StudioStyle.control.opacity(0.5))
+                .frame(width: scale.width, height: Self.textHeight)
+                .offset(y: Self.textTop)
+                .allowsHitTesting(false)
+            ForEach(model.edits.annotations) { annotation in
+                if let span = outputSpan(start: annotation.start, end: annotation.end) {
+                    StudioAnnotationPill(model: model, annotation: annotation, span: span, scale: scale)
+                        .offset(x: scale.x(for: span.lowerBound), y: Self.textTop)
+                }
+            }
             playhead
                 .offset(x: scale.x(for: model.currentTime) - 6, y: Self.rulerHeight - 6)
                 .allowsHitTesting(false)
@@ -128,11 +142,15 @@ private struct StudioTracks: View {
     /// Where a zoom shows on the output timeline: its source span through the cuts, clamped to
     /// the kept parts; `nil` when it was cut away entirely.
     private func outputSpan(of zoom: ZoomRegion) -> ClosedRange<Double>? {
+        outputSpan(start: zoom.start, end: zoom.end)
+    }
+
+    private func outputSpan(start sourceStart: Double, end sourceEnd: Double) -> ClosedRange<Double>? {
         let timeline = model.timeline
-        let start = timeline.outputTime(atSource: zoom.start)
-            ?? timeline.segments.first(where: { $0.sourceStart >= zoom.start && $0.sourceStart < zoom.end })?.outputStart
-        let end = timeline.outputTime(atSource: zoom.end)
-            ?? timeline.segments.last(where: { $0.sourceEnd <= zoom.end && $0.sourceEnd > zoom.start })?.outputEnd
+        let start = timeline.outputTime(atSource: sourceStart)
+            ?? timeline.segments.first(where: { $0.sourceStart >= sourceStart && $0.sourceStart < sourceEnd })?.outputStart
+        let end = timeline.outputTime(atSource: sourceEnd)
+            ?? timeline.segments.last(where: { $0.sourceEnd <= sourceEnd && $0.sourceEnd > sourceStart })?.outputEnd
         guard let start, let end, end > start else { return nil }
         return start...end
     }
@@ -162,7 +180,7 @@ private struct StudioTracks: View {
     private var playhead: some View {
         VStack(spacing: 0) {
             Circle().fill(StudioStyle.playhead).frame(width: 12, height: 12)
-            Rectangle().fill(StudioStyle.playhead).frame(width: 2, height: Self.zoomTop + Self.zoomHeight - Self.rulerHeight + 6)
+            Rectangle().fill(StudioStyle.playhead).frame(width: 2, height: Self.textTop + Self.textHeight - Self.rulerHeight + 6)
         }
         .frame(width: 12)
     }
@@ -340,6 +358,86 @@ private struct StudioZoomPill: View {
                     model.resizeZoom(origin.zoom.id, start: timeline.sourceTime(atOutput: origin.outputStart + dt), end: origin.zoom.end)
                 case .trailing:
                     model.resizeZoom(origin.zoom.id, start: origin.zoom.start, end: timeline.sourceTime(atOutput: origin.outputEnd + dt))
+                }
+            }
+            .onEnded { _ in
+                dragOrigin = nil
+                model.endChange()
+            }
+    }
+}
+
+/// A text annotation's pill (story 32): select, drag to move, drag an edge to resize — in source time.
+private struct StudioAnnotationPill: View {
+    @Bindable var model: StudioEditorModel
+    let annotation: TextAnnotation
+    let span: ClosedRange<Double>
+    let scale: TimelineScale
+    @State private var dragOrigin: (annotation: TextAnnotation, outputStart: Double, outputEnd: Double)?
+    private static let edge: CGFloat = 8
+    static let color = Color(red: 0.95, green: 0.55, blue: 0.2)
+
+    private var isSelected: Bool { model.selection == .annotation(annotation.id) }
+    private var width: CGFloat { max(14, scale.x(for: span.upperBound) - scale.x(for: span.lowerBound)) }
+    private var pointsPerSecond: CGFloat { scale.width / max(model.duration, 0.01) }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Self.color.opacity(isSelected ? 1 : 0.75))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isSelected ? Color.white : .clear, lineWidth: 2))
+            Label(annotation.text, systemImage: "textformat")
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .opacity(width > 50 ? 1 : 0)
+            HStack {
+                edgeHandle(leading: true)
+                Spacer(minLength: 0)
+                edgeHandle(leading: false)
+            }
+        }
+        .frame(width: width, height: StudioTracks.textHeight)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            model.selection = .annotation(annotation.id)
+            model.panel = .text
+        }
+        .gesture(drag(.move))
+        .contextMenu {
+            Button("Delete Text") { model.selection = .annotation(annotation.id); model.deleteSelection() }
+        }
+    }
+
+    private enum DragKind { case move, leading, trailing }
+
+    private func edgeHandle(leading: Bool) -> some View {
+        Color.white.opacity(isSelected ? 0.35 : 0.001)
+            .frame(width: Self.edge)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            .contentShape(Rectangle())
+            .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .gesture(drag(leading ? .leading : .trailing))
+    }
+
+    private func drag(_ kind: DragKind) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .named("tracks"))
+            .onChanged { value in
+                if dragOrigin == nil {
+                    dragOrigin = (annotation, span.lowerBound, span.upperBound)
+                    model.selection = .annotation(annotation.id)
+                    model.beginChange()
+                }
+                guard let origin = dragOrigin else { return }
+                let dt = Double(value.translation.width / pointsPerSecond)
+                let timeline = model.timeline
+                switch kind {
+                case .move:
+                    model.moveAnnotation(origin.annotation.id, toStart: timeline.sourceTime(atOutput: origin.outputStart + dt))
+                case .leading:
+                    model.resizeAnnotation(origin.annotation.id, start: timeline.sourceTime(atOutput: origin.outputStart + dt), end: origin.annotation.end)
+                case .trailing:
+                    model.resizeAnnotation(origin.annotation.id, start: origin.annotation.start, end: timeline.sourceTime(atOutput: origin.outputEnd + dt))
                 }
             }
             .onEnded { _ in

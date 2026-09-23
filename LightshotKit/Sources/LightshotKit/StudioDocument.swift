@@ -210,6 +210,47 @@ public struct StudioDocument: Equatable, Sendable {
         return added.map(\.id)
     }
 
+    // MARK: - Text annotations (round 2, story 32)
+
+    /// Add a text annotation at a source time, pulled inside the source; returns its id.
+    @discardableResult
+    public mutating func addAnnotation(atSource time: Double) -> TextAnnotation.ID {
+        let length = min(TextAnnotation.defaultLength, edits.sourceDuration)
+        let start = min(max(time, 0), edits.sourceDuration - length)
+        let annotation = TextAnnotation(start: start, end: start + length)
+        perform { $0.annotations.append(annotation) }
+        return annotation.id
+    }
+
+    /// Drag a pill: keeps its length, stays inside the source.
+    public mutating func moveAnnotation(_ id: TextAnnotation.ID, toStart start: Double) {
+        guard let a = edits.annotations.first(where: { $0.id == id }) else { return }
+        let length = a.end - a.start
+        let newStart = min(max(start, 0), edits.sourceDuration - length)
+        updateAnnotation(id) { $0.start = newStart; $0.end = newStart + length }
+    }
+
+    /// Drag a pill's edge(s), never below the minimum length.
+    public mutating func resizeAnnotation(_ id: TextAnnotation.ID, start: Double, end: Double) {
+        guard let a = edits.annotations.first(where: { $0.id == id }) else { return }
+        var newStart = max(0, start), newEnd = min(edits.sourceDuration, end)
+        if newEnd - newStart < TextAnnotation.minimumLength {
+            if newStart != a.start { newStart = newEnd - TextAnnotation.minimumLength } else { newEnd = newStart + TextAnnotation.minimumLength }
+        }
+        updateAnnotation(id) { $0.start = newStart; $0.end = newEnd }
+    }
+
+    /// Change an annotation's text, place or look; clamped like every edit.
+    public mutating func updateAnnotation(_ id: TextAnnotation.ID, _ change: (inout TextAnnotation) -> Void) {
+        perform { edits in
+            if let index = edits.annotations.firstIndex(where: { $0.id == id }) { change(&edits.annotations[index]) }
+        }
+    }
+
+    public mutating func removeAnnotation(_ id: TextAnnotation.ID) {
+        perform { $0.annotations.removeAll { $0.id == id } }
+    }
+
     // MARK: - Transcript editing (round 2, stories 30–31)
 
     /// Remove a source range from the output: a clip it falls inside is split, clips it overlaps
