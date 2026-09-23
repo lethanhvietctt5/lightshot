@@ -359,6 +359,7 @@ private struct AnimatedImageView: NSViewRepresentable {
         view.animates = true
         view.image = NSImage(contentsOf: url)
         view.wantsLayer = true
+        // The video's letterbox: content, black in either appearance (spec 0008).
         view.layer?.backgroundColor = NSColor.black.cgColor
         return view
     }

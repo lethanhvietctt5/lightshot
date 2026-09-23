@@ -174,6 +174,7 @@ final class CameraBubbleView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.masksToBounds = true
+        // Content (spec 0008): the bubble is what gets recorded, so it looks the same in Light and Dark.
         layer?.backgroundColor = NSColor.black.cgColor
         badge.string = "Fullscreen when recording"
         badge.fontSize = 11

@@ -177,16 +177,21 @@ struct EditorView: View {
         ("White", RGBAColor(red: 1, green: 1, blue: 1)),
     ]
 
-    /// A filled circle with a thin edge, drawn as a non-template image so menus and the toolbar
-    /// keep its colour.
+    /// A filled circle with a thin two-tone edge — a dark hairline outside a light one — so black
+    /// and white swatches both show on a light or dark toolbar (spec 0008, story 24). Drawn as a
+    /// non-template image so menus and the toolbar keep its colour.
     private static func swatchImage(_ color: RGBAColor, diameter: CGFloat) -> NSImage {
         let image = NSImage(size: NSSize(width: diameter, height: diameter), flipped: false) { rect in
             let circle = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
             NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: color.alpha).setFill()
             circle.fill()
-            NSColor.black.withAlphaComponent(0.25).setStroke()
+            NSColor.black.withAlphaComponent(0.35).setStroke()
             circle.lineWidth = 1
             circle.stroke()
+            let inner = NSBezierPath(ovalIn: rect.insetBy(dx: 1.5, dy: 1.5))
+            NSColor.white.withAlphaComponent(0.45).setStroke()
+            inner.lineWidth = 1
+            inner.stroke()
             return true
         }
         image.isTemplate = false
@@ -750,6 +755,7 @@ private func drawCropOverlay(
     let full = projection.toView(imageBounds).cgRect
     let crop = projection.toView(frame).cgRect
 
+    // Drawn over the image, so the same in Light and Dark (spec 0008).
     // Dim the ring between the image and the crop rect (even-odd fills outside the inner rect).
     var mask = Path(full)
     mask.addRect(crop)
