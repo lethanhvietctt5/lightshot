@@ -96,6 +96,7 @@ final class AppController: NSObject, CaptureUI {
             gifEncoder: ImageIOGIFEncoder(),
             mediaMetadata: AVMediaMetadata(),
             scratchDirectory: Self.supportDirectory,
+            studioProjects: StudioProjectStore(directory: Self.studioProjectsDirectory),
             ui: self
         )
         // Enforce the persisted retention setting on the history store at launch (story 54): the
@@ -609,6 +610,20 @@ final class AppController: NSObject, CaptureUI {
         videoEditor.open(url)
     }
 
+    /// A studio project in the Studio editor (spec 0007, stories 3–4).
+    func openStudio(_ project: StudioProject) {
+        videoEditor.open(project: project, store: StudioProjectStore(directory: Self.studioProjectsDirectory))
+    }
+
+    /// For the menu bar's Studio Projects submenu (story 4).
+    func recentStudioProjects() -> [StudioProject] {
+        coordinator.recentStudioProjects()
+    }
+
+    func openStudioProject(at url: URL) {
+        coordinator.openStudioProject(at: url)
+    }
+
     func presentGIFConversion(cancel: @escaping () -> Void) {
         gifConversion.show(cancel: cancel)
     }
@@ -803,6 +818,11 @@ final class AppController: NSObject, CaptureUI {
 
     /// Where the local history keeps its owned image copies + index. Local-only — a v1 guardrail
     /// (no cloud, no accounts).
+    /// Where studio projects live (spec 0007): folders the Studio editor opens and autosaves.
+    private static var studioProjectsDirectory: URL {
+        supportDirectory.appendingPathComponent("Studio Projects", isDirectory: true)
+    }
+
     private static var historyDirectory: URL {
         supportDirectory.appendingPathComponent("History", isDirectory: true)
     }

@@ -18,6 +18,13 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
 
     private static let exportItem = NSToolbarItem.Identifier("videoEditor.export")
 
+    /// A studio project (spec 0007). Until the Studio editor lands (LIG-53) this opens the take's
+    /// clean screen movie in the video editor, titled by the project.
+    func open(project: StudioProject, store: StudioProjectStore) {
+        open(project.screenURL)
+        window?.title = project.name
+    }
+
     func open(_ url: URL) {
         // A clip already open gives up its backup and any export before the next takes the window.
         model?.close()

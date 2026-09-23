@@ -161,6 +161,10 @@ public struct RecordingOptions: Equatable, Sendable {
     /// What happens to the finished take (story 33): the Settings default, or — for a Studio
     /// Mode take (LIG-42) — the editor regardless of it.
     public var afterRecording: AfterRecordingAction
+    /// A studio take (spec 0007, story 1): a clean screen — no cursor, nothing composited — with
+    /// the pointer, clicks and keys recorded as data and the camera as its own movie, filed as a
+    /// studio project instead of a finished recording.
+    public var studio: Bool
 
     public init(
         region: CaptureRegion,
@@ -179,7 +183,8 @@ public struct RecordingOptions: Equatable, Sendable {
         keystrokeOverlay: KeystrokeOverlaySettings = .standard,
         showCursor: Bool = true,
         countdownSeconds: Int = 0,
-        afterRecording: AfterRecordingAction = .showOverlay
+        afterRecording: AfterRecordingAction = .showOverlay,
+        studio: Bool = false
     ) {
         self.region = region
         self.output = output
@@ -198,6 +203,7 @@ public struct RecordingOptions: Equatable, Sendable {
         self.showCursor = showCursor
         self.countdownSeconds = max(0, countdownSeconds)
         self.afterRecording = afterRecording
+        self.studio = studio
     }
 
     public var hasCountdown: Bool { countdownSeconds > 0 }
@@ -231,7 +237,8 @@ public struct RecordingOptions: Equatable, Sendable {
             keystrokeOverlay: defaults.keystrokeOverlay,
             showCursor: defaults.showCursor,
             countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0,
-            afterRecording: overrides.afterRecording ?? defaults.afterRecording
+            afterRecording: overrides.afterRecording ?? defaults.afterRecording,
+            studio: overrides.studio
         )
     }
 }
@@ -449,6 +456,8 @@ public struct RecordingOverrides: Equatable, Sendable {
     /// Where the take goes when it stops, beating the Settings default for this take only:
     /// **Record in Studio Mode** (LIG-42) sets `.openEditor`. `nil` is "as in Settings".
     public var afterRecording: AfterRecordingAction?
+    /// **Record in Studio Mode** (spec 0007): record a studio take for the Studio editor.
+    public var studio: Bool
 
     public init(
         microphone: Bool? = nil,
@@ -456,8 +465,10 @@ public struct RecordingOverrides: Equatable, Sendable {
         camera: Bool? = nil,
         highlightClicks: Bool? = nil,
         showKeystrokes: Bool? = nil,
-        afterRecording: AfterRecordingAction? = nil
+        afterRecording: AfterRecordingAction? = nil,
+        studio: Bool = false
     ) {
+        self.studio = studio
         self.microphone = microphone
         self.computerAudio = computerAudio
         self.camera = camera

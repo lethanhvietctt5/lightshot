@@ -169,6 +169,8 @@ private final class SpyUI: CaptureUI {
     func presentRecordingFinished(at url: URL) { finished.append(url) }
     func presentPostRecordingOverlay(_ recording: PendingRecording) { overlays.append(recording) }
     func openVideoEditor(at url: URL) { editors.append(url) }
+    private(set) var studios: [StudioProject] = []
+    func openStudio(_ project: StudioProject) { studios.append(project) }
     func presentGIFConversion(cancel: @escaping () -> Void) { gifPopups += 1; gifCancel = cancel }
     func updateGIFConversion(progress: Double) { gifProgress.append(progress) }
     func dismissGIFConversion() { gifDismissals += 1 }
@@ -259,6 +261,8 @@ private final class Harness {
     }
     var waits: [TimeInterval] { clock.waits }
 
+    let studioDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("coordinator-studio-\(UUID().uuidString)")
+
     init(service: FakeRecordingService = FakeRecordingService(), withHistory: Bool = false, metadata: VideoMetadata? = FakeMetadata().result) {
         self.service = service
         let clock = self.clock
@@ -275,6 +279,7 @@ private final class Harness {
             gifEncoder: gif,
             mediaMetadata: withHistory ? FakeMetadata(result: metadata) : nil,
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
+            studioProjects: StudioProjectStore(directory: studioDirectory),
             sleep: { seconds in await clock.sleep(seconds) },
             clock: { clock.now },
             ui: ui
@@ -1085,4 +1090,50 @@ private func materialisedTake() throws -> URL {
     #expect(h.ui.editors.count == 1)
     #expect(h.ui.overlays.isEmpty && h.ui.finished.isEmpty)
     #expect(h.settings.recordingDefaults.afterRecording == .saveSilently)   // the setting is untouched
+}
+
+
+// MARK: - Studio takes (spec 0007, stories 1–4)
+
+/// A studio take's files in a scratch folder, as the recorder leaves them.
+private func studioTake() throws -> URL {
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("studio-take-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    let screen = scratch.appendingPathComponent("take.mp4")
+    try Data("screen".utf8).write(to: screen)
+    try JSONEncoder().encode(StudioInput(regionSize: Size(width: 10, height: 10))).write(to: StudioTake.inputURL(forScreen: screen))
+    return screen
+}
+
+@Test @MainActor func aStudioTakeBecomesAProjectAndOpensInTheStudio() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor, studio: true))
+    #expect(h.service.starts.first?.options.studio == true)
+    h.now = 130
+    await h.coordinator.stopRecording()
+    #expect(h.ui.studios.count == 1)
+    #expect(h.ui.editors.isEmpty && h.ui.overlays.isEmpty && h.ui.finished.isEmpty)
+    let project = try #require(h.ui.studios.first)
+    #expect(FileManager.default.fileExists(atPath: project.screenURL.path))
+    #expect(!FileManager.default.fileExists(atPath: screen.path))
+    #expect(h.sink.saves.isEmpty)                                   // not delivered: the export is
+    #expect(h.coordinator.recentStudioProjects().map(\.url) == [project.url])
+}
+
+@Test @MainActor func aRecentStudioProjectReopensInTheStudio() async throws {
+    let screen = try studioTake()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(screen)))
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(studio: true))
+    await h.coordinator.stopRecording()
+    let project = try #require(h.ui.studios.first)
+    h.coordinator.openStudioProject(at: project.url)
+    #expect(h.ui.studios.count == 2 && h.ui.studios.last == project)
+}
+
+@Test @MainActor func aPlainTakeIsNotAStudioProject() async {
+    let h = Harness()
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
+    await h.coordinator.stopRecording()
+    #expect(h.ui.studios.isEmpty && h.ui.editors.count == 1)
 }
