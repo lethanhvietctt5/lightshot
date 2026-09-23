@@ -8,11 +8,12 @@ final class GIFConversionController {
     private var panel: NSPanel?
     private var model: ConversionModel?
 
-    func show(cancel: @escaping () -> Void) {
+    /// `title` / `symbol` let the same popup say "Preparing your recording…" (spec 0007, S8).
+    func show(title: String = "Making your GIF…", symbol: String = "photo.stack", cancel: @escaping () -> Void) {
         hide()
         let model = ConversionModel()
         self.model = model
-        let hosting = NSHostingView(rootView: GIFConversionView(model: model, cancel: cancel))
+        let hosting = NSHostingView(rootView: GIFConversionView(model: model, title: title, symbol: symbol, cancel: cancel))
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let panel = NSPanel(
@@ -62,11 +63,13 @@ private final class ConversionModel {
 
 private struct GIFConversionView: View {
     let model: ConversionModel
+    let title: String
+    let symbol: String
     let cancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Making your GIF…", systemImage: "photo.stack")
+            Label(title, systemImage: symbol)
                 .font(.system(size: 13, weight: .medium))
             ProgressView(value: model.progress)
                 .frame(width: 240)

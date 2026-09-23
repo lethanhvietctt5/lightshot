@@ -28,6 +28,8 @@ final class AppController: NSObject, CaptureUI {
     /// the video editor window (35–36).
     private let postRecordingOverlay = PostRecordingOverlayController()
     private let gifConversion = GIFConversionController()
+    /// The "preparing your recording" popup while a take is rendered for sharing (spec 0007, S8).
+    private let recordingPreparation = GIFConversionController()
     private let videoEditor = VideoEditorController()
     private let hotkeyService = CarbonHotkeyService()
     private let pinBoard = PinBoardController()
@@ -97,6 +99,7 @@ final class AppController: NSObject, CaptureUI {
             mediaMetadata: AVMediaMetadata(),
             scratchDirectory: Self.supportDirectory,
             studioProjects: StudioProjectStore(directory: Self.studioProjectsDirectory),
+            studioFlattener: StudioFlattener(store: StudioProjectStore(directory: Self.studioProjectsDirectory)),
             ui: self
         )
         // A studio project's export is filed like a finished recording (spec 0007, story 27).
@@ -637,6 +640,20 @@ final class AppController: NSObject, CaptureUI {
     func debugSeekStudio(to time: Double) { videoEditor.debugSeek(to: time) }
     func debugStudioPanel(_ name: String) { videoEditor.debugPanel(name) }
     #endif
+
+    /// A take being rendered for sharing (spec 0007, S8): progress with Cancel (which opens the
+    /// take's project in the Studio editor instead).
+    func presentRecordingPreparation(cancel: @escaping () -> Void) {
+        recordingPreparation.show(title: "Preparing your recording…", symbol: "film", cancel: cancel)
+    }
+
+    func updateRecordingPreparation(progress: Double) {
+        recordingPreparation.update(progress: progress)
+    }
+
+    func dismissRecordingPreparation() {
+        recordingPreparation.hide()
+    }
 
     func presentGIFConversion(cancel: @escaping () -> Void) {
         gifConversion.show(cancel: cancel)

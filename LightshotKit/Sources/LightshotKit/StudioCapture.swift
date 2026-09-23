@@ -87,6 +87,31 @@ public enum StudioTake {
     public static func cameraURL(forScreen screen: URL) -> URL {
         screen.deletingPathExtension().appendingPathExtension("camera.mov")
     }
+
+    /// Beside a take rendered for sharing (S8 / LIG-57): the path of the studio project it came
+    /// from, so opening it in the editor opens the editable project.
+    public static func projectLinkURL(forScreen screen: URL) -> URL {
+        screen.deletingPathExtension().appendingPathExtension("lightshot-project")
+    }
+
+    /// The files that travel with a take through history: its input data and its project link.
+    public static func sidecars(forScreen screen: URL) -> [URL] {
+        [inputURL(forScreen: screen), projectLinkURL(forScreen: screen)]
+    }
+
+    /// Link a rendered take to its project.
+    public static func writeProjectLink(_ project: StudioProject, forScreen screen: URL) throws {
+        try Data(project.url.path.utf8).write(to: projectLinkURL(forScreen: screen), options: .atomic)
+    }
+
+    /// The project a take was rendered from, when the link and the folder both still exist.
+    public static func linkedProjectURL(forScreen screen: URL) -> URL? {
+        guard let data = try? Data(contentsOf: projectLinkURL(forScreen: screen)),
+              let path = String(data: data, encoding: .utf8), !path.isEmpty else { return nil }
+        // Spelled like the store spells project URLs (no trailing slash), so they compare equal.
+        let url = URL(fileURLWithPath: path, isDirectory: false)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
 }
 
 /// One studio project on disk (spec 0007, stories 3–4): a folder holding the take and its edits.
@@ -199,4 +224,12 @@ public struct StudioProjectStore: Sendable {
         }
         return dated.sorted { $0.1 > $1.1 }.prefix(max(0, limit)).map { StudioProject(url: $0.0) }
     }
+}
+
+/// Renders a studio take's project into a finished movie for sharing without the editor
+/// (spec 0007, S8 / LIG-57): the app's implementation runs the Studio renderer and exporter.
+/// Cancellation of the calling task abandons the render and removes the partial file.
+@MainActor
+public protocol StudioFlattening: AnyObject {
+    func flatten(_ project: StudioProject, edits: StudioEdits, to output: URL, progress: @escaping @Sendable (Double) -> Void) async throws
 }

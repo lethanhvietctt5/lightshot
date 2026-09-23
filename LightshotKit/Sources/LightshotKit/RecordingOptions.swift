@@ -238,7 +238,9 @@ public struct RecordingOptions: Equatable, Sendable {
             showCursor: defaults.showCursor,
             countdownSeconds: defaults.countdownEnabled ? defaults.countdownSeconds : 0,
             afterRecording: overrides.afterRecording ?? defaults.afterRecording,
-            studio: overrides.studio
+            // Every take records its ingredients (spec 0007, S8 / LIG-57) — the OpenScreen model:
+            // a clean screen plus input data and the camera as its own movie, editable afterwards.
+            studio: true
         )
     }
 }
