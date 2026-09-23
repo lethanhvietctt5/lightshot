@@ -207,7 +207,7 @@ enum VideoExporter {
 
     /// Feeds writer inputs from reader outputs on their own queue, and finishes or cancels the
     /// writer once. Cancellation of the calling task abandons the export and removes the file.
-    private final class Pump: @unchecked Sendable {
+    final class Pump: @unchecked Sendable {
         private let reader: AVAssetReader
         private let writer: AVAssetWriter
         private let output: URL
