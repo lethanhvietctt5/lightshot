@@ -110,6 +110,7 @@ private final class StubSettings: SettingsStore {
     var recordingDefaults = RecordingDefaults(countdownEnabled: false)
     var rememberLastRecordingArea = false
     var lastRecordingRegion: CaptureRegion?
+    var appearance = AppearancePreference.system
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the

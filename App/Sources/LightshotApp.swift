@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenu: StatusMenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        controller.applyStoredAppearance()
         statusMenu = StatusMenuController(controller: controller)
         // Claim the persisted global hotkeys up front so shortcuts fire before the settings window
         // is ever opened (story 56).
@@ -39,6 +40,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Surface any take a crashed session left behind (spec 0006, story 18).
         controller.recoverOrphanedRecordings()
         #if DEBUG
+        // Development aid (spec 0008): `-previewAppearance light|dark` draws this launch in one
+        // appearance; `-previewSurface <name> [-previewFile <path>]` opens one surface to look at.
+        if let appearance = UserDefaults.standard.string(forKey: "previewAppearance") {
+            AppAppearance.apply(AppearancePreference(storedValue: appearance))
+        }
+        if let surface = UserDefaults.standard.string(forKey: "previewSurface") {
+            let file = UserDefaults.standard.string(forKey: "previewFile").map { URL(fileURLWithPath: $0) }
+            controller.debugPreviewSurface(surface, file: file)
+        }
         // Development aid: `-previewRecordingControls YES` shows the controls pill as during a take.
         if UserDefaults.standard.bool(forKey: "previewRecordingControls") { controller.debugShowRecordingControls() }
         if UserDefaults.standard.string(forKey: "previewDevicePicker") != nil { controller.toggleRecording() }

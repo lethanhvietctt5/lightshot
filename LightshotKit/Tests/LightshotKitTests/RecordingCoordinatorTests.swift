@@ -232,6 +232,7 @@ private final class StubSettings: SettingsStore {
     var recordingDefaults = RecordingDefaults(countdownEnabled: false, afterRecording: .saveSilently)
     var rememberLastRecordingArea = false
     var lastRecordingRegion: CaptureRegion?
+    var appearance = AppearancePreference.system
 }
 
 /// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.

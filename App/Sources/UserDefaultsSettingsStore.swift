@@ -28,6 +28,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let recordingDefaults = "recording.defaults"   // JSON: RecordingDefaults
         static let rememberLastRecordingArea = "recording.rememberLastArea"
         static let lastRecordingRegion = "recording.lastRegion"   // JSON: CaptureRegion
+        static let appearance = "app.appearance"   // "system" | "light" | "dark"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -149,6 +150,12 @@ final class UserDefaultsSettingsStore: SettingsStore {
                 defaults.removeObject(forKey: Key.lastRecordingRegion)
             }
         }
+    }
+
+    /// Spec 0008: an unknown or missing value matches the system.
+    var appearance: AppearancePreference {
+        get { AppearancePreference(storedValue: defaults.string(forKey: Key.appearance)) }
+        set { defaults.set(newValue.rawValue, forKey: Key.appearance) }
     }
 
     /// Backed by the real login-item registration, not a stored flag, so the toggle can't drift from

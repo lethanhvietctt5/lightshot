@@ -174,6 +174,16 @@ private struct GeneralPane: View {
                 Toggle("Launch Lightshot at login", isOn: $model.launchAtLogin)
             }
             Section {
+                Picker("Appearance", selection: $model.appearance) {
+                    ForEach(AppearancePreference.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("Match System follows Light and Dark in System Settings. Screenshots and recordings look the same either way.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Toggle("Play sounds", isOn: $model.recordingDefaults.playSounds)
             } header: {
                 Text("Sounds")

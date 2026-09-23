@@ -15,6 +15,7 @@ final class SettingsModel {
     private let store: SettingsStore
     private let applyHotkeys: (HotkeyBindings) -> [CaptureAction]
     private let applyRetention: (Int) -> Void
+    private let applyAppearance: (AppearancePreference) -> Void
     private var suppressLaunchWrite = false
 
     var hotkeys: HotkeyBindings {
@@ -33,6 +34,13 @@ final class SettingsModel {
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
     var captureDelay: TimeInterval { didSet { store.captureDelay = captureDelay } }
     var rememberLastRecordingArea: Bool { didSet { store.rememberLastRecordingArea = rememberLastRecordingArea } }
+    /// Applied app-wide the moment it changes (spec 0008, story 14).
+    var appearance: AppearancePreference {
+        didSet {
+            store.appearance = appearance
+            applyAppearance(appearance)
+        }
+    }
     /// The recording baseline (spec 0006), edited as a unit; each row binds one field of it.
     var recordingDefaults: RecordingDefaults { didSet { store.recordingDefaults = recordingDefaults } }
     var historyRetention: Int {
@@ -69,11 +77,13 @@ final class SettingsModel {
         store: SettingsStore,
         applyHotkeys: @escaping (HotkeyBindings) -> [CaptureAction],
         applyRetention: @escaping (Int) -> Void,
+        applyAppearance: @escaping (AppearancePreference) -> Void = { _ in },
         permissionGate: @escaping (RecordingToggle) async -> Bool = { _ in true }
     ) {
         self.store = store
         self.applyHotkeys = applyHotkeys
         self.applyRetention = applyRetention
+        self.applyAppearance = applyAppearance
         self.permissionGate = permissionGate
 
         // Seed from the store. Assigning in init does not fire `didSet`, so this reads without
@@ -92,6 +102,7 @@ final class SettingsModel {
         self.includeCursor = store.includeCursor
         self.captureDelay = store.captureDelay
         self.rememberLastRecordingArea = store.rememberLastRecordingArea
+        self.appearance = store.appearance
         self.recordingDefaults = store.recordingDefaults
         self.historyRetention = store.historyRetention
         self.launchAtLogin = store.launchAtLogin
