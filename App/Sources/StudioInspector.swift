@@ -23,8 +23,9 @@ struct StudioInspector: View {
                 case .output: output
                 }
             }
+            // A hard width: nothing inside may push the panel past its 300-point column.
+            .frame(width: 260, alignment: .leading)
             .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
         .disabled(model.sources == nil)
@@ -86,11 +87,7 @@ struct StudioInspector: View {
         slider("Corner Radius", value: \.canvas.cornerRadius, in: 0...0.1, percent: true)
         slider("Shadow", value: \.canvas.shadow, in: 0...1, percent: true)
         section("Aspect Ratio") {
-            Picker("Aspect", selection: Binding(get: { model.edits.canvas.aspect }, set: { model.set(\.canvas.aspect, $0) })) {
-                ForEach(StudioAspect.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            StudioChoices(options: StudioAspect.allCases, title: { $0.title }, selection: Binding(get: { model.edits.canvas.aspect }, set: { model.set(\.canvas.aspect, $0) }))
         }
     }
 
@@ -121,7 +118,9 @@ struct StudioInspector: View {
     @ViewBuilder
     private var cursor: some View {
         if !model.hasCursorData {
-            unavailable("This recording has no cursor data. Record in Studio Mode to restyle the cursor after the take.", symbol: "cursorarrow.slash")
+            unavailable("This recording has no cursor data — it was made before Lightshot kept it. New recordings keep it, so zooms can follow the cursor and Auto Zoom can find your clicks.", symbol: "cursorarrow.slash")
+        } else if model.cursorInVideo {
+            unavailable("The cursor is part of this recording, so it can't be restyled here — its movement still steers follow-cursor zooms and Auto Zoom. To restyle the cursor (size, smoothing, click effects), record with Record in Studio Mode.", symbol: "cursorarrow.rays")
         } else {
             toggle("Show Cursor", \.cursor.visible)
             if model.edits.cursor.visible {
@@ -133,11 +132,7 @@ struct StudioInspector: View {
                     slider("Idle Delay", value: \.cursor.idleDelay, in: 0.5...10, format: { String(format: "%.1f s", $0) })
                 }
                 section("Click Effect") {
-                    Picker("Click Effect", selection: Binding(get: { model.edits.cursor.clickEffect }, set: { model.set(\.cursor.clickEffect, $0) })) {
-                        ForEach(ClickEffect.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    StudioChoices(options: ClickEffect.allCases, title: { $0.title }, selection: Binding(get: { model.edits.cursor.clickEffect }, set: { model.set(\.cursor.clickEffect, $0) }))
                 }
                 if model.edits.cursor.clickEffect != .none {
                     ColorPicker("Click Colour", selection: Binding(
@@ -154,7 +149,8 @@ struct StudioInspector: View {
     @ViewBuilder
     private var zoom: some View {
         HStack(spacing: 8) {
-            panelButton("Add Zoom at Playhead") { model.addZoom() }
+            panelButton("Add Zoom") { model.addZoom() }
+                .help("Add a zoom at the playhead")
             panelButton("Auto Zoom") { model.autoZoom() }
                 .disabled(!model.hasClicks)
                 .help(model.hasClicks ? "One zoom per burst of clicks" : "Needs click data from a Studio Mode take")
@@ -214,16 +210,10 @@ struct StudioInspector: View {
             toggle("Show Camera", \.camera.visible)
             if model.edits.camera.visible {
                 section("Size") {
-                    Picker("Size", selection: Binding(get: { model.edits.camera.bubble.size }, set: { model.set(\.camera.bubble.size, $0) })) {
-                        ForEach(CameraBubbleSize.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
+                    StudioChoices(options: CameraBubbleSize.allCases, title: { $0.title }, selection: Binding(get: { model.edits.camera.bubble.size }, set: { model.set(\.camera.bubble.size, $0) }))
                 }
                 section("Shape") {
-                    Picker("Shape", selection: Binding(get: { model.edits.camera.bubble.shape }, set: { model.set(\.camera.bubble.shape, $0) })) {
-                        ForEach(CameraBubbleShape.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
+                    StudioChoices(options: CameraBubbleShape.allCases, title: { $0.title }, selection: Binding(get: { model.edits.camera.bubble.shape }, set: { model.set(\.camera.bubble.shape, $0) }))
                 }
                 toggle("Mirror", \.camera.bubble.mirror)
                 section("Position") {
@@ -327,18 +317,12 @@ struct StudioInspector: View {
     private var output: some View {
         picker("Resolution", \.output.resolution, OutputResolution.allCases, title: \.title)
         section("Frame Rate") {
-            Picker("Frame Rate", selection: Binding(get: { model.edits.output.fps }, set: { model.set(\.output.fps, $0) })) {
-                ForEach(StudioOutput.frameRates, id: \.self) { Text("\($0) fps").tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
+            StudioChoices(options: StudioOutput.frameRates, title: { "\($0) fps" }, selection: Binding(get: { model.edits.output.fps }, set: { model.set(\.output.fps, $0) }))
         }
         picker("Codec", \.output.codec, StudioCodec.allCases, title: \.title)
         slider("Quality", value: \.output.quality, in: 0...1, percent: true)
         section("Format") {
-            Picker("Format", selection: Binding(get: { model.edits.output.format }, set: { model.set(\.output.format, $0) })) {
-                ForEach(StudioOutputFormat.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented).labelsHidden()
+            StudioChoices(options: StudioOutputFormat.allCases, title: { $0.title }, selection: Binding(get: { model.edits.output.format }, set: { model.set(\.output.format, $0) }))
         }
         if let size = model.outputSize { valueRow("Canvas", "\(Int(size.width)) × \(Int(size.height)) px") }
         valueRow("Length", TimelineScale.label(model.duration))

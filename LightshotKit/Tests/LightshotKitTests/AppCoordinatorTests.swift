@@ -143,7 +143,7 @@ private final class SpyUI: CaptureUI {
     func resolveMicrophoneDisconnected() async -> Bool { true }
     func presentRecordingFinished(at url: URL) {}
     func presentPostRecordingOverlay(_ recording: PendingRecording) {}
-    func openVideoEditor(at url: URL) {}
+    func openVideoEditor(at url: URL, input: URL?) {}
     func openStudio(_ project: StudioProject) {}
     func presentGIFConversion(cancel: @escaping () -> Void) {}
     func updateGIFConversion(progress: Double) {}

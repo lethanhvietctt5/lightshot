@@ -45,7 +45,9 @@ public protocol CaptureUI: AnyObject {
     /// `deletePendingRecording` and `dismissPendingRecording`.
     func presentPostRecordingOverlay(_ recording: PendingRecording)
     /// Open the saved recording in the video editor (story 33; the editor itself is R14).
-    func openVideoEditor(at url: URL)
+    /// `input` is the take's pointer / click data when it has any (spec 0007), so zooms can follow
+    /// the cursor and Auto Zoom can find the clicks.
+    func openVideoEditor(at url: URL, input: URL?)
     /// Open a studio project in the Studio editor (spec 0007, stories 3–4).
     func openStudio(_ project: StudioProject)
     /// A GIF take is converting (stories 37–38): show progress with a Cancel that calls `cancel`.
@@ -619,6 +621,12 @@ public final class AppCoordinator {
         return deliver(archived, as: name)
     }
 
+    /// A take's pointer / click data, kept beside its file (in scratch, or in history once filed).
+    private func takeInput(for file: URL) -> URL? {
+        let url = StudioTake.inputURL(forScreen: file)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     /// The most recent studio projects, newest first, for the menu bar (spec 0007, story 4).
     public func recentStudioProjects(limit: Int = 10) -> [StudioProject] {
         studioProjects?.recent(limit: limit) ?? []
@@ -663,7 +671,7 @@ public final class AppCoordinator {
         )
         switch record.kind {
         case .video:
-            if let copy = deliver(recording, as: nil) { ui.openVideoEditor(at: copy) }
+            if let copy = deliver(recording, as: nil) { ui.openVideoEditor(at: copy, input: takeInput(for: recording.file)) }
         case .gif:
             pendingRecording = recording
             ui.presentPostRecordingOverlay(recording)
@@ -685,7 +693,7 @@ public final class AppCoordinator {
         case .openEditor:
             guard let saved = deliver(recording, as: nil) else { return }
             // A GIF is never edited in v1 (spec: out of scope): the setting degrades to a silent save.
-            if recording.kind == .gif { ui.presentRecordingFinished(at: saved) } else { ui.openVideoEditor(at: saved) }
+            if recording.kind == .gif { ui.presentRecordingFinished(at: saved) } else { ui.openVideoEditor(at: saved, input: takeInput(for: recording.file)) }
         }
     }
 
@@ -740,8 +748,9 @@ public final class AppCoordinator {
     /// the pattern) and the saved file opens in the editor. Returns where it landed.
     @discardableResult
     public func openPendingRecordingInEditor(as name: String? = nil) -> URL? {
+        let input = pendingRecording.flatMap { takeInput(for: $0.file) }
         guard let saved = savePendingRecording(as: name) else { return nil }
-        ui.openVideoEditor(at: saved)
+        ui.openVideoEditor(at: saved, input: input)
         return saved
     }
 

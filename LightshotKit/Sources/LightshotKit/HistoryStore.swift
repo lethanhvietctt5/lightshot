@@ -217,7 +217,14 @@ public final class HistoryStore {
             imageFile: mediaFile, thumbnailFile: thumbnailFile
         )
         do {
-            return try append(entry)
+            let record = try append(entry)
+            // A take's pointer / click data (spec 0007) lives beside it and moves in with it, so
+            // the editor can still steer zooms from it when the take is reopened.
+            let sidecar = StudioTake.inputURL(forScreen: url)
+            if fileManager.fileExists(atPath: sidecar.path) {
+                try? fileManager.moveItem(at: sidecar, to: StudioTake.inputURL(forScreen: mediaURL))
+            }
+            return record
         } catch {
             entries.removeAll { $0.id == id }
             try? fileManager.moveItem(at: mediaURL, to: url)
@@ -313,7 +320,9 @@ public final class HistoryStore {
     }
 
     private func deleteFiles(for entry: StoredEntry) {
-        try? fileManager.removeItem(at: directory.appendingPathComponent(entry.imageFile))
+        let media = directory.appendingPathComponent(entry.imageFile)
+        try? fileManager.removeItem(at: StudioTake.inputURL(forScreen: media))
+        try? fileManager.removeItem(at: media)
         try? fileManager.removeItem(at: directory.appendingPathComponent(entry.thumbnailFile))
     }
 }

@@ -168,7 +168,8 @@ private final class SpyUI: CaptureUI {
     func resolveMicrophoneDisconnected() async -> Bool { microphoneLostPrompts += 1; return continueWithoutAudio }
     func presentRecordingFinished(at url: URL) { finished.append(url) }
     func presentPostRecordingOverlay(_ recording: PendingRecording) { overlays.append(recording) }
-    func openVideoEditor(at url: URL) { editors.append(url) }
+    private(set) var editorInputs: [URL?] = []
+    func openVideoEditor(at url: URL, input: URL?) { editors.append(url); editorInputs.append(input) }
     private(set) var studios: [StudioProject] = []
     func openStudio(_ project: StudioProject) { studios.append(project) }
     func presentGIFConversion(cancel: @escaping () -> Void) { gifPopups += 1; gifCancel = cancel }
@@ -1155,4 +1156,40 @@ private func studioTake() throws -> URL {
     let saved = await h.coordinator.fileStudioExport(at: export, named: nil)
     #expect(saved?.pathExtension == "gif" && saved?.deletingLastPathComponent().path == "/tmp/movies")
     #expect(h.sink.saves.map(\.from) == [export])
+}
+
+// MARK: - Input data for every take (spec 0007 follow-up: auto zoom on ordinary recordings)
+
+/// An ordinary take in scratch with the input sidecar the recorder writes beside it.
+private func plainTakeWithInput() throws -> URL {
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("plain-take-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+    let movie = scratch.appendingPathComponent("take.mp4")
+    try Data("movie".utf8).write(to: movie)
+    var input = StudioInput(regionSize: Size(width: 10, height: 10), clicks: [TimedPoint(time: 1, point: Point(x: 1, y: 1))])
+    input.cursorInVideo = true
+    try JSONEncoder().encode(input).write(to: StudioTake.inputURL(forScreen: movie))
+    return movie
+}
+
+@Test @MainActor func anOrdinaryTakesInputTravelsIntoHistoryAndReachesTheEditor() async throws {
+    let movie = try plainTakeWithInput()
+    let h = Harness(service: FakeRecordingService(stopResult: .success(movie)), withHistory: true)
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
+    await h.coordinator.stopRecording()
+    let record = try #require(h.history?.all().first)
+    let sidecar = StudioTake.inputURL(forScreen: record.fileURL)
+    #expect(FileManager.default.fileExists(atPath: sidecar.path))                    // moved with the take
+    #expect(!FileManager.default.fileExists(atPath: StudioTake.inputURL(forScreen: movie).path))
+    #expect(h.ui.editorInputs == [sidecar])
+    // Reopening it from history hands the same data to the editor.
+    h.coordinator.reopenRecording(record)
+    #expect(h.ui.editorInputs.last == sidecar)
+}
+
+@Test @MainActor func aTakeWithoutInputOpensTheEditorWithoutIt() async {
+    let h = Harness(withHistory: true)
+    await h.coordinator.startRecording(region: display, overrides: RecordingOverrides(afterRecording: .openEditor))
+    await h.coordinator.stopRecording()
+    #expect(h.ui.editorInputs == [nil])
 }

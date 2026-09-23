@@ -20,9 +20,10 @@ final class StudioTakeRecorder: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private let cameraScratchURL: URL
 
-    init(regionOrigin: Point, regionSize: Size, queue: DispatchQueue, cameraScratchURL: URL) {
+    init(regionOrigin: Point, regionSize: Size, cursorInVideo: Bool = false, queue: DispatchQueue, cameraScratchURL: URL) {
         self.queue = queue
         input = StudioInputRecorder(regionOrigin: regionOrigin, regionSize: regionSize)
+        input.cursorInVideo = cursorInVideo
         self.cameraScratchURL = cameraScratchURL
     }
 

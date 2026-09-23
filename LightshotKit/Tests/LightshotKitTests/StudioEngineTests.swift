@@ -205,3 +205,10 @@ private func camera(_ zooms: [ZoomRegion], cursor: CursorPath? = nil, transition
     #expect(decoded == input)
     #expect(decoded.version == StudioInput.currentVersion)
 }
+
+@Test func inputFromBeforeCursorInVideoDecodesAsACleanScreen() throws {
+    var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(StudioInput(regionSize: Size(width: 4, height: 4)))) as! [String: Any]
+    json.removeValue(forKey: "cursorInVideo")
+    let decoded = try JSONDecoder().decode(StudioInput.self, from: JSONSerialization.data(withJSONObject: json))
+    #expect(decoded.cursorInVideo == false)
+}

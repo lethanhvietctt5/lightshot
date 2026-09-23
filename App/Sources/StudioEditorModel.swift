@@ -17,7 +17,8 @@ final class StudioEditorModel {
     /// while the window is open; export makes a new file or replaces the original).
     enum Session {
         case project(StudioProject, StudioProjectStore)
-        case file(URL)
+        /// A plain movie, with its take's pointer / click data when it has any.
+        case file(URL, input: URL?)
     }
 
     enum Panel: String, CaseIterable {
@@ -133,17 +134,20 @@ final class StudioEditorModel {
     var screenURL: URL {
         switch session {
         case let .project(project, _): return project.screenURL
-        case let .file(url): return url
+        case let .file(url, _): return url
         }
     }
     var title: String {
         switch session {
         case let .project(project, _): return project.name
-        case let .file(url): return url.lastPathComponent
+        case let .file(url, _): return url.lastPathComponent
         }
     }
     var isProject: Bool { if case .project = session { return true } else { return false } }
     var hasCursorData: Bool { !(input?.samples.isEmpty ?? true) }
+    /// The cursor is part of the movie (an ordinary take): its data steers zooms, but it can't be
+    /// restyled, and the editor never draws a second one.
+    var cursorInVideo: Bool { input?.cursorInVideo ?? false }
     var hasClicks: Bool { !(input?.clicks.isEmpty ?? true) }
     var hasKeys: Bool { !(input?.keys.isEmpty ?? true) }
     var hasCamera: Bool { sources?.camera != nil }
@@ -189,7 +193,8 @@ final class StudioEditorModel {
             input = store.loadInput(project)
             transcript = store.loadTranscript(project)
             cameraURL = project.cameraURL
-        case .file:
+        case let .file(_, inputURL):
+            input = inputURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(StudioInput.self, from: $0) }
             cameraURL = nil
         }
         do {
@@ -643,7 +648,7 @@ final class StudioEditorModel {
                 message = "Saved to \(saved.deletingLastPathComponent().lastPathComponent) as \(saved.lastPathComponent)."
                 NSWorkspace.shared.activateFileViewerSelecting([saved])
             }
-        case let .file(url):
+        case let .file(url, _):
             let fm = FileManager.default
             if saveMode == .newFile || staging.pathExtension != url.pathExtension {
                 let destination = Self.uniqueSibling(of: url, suffix: " edited", pathExtension: staging.pathExtension)
@@ -664,7 +669,7 @@ final class StudioEditorModel {
 
     /// Put the backup back (plain-movie session).
     func revert() {
-        guard case let .file(url) = session, let backup else { return }
+        guard case let .file(url, _) = session, let backup else { return }
         do {
             _ = try FileManager.default.replaceItemAt(url, withItemAt: backup)
             self.backup = nil
