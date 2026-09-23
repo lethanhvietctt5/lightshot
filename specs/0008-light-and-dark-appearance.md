@@ -185,7 +185,7 @@ The work ships as slices, one surface family each. Every slice keeps Dark exactl
   - The contrast helpers get known-value tests: white on black is 21:1, and a colour against itself is 1:1.
 - **Seam 2: the preference, in kit unit tests.** `resolved(system:)` is checked for every preference × system combination. The setting defaults to `system`, persists through the settings store, and an unknown stored value falls back to `system`.
 - **Content invariance.** Renderers get no appearance input, so the existing render and export tests already cover their output.
-  - Slice 3 also runs the offline render harness once to export the same synthetic studio project in both appearances. The two files must be byte-identical.
+  - Nothing in the renderers, compositors, exporters or the kit `render` refers to a theme token, an `NSAppearance` or a colour scheme; each slice checks this with a grep. The Studio preview canvas is compared in the Light and Dark screenshots.
 - **The visual verify loop (not CI; done before each PR).** This extends the existing isolated `dev.lightshot.app.verify` Debug build and its DEBUG launch arguments.
   - A new `-previewAppearance light|dark` argument overrides the preference for that launch.
   - A new `-previewSurface <name> [-previewFile <path>]` argument opens one surface with no capture or recording: `editor`, `postCapture` and `pin` (with the image at `-previewFile`, or a generated sample), `settings`, `history`, `onboarding`, `postRecording` (the movie at `-previewFile`) and `preparing` (the progress panel that GIF making and take preparation share).
@@ -208,6 +208,7 @@ The work ships as slices, one surface family each. Every slice keeps Dark exactl
 
 - **Why the recording chrome goes light.** The recording chrome was made dark on purpose in LIG-42, after CleanShot's dark toolbar. The user asked for full Light and Dark support; CleanShot's own chrome follows the system and ships Dark variants of its colours. The dark look is kept exactly as Lightshot's Dark appearance, and anyone who prefers it everywhere can pin **Dark** in Settings.
 - **Why `NSApp.appearance` and not per-view overrides.** One application-wide switch is what makes AppKit popovers, menus, sheets, open panels and native controls agree with SwiftUI chrome. Per-view colour-scheme overrides left those mismatched.
+- **The keystroke overlay's own System style.** The keystroke overlay has a **System** style (spec 0006, story 30) that follows macOS's Dark Mode when a take starts. That is a look the user picked for the *recording*, so it stays tied to macOS and not to Lightshot's pinned appearance.
 - **Guardrails.**
   - The appearance never reaches a renderer, so exports stay deterministic.
   - Redaction is unaffected: blackout is content and stays black in both appearances.

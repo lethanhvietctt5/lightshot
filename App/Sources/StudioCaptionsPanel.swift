@@ -38,6 +38,7 @@ struct StudioCaptionsPanel: View {
                         .font(.system(size: 13, weight: .medium))
                 }
                 .frame(maxWidth: .infinity).frame(height: 30)
+                .foregroundStyle(model.transcript == nil ? StudioStyle.onAccent : Color.theme(.textPrimary))
                 .background(RoundedRectangle(cornerRadius: 7).fill(model.transcript == nil ? StudioStyle.blue : StudioStyle.control))
                 .contentShape(Rectangle())
             }
@@ -113,9 +114,9 @@ struct StudioCaptionsPanel: View {
         return Text(word.text)
             .font(.system(size: 12))
             .strikethrough(cut)
-            .foregroundStyle(cut ? StudioStyle.secondary : Color.white)
+            .foregroundStyle(selected ? StudioStyle.onAccent : cut ? StudioStyle.secondary : Color.theme(.textPrimary))
             .padding(.horizontal, 4).padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 4).fill(selected ? StudioStyle.blue.opacity(0.7) : Color.clear))
+            .background(RoundedRectangle(cornerRadius: 4).fill(selected ? StudioStyle.blue.opacity(0.85) : Color.clear))
             .contentShape(Rectangle())
             .onTapGesture {
                 if selected { model.selectedWords.remove(index) } else { model.selectedWords.insert(index) }

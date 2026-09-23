@@ -3,17 +3,20 @@ import AVFoundation
 import SwiftUI
 import LightshotKit
 
-/// The Studio editor's colours: one dark canvas, hairline dividers, dimmed secondary text.
+/// The Studio editor's colours: one canvas, hairline dividers, dimmed secondary text — theme
+/// tokens, so the editor is light or dark with the appearance (spec 0008).
 enum StudioStyle {
-    static let canvas = Color(white: 0.12)
-    static let divider = Color.white.opacity(0.08)
-    static let secondary = Color.white.opacity(0.55)
-    static let control = Color.white.opacity(0.08)
-    static let playhead = Color(red: 1, green: 0.27, blue: 0.23)
-    static let clip = Color(red: 0.25, green: 0.27, blue: 0.32)
-    static let selection = Color(red: 1, green: 0.8, blue: 0.2)
-    static let zoom = Color(red: 0.45, green: 0.35, blue: 0.95)
-    static let blue = Color(red: 0.04, green: 0.52, blue: 1)
+    static let canvas = Color.theme(.studioCanvas)
+    static let divider = Color.theme(.studioDivider)
+    static let secondary = Color.theme(.textSecondary)
+    static let control = Color.theme(.studioControl)
+    static let playhead = Color.theme(.playhead)
+    static let clip = Color.theme(.studioClip)
+    static let selection = Color.theme(.timelineSelection)
+    static let zoom = Color.theme(.zoomAccent)
+    static let blue = Color.theme(.accentBlue)
+    /// Text and glyphs on an accent fill (the blue, the zoom purple, the text-pill orange).
+    static let onAccent = Color.theme(.onAccent)
 }
 
 /// The Studio editor (spec 0007, S4): rail · inspector · preview + transport over the timeline,
@@ -34,8 +37,7 @@ struct StudioEditorView: View {
             .ignoresSafeArea(.container, edges: .top)
         }
         .background(StudioStyle.canvas)
-        .foregroundStyle(.white)
-        .environment(\.colorScheme, .dark)
+        .foregroundStyle(Color.theme(.textPrimary))
         .background { shortcuts }
     }
 
@@ -129,7 +131,7 @@ struct StudioRailButton: View {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .medium))
                 .frame(width: 44, height: 44)
-                .foregroundStyle(isSelected ? Color.white : Color.white.opacity(hovered ? 0.85 : 0.55))
+                .foregroundStyle(isSelected ? StudioStyle.onAccent : Color.theme(hovered ? .textStrong : .textSecondary))
                 .background(RoundedRectangle(cornerRadius: 10).fill(isSelected ? StudioStyle.blue : hovered ? StudioStyle.control : .clear))
                 .contentShape(Rectangle())
         }
@@ -201,7 +203,7 @@ private struct StudioPreview: View {
                         }
                 }
                 .aspectRatio(CGSize(width: max(canvas.width, 1), height: max(canvas.height, 1)), contentMode: .fit)
-                .shadow(color: .black.opacity(0.4), radius: 16, y: 6)
+                .shadow(color: .theme(.previewShadow), radius: 16, y: 6)
             } else if let error = model.loadError {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(StudioStyle.secondary)
             } else {
@@ -216,8 +218,9 @@ private struct StudioPreview: View {
             if model.isPickingFocus {
                 Text("Click the preview where the zoom should look · Esc to cancel")
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(StudioStyle.onAccent)
                     .padding(.horizontal, 10).frame(height: 24)
-                    .background(Capsule().fill(StudioStyle.zoom.opacity(0.6)))
+                    .background(Capsule().fill(StudioStyle.zoom.opacity(0.85)))
                     .padding(.bottom, 12)
             } else if model.sources != nil {
                 StudioOutputSummary(model: model).padding(.bottom, 12)
@@ -320,6 +323,7 @@ struct StudioPlayerSurface: NSViewRepresentable {
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
+            // Content, not chrome (spec 0008): the video's letterbox is black in either appearance.
             layer?.backgroundColor = NSColor.black.cgColor
             playerLayer.videoGravity = .resizeAspect
             layer?.addSublayer(playerLayer)
@@ -392,6 +396,5 @@ struct StudioExportPanel: View {
         }
         .padding(16)
         .frame(width: 320)
-        .environment(\.colorScheme, .dark)
     }
 }
