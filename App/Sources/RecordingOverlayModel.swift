@@ -47,6 +47,20 @@ final class RecordingOverlayModel {
     /// Toggles whose grant is not standing right now; the toolbar badges them.
     private(set) var missingPermissions: Set<RecordingToggle> = []
 
+    /// The device picker open under the microphone or camera cell, if any: it opens by itself when
+    /// that toggle is switched on and there is more than one device to choose from, and from the
+    /// cell's ▾ badge any time after.
+    var devicePicker: RecordingToggle?
+
+    /// Whether a toggle has devices worth choosing between (more than one attached).
+    func hasDeviceChoice(_ toggle: RecordingToggle) -> Bool {
+        switch toggle {
+        case .microphone: return audioInputs.count > 1
+        case .camera: return cameras.count > 1
+        default: return false
+        }
+    }
+
     /// This take's toggle overrides; `nil` per toggle means "as in Settings".
     private(set) var overrides = RecordingOverrides.none
 
@@ -121,6 +135,15 @@ final class RecordingOverlayModel {
             }
         }
         Task { @MainActor in await refreshPermissions() }
+        #if DEBUG
+        // Development aid: `-previewDevicePicker microphone|camera` opens with that toggle on and
+        // its picker showing, without the permission gate.
+        if let name = UserDefaults.standard.string(forKey: "previewDevicePicker"),
+           let toggle = RecordingToggle.allCases.first(where: { "\($0)" == name }) {
+            overrides[toggle] = true
+            devicePicker = toggle
+        }
+        #endif
     }
 
     /// Re-read every gated toggle's grant; called at start and after each ask.
@@ -173,6 +196,8 @@ final class RecordingOverlayModel {
         overrides[toggle] = turningOn
         if toggle == .camera { syncCameraPreview() }
         if turningOn { await refreshPermissions() }
+        // Just switched on with several devices attached: ask which one right away.
+        devicePicker = turningOn && hasDeviceChoice(toggle) ? toggle : (devicePicker == toggle ? nil : devicePicker)
     }
 
     /// Pick a microphone from the mic toggle's menu (story 20) and make sure the toggle is on; a
@@ -183,11 +208,13 @@ final class RecordingOverlayModel {
             guard isOn(.microphone) else { return }
         }
         microphoneDeviceID = deviceID
+        devicePicker = nil
     }
 
     /// The menu's "Do Not Record Microphone".
     func turnOffMicrophone() {
         overrides[.microphone] = false
+        devicePicker = nil
     }
 
     /// Pick a camera from the camera toggle's menu (story 27), switching the toggle on first.
@@ -197,12 +224,14 @@ final class RecordingOverlayModel {
             guard isOn(.camera) else { return }
         }
         cameraDeviceID = deviceID
+        devicePicker = nil
         syncCameraPreview()
     }
 
     /// The menu's "Do Not Record Camera".
     func turnOffCamera() {
         overrides[.camera] = false
+        devicePicker = nil
         syncCameraPreview()
     }
 

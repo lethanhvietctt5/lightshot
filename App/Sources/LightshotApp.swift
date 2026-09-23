@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         // Development aid: `-previewRecordingControls YES` shows the controls pill as during a take.
         if UserDefaults.standard.bool(forKey: "previewRecordingControls") { controller.debugShowRecordingControls() }
+        if UserDefaults.standard.string(forKey: "previewDevicePicker") != nil { controller.toggleRecording() }
         // Development aid: `-openStudioProject <folder>` opens a studio project at launch, so the
         // Studio editor can be exercised without recording a take.
         if let path = UserDefaults.standard.string(forKey: "openStudioProject") {

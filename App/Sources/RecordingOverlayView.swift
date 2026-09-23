@@ -232,56 +232,69 @@ struct RecordingOverlayView: View {
         .toolbarControl("Aspect ratio: \(model.ratio.title)", shape: .cell(.init(topTrailing: Self.radius)))
     }
 
-    /// The mic toggle doubles as a device menu (story 20): a click flips it, the menu picks the input.
+    /// The mic toggle (story 20): a click flips it; switched on with more than one input attached,
+    /// the device picker opens under it at once, and its ▾ badge reopens the picker any time.
     private func microphoneControl(_ corners: RectangleCornerRadii) -> some View {
-        Menu {
-            Picker("Microphone", selection: Binding<String?>(
-                get: { model.isOn(.microphone) ? model.microphoneDeviceID : "off" },
-                set: { id in Task { await model.selectMicrophone(id) } }
-            )) {
-                Text("System Default").tag(String?.none)
-                ForEach(model.audioInputs) { device in
-                    Text(device.name).tag(Optional(device.id))
-                }
-            }
-            .pickerStyle(.inline)
-            Divider()
-            Button("Do Not Record Microphone") { model.turnOffMicrophone() }
-                .disabled(!model.isOn(.microphone))
-        } label: {
-            toggleGlyph(.microphone)
-        } primaryAction: {
-            Task { await model.toggle(.microphone) }
-        }
-        .modifier(PlainMenu())
-        .frame(width: Self.cellWidth, height: Self.toggleRowHeight)
-        .toolbarControl(model.isOn(.microphone) ? "Microphone on — choose a device" : "Record the microphone", isOn: model.isOn(.microphone), warning: model.permissionWarning(for: .microphone), shape: .cell(corners))
+        deviceControl(
+            .microphone, corners: corners, title: "Microphone",
+            devices: model.audioInputs.map { ($0.id, $0.name) }, selected: model.microphoneDeviceID,
+            select: { id in Task { await model.selectMicrophone(id) } },
+            turnOff: { model.turnOffMicrophone() },
+            help: model.isOn(.microphone) ? "Microphone on" : "Record the microphone"
+        )
     }
 
-    /// The camera toggle doubles as a device menu (story 27), like the microphone's.
+    /// The camera toggle (story 27), like the microphone's.
     private func cameraControl(_ corners: RectangleCornerRadii) -> some View {
-        Menu {
-            Picker("Camera", selection: Binding<String?>(
-                get: { model.isOn(.camera) ? model.cameraDeviceID : "off" },
-                set: { id in Task { await model.selectCamera(id) } }
-            )) {
-                Text("System Default").tag(String?.none)
-                ForEach(model.cameras) { device in
-                    Text(device.name).tag(Optional(device.id))
-                }
-            }
-            .pickerStyle(.inline)
-            Divider()
-            Button("Do Not Record Camera") { model.turnOffCamera() }
-                .disabled(!model.isOn(.camera))
+        deviceControl(
+            .camera, corners: corners, title: "Camera",
+            devices: model.cameras.map { ($0.id, $0.name) }, selected: model.cameraDeviceID,
+            select: { id in Task { await model.selectCamera(id) } },
+            turnOff: { model.turnOffCamera() },
+            help: model.isOn(.camera) ? "Camera on" : "Show your camera in the recording"
+        )
+    }
+
+    private func deviceControl(
+        _ toggle: RecordingToggle, corners: RectangleCornerRadii, title: String,
+        devices: [(id: String, name: String)], selected: String?,
+        select: @escaping (String?) -> Void, turnOff: @escaping () -> Void, help: String
+    ) -> some View {
+        let showsChoice = model.isOn(toggle) && model.hasDeviceChoice(toggle)
+        return Button {
+            Task { await model.toggle(toggle) }
         } label: {
-            toggleGlyph(.camera)
-        } primaryAction: {
-            Task { await model.toggle(.camera) }
+            toggleGlyph(toggle)
         }
-        .modifier(PlainMenu())
+        .buttonStyle(.plain)
+        // Bottom-right, clear of the permission badge (top-right) and the on-check (bottom-centre).
+        .overlay(alignment: .bottomTrailing) {
+            if showsChoice {
+                Button { model.devicePicker = toggle } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .frame(width: 16, height: 14)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.14)))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(3)
+                .help("Choose the \(title.lowercased())")
+                .accessibilityLabel("Choose the \(title.lowercased())")
+            }
+        }
+        .popover(isPresented: Binding(
+            get: { model.devicePicker == toggle },
+            set: { if !$0, model.devicePicker == toggle { model.devicePicker = nil } }
+        ), arrowEdge: .bottom) {
+            DevicePickerList(title: title, devices: devices, selected: selected, select: select, turnOff: turnOff)
+        }
         .frame(width: Self.cellWidth, height: Self.toggleRowHeight)
-        .toolbarControl(model.isOn(.camera) ? "Camera on — choose a device" : "Show your camera in the recording", isOn: model.isOn(.camera), warning: model.permissionWarning(for: .camera), shape: .cell(corners))
+        .toolbarControl(
+            showsChoice ? "\(help) — ▾ to choose" : help,
+            isOn: model.isOn(toggle), warning: model.permissionWarning(for: toggle), shape: .cell(corners)
+        )
     }
 
     /// A toggle's glyph with CleanShot's small check under it while on; off ones are dimmed.
@@ -456,5 +469,66 @@ private struct PlainMenu: ViewModifier {
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
+    }
+}
+
+/// The device picker under the microphone or camera cell: System Default and each attached device,
+/// the current one checked, and "Do Not Record" to switch the toggle back off.
+private struct DevicePickerList: View {
+    let title: String
+    let devices: [(id: String, name: String)]
+    let selected: String?
+    let select: (String?) -> Void
+    let turnOff: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.5))
+                .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 2)
+            row("System Default", isSelected: selected == nil) { select(nil) }
+            ForEach(devices, id: \.id) { device in
+                row(device.name, isSelected: selected == device.id) { select(device.id) }
+            }
+            Divider().padding(.vertical, 4)
+            row("Do Not Record \(title)", isSelected: false, action: turnOff)
+        }
+        .padding(6)
+        .frame(minWidth: 240)
+        .foregroundStyle(.white)
+        .environment(\.colorScheme, .dark)
+        // The toolbar's own dark slate, not the light popover material behind white text.
+        .presentationBackground(ToolbarChrome.slate)
+    }
+
+    private func row(_ name: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        DevicePickerRow(name: name, isSelected: isSelected, action: action)
+    }
+}
+
+private struct DevicePickerRow: View {
+    let name: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .opacity(isSelected ? 1 : 0)
+                    .frame(width: 14)
+                Text(name).font(.system(size: 13)).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 6).fill(hovered ? Color.accentColor.opacity(0.85) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
     }
 }
