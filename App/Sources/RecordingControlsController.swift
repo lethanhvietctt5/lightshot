@@ -118,7 +118,7 @@ private struct RecordingControlsView: View {
         _model = State(initialValue: model)
     }
 
-    /// The same chrome as the recorder toolbar (LIG-42): a dark panel, every action in a bordered
+    /// The same chrome as the recorder toolbar (LIG-42): a slate panel, every action in a bordered
     /// box that lights on hover with its title shown at once.
     var body: some View {
         HStack(spacing: 8) {
@@ -126,7 +126,7 @@ private struct RecordingControlsView: View {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 Text(Self.format(model.elapsed()))
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(model.isPaused ? Color.white.opacity(0.5) : Color.white)
+                    .foregroundStyle(Color.theme(model.isPaused ? .textTertiary : .textPrimary))
                     .frame(width: 60, height: ToolbarChrome.controlHeight)
             }
             .toolbarControl(model.isPaused ? "Paused" : "Recording")
@@ -166,7 +166,7 @@ private struct RecordingControlsView: View {
                 if model.showsMutedHint {
                     Text("Your microphone might be muted")
                         .font(.system(size: 9))
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(Color.theme(.warning))
                 }
             }
             .onChange(of: context.date) { _, _ in model.sample() }
@@ -177,7 +177,7 @@ private struct RecordingControlsView: View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
                 .font(.system(size: 11))
-                .foregroundStyle(warning ? Color.orange : Color.white.opacity(0.6))
+                .foregroundStyle(warning ? Color.theme(.warning) : Color.theme(.glyphOff))
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.secondary.opacity(0.25))
@@ -190,7 +190,7 @@ private struct RecordingControlsView: View {
         }
     }
 
-    private func control(_ symbol: String, title: String, tint: Color = .white, action: @escaping () -> Void) -> some View {
+    private func control(_ symbol: String, title: String, tint: Color = .theme(.textPrimary), action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 16, weight: .semibold))
