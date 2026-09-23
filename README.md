@@ -1,22 +1,44 @@
 # Lightshot
 
-A native **macOS (Swift / SwiftUI, macOS 14+)** screenshot capture-and-annotation app — a local-only alternative to CleanShot X's core flow: **capture → annotate → copy / save / pin**.
+A native **macOS (Swift / SwiftUI, macOS 14+)** screenshot and screen-recording app — a local-only alternative to CleanShot X: **capture → annotate → copy / save / pin**, and **record → edit in the Studio → export**.
 
-Everything happens on your machine. No cloud, no accounts, no network in v1.
+Everything happens on your machine. No cloud, no accounts, no network — even captions are transcribed on your Mac.
 
 ## Features
 
-- **Capture** an area (drag-to-select with live pixel dimensions and adjustable edges), a specific window (with hover highlight), or the full screen / a chosen display — all via rebindable global hotkeys.
-- **Capture options** — self-timer / delayed capture, cursor inclusion toggle, repeat-last-mode shortcut, and multi-display selection.
-- **Annotation editor** — arrows, lines, rectangles, ellipses, freehand strokes, text labels, highlights, auto-incrementing numbered step markers, and crop.
-- **Redaction** — `blackout` (secure, erases pixels), plus `blur` / `pixelate` (obscure only — **not** safe for secrets).
-- **Finish** — copy to clipboard, save to disk, or **pin** the shot so it floats on top while you work.
-- **Local history** — recent captures persist; reopen, re-annotate, reveal in Finder, or delete, with configurable retention.
-- **Open existing images** in the editor.
-- **First-run onboarding** for the Screen Recording permission, with recovery when it's revoked.
-- **Settings** — rebindable hotkeys, defaults, and launch-at-login.
+**Screenshots**
 
-See [`specs/0001-core-capture-and-annotate.md`](specs/0001-core-capture-and-annotate.md) for the full contract.
+- **Capture** an area (drag-to-select with live pixel dimensions and adjustable edges), a window (with hover highlight), or a full display — all via rebindable global hotkeys and a CleanShot-style menu-bar menu.
+- **Capture options** — self-timer, cursor inclusion, repeat last capture, and multi-display selection.
+- **Annotation editor** in one compact toolbar row — arrows, lines, rectangles, ellipses, freehand, text boxes, highlights, auto-numbered step markers, a **Focus** tool that dims everything outside chosen areas, and an adjustable, reversible crop. Full undo/redo.
+- **Redaction** — `blackout` (secure, erases pixels), plus `blur` / `pixelate` (obscure only — **not** safe for secrets).
+- **Finish** — copy to the clipboard, save as PNG/JPEG, drag out, or **pin** the shot so it floats on top while you work.
+- **Open existing images** in the editor.
+
+**Screen recording**
+
+- **Record** an area, a window's area, or a display as a **video** or a **GIF**, with an aspect-ratio lock or an exact size.
+- Toggles for **microphone**, **computer audio**, **camera** (a draggable bubble), **click highlighting**, and **keystrokes** (never shown while a password field has focus).
+- Pause / resume, stop, restart, and discard from a controls pill or the menu-bar timer; optional countdown, sounds, dimming outside the recorded area, and crash recovery.
+- A post-recording overlay to copy, save, rename, drag out, Quick Look, or delete the take.
+
+**Studio editor** — every recording stays editable after the take
+
+- The screen, pointer, clicks, keystrokes, and camera are recorded separately, so cursor, zooms, camera, and keystrokes can all be changed later.
+- **Auto Zoom** from your clicks, manual zooms that follow the cursor or a fixed point, and a cursor redrawn from data (size, smoothing, motion blur, click effects, hide when idle).
+- Canvas backgrounds (colour, gradient, wallpaper, image), padding, rounded corners, shadow, and aspect ratios from 16:9 to 9:16.
+- Timeline with split, trim, delete, per-clip speed, zoom and text lanes, snapping, audio waveform, undo/redo, and autosave.
+- **On-device captions**: transcribe narration, burn in styled captions, cut speech by selecting words, or **Remove Silences**.
+- Export MP4 or GIF — H.264 or HEVC, up to 4K, 24/30/60 fps — with a size estimate.
+
+**Everything else**
+
+- **Local history** of screenshots and recordings — reopen, reveal in Finder, or delete, with configurable retention.
+- **Light and Dark mode** throughout, with **Settings → General → Appearance** (Match System, Light, or Dark).
+- **Settings** — sidebar of panes, rebindable shortcuts, an **After Capture** table for screenshots and recordings, and launch at login.
+- **First-run onboarding** for Screen Recording, with recovery when it's revoked; other permissions are asked for only when you turn their feature on.
+
+The full contracts live in [`specs/`](specs); per-version highlights are in [`docs/releases/`](docs/releases).
 
 ## Install
 
@@ -81,7 +103,9 @@ Takes a few minutes and needs no Apple Developer account.
 
 Lightshot is a **menu-bar app** — it has no main window, and appears in the Dock only while the editor is open. Look for its icon in the menu bar.
 
-On first launch, follow the in-app onboarding to allow **Screen Recording** in **System Settings → Privacy & Security → Screen & System Audio Recording** (named **Screen Recording** on macOS 14), then relaunch Lightshot if macOS asks. This is the only permission Lightshot needs; without it captures come back black or empty.
+On first launch, follow the in-app onboarding to allow **Screen Recording** in **System Settings → Privacy & Security → Screen & System Audio Recording** (named **Screen Recording** on macOS 14), then relaunch Lightshot if macOS asks. Without it captures come back black or empty.
+
+Other permissions are optional and requested only when you first use the feature that needs them: **Microphone** and **Camera** for recordings, **Input Monitoring** for the keystroke overlay, and **Speech Recognition** for captions (always on-device).
 
 ### Updating
 
@@ -113,8 +137,10 @@ Everything interesting is a pure function over a value type; everything OS-facin
 - **[`LightshotKit/`](LightshotKit)** — the SwiftPM domain core. Pure Swift, **no AppKit / ScreenCaptureKit imports**, so it tests fast and screen-free. It holds:
   - `AnnotationDocument` — a value type mutated only through a command API (`add`, `select`, `transform`, `setStyle`, `updateText`, `delete`, `reorder`, `applyCrop`, `undo`, `redo`). Owns undo/redo history, step-number auto-increment, crop math, and hit-testing. Geometry is stored in **image pixel coordinates**.
   - `render(document) -> image` — a pure, deterministic flatten of base image + elements, respecting crop and z-order.
-  - `HistoryStore`, `AppCoordinator`, and the service *protocols* (`CaptureService`, `ImageSource`, `ImageSink`, `HotkeyService`, `OverlayController`, `PinBoardController`).
-- **[`App/`](App)** — the SwiftUI menu-bar app shell (`MenuBarExtra`, `LSUIElement`) plus the concrete ScreenCaptureKit / AppKit implementations of those protocols.
+  - `StudioDocument` — the Studio editor's value type: timeline clips, zoom regions, captions, and canvas settings behind the same command-and-undo style, plus the pure models it draws on (`ZoomCamera`, `CursorPath`, `CanvasLayout`, `StudioTimeline`, `GIFFramePlan`).
+  - `RecordingSession`, `HistoryStore`, `AppCoordinator`, `ThemePalette`, and the service *protocols* (`CaptureService`, `RecordingService`, `ImageSource`, `ImageSink`, `MediaSink`, `HotkeyService`, `AudioInputService`, `CameraService`, `InputEventSource`, `OverlayController`, `SettingsStore`, …).
+- **[`App/`](App)** — the SwiftUI / AppKit menu-bar app shell (`LSUIElement`) plus the concrete ScreenCaptureKit / AVFoundation / AppKit implementations of those protocols, including the Studio compositor and exporter.
+- **[`scripts/`](scripts)** — `release.sh`, which builds, signs, and packages a release DMG. See [`scripts/README.md`](scripts/README.md).
 - **[`project.yml`](project.yml)** — the XcodeGen spec. **`Lightshot.xcodeproj` is generated, not committed** — run `xcodegen generate` after cloning or after editing `project.yml`.
 
 ## Getting started
@@ -133,8 +159,8 @@ brew install xcodegen
 cd LightshotKit
 swift build
 swift test
-swift test --filter AnnotationDocumentTests            # one suite
-swift test --filter AnnotationDocumentTests/appliesCrop # one test
+swift test --filter CropTests                                   # one suite
+swift test --filter AddSelectDeleteTests/addDoesNotChangeSelection # one test
 ```
 
 ### Full app (Xcode project) — requires a real macOS destination
@@ -189,10 +215,10 @@ This project is spec-driven and issue-tracked. Read [`AGENTS.md`](AGENTS.md) fir
 2. A spec ready to build carries the **`ready-for-agent`** label.
 3. **Branch per issue** off `main`, using Linear's suggested branch name.
 4. **PR targets `main`**, titled `<type>(LIG-<n>): <title>` (e.g. `feat(LIG-100): add scrolling capture`).
-5. Work through the Copilot review loop: fix → reply → resolve → re-request review.
+5. Verify the change (`swift test`, plus the app build for app-side work) before merging.
 
 ### Guardrails
 
-- **Local-only v1** — no networking, accounts, analytics, or cloud upload.
+- **Local-only** — no networking, accounts, analytics, or cloud upload.
 - **Never present blur/pixelate as secure redaction** — only `blackout` is safe for secrets.
 - **macOS 14+ / ScreenCaptureKit only** — no deprecated `CGWindowListCreateImage`.
