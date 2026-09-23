@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import Speech
 import LightshotKit
 
 /// The OS side of the recording permissions (spec 0006, story 41): one `PermissionAuthorizing` per
@@ -50,6 +51,30 @@ struct InputMonitoringPermission: PermissionAuthorizing {
     }
 }
 
+/// Speech Recognition for Studio captions (spec 0007, round 2). Its request waits for the answer,
+/// like AVFoundation's; transcription itself is forced on-device.
+struct SpeechRecognitionPermission: PermissionAuthorizing {
+    var requestWaitsForAnswer: Bool { true }
+
+    func authorizationStatus() async -> CaptureAuthorizationStatus {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized: return .authorized
+        case .notDetermined: return .notDetermined
+        case .denied, .restricted: return .denied
+        @unknown default: return .denied
+        }
+    }
+
+    @discardableResult
+    func requestAuthorization() async -> CaptureAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status == .authorized ? .authorized : .denied)
+            }
+        }
+    }
+}
+
 /// The System Settings pane where each grant is flipped by hand, and the words the recovery alert
 /// and onboarding use for it.
 extension PermissionKind {
@@ -60,6 +85,7 @@ extension PermissionKind {
         case .microphone: pane = "Privacy_Microphone"
         case .camera: pane = "Privacy_Camera"
         case .inputMonitoring: pane = "Privacy_ListenEvent"
+        case .speechRecognition: pane = "Privacy_SpeechRecognition"
         }
         return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!
     }
@@ -71,6 +97,7 @@ extension PermissionKind {
         case .microphone: return "Microphone"
         case .camera: return "Camera"
         case .inputMonitoring: return "Input Monitoring"
+        case .speechRecognition: return "Speech Recognition"
         }
     }
 
@@ -81,6 +108,7 @@ extension PermissionKind {
         case .microphone: return "Lightshot needs Microphone permission to record your narration."
         case .camera: return "Lightshot needs Camera permission to show you in the recording."
         case .inputMonitoring: return "Lightshot needs Input Monitoring permission to show the keys you press."
+        case .speechRecognition: return "Lightshot needs Speech Recognition permission to transcribe your narration into captions (on this Mac only)."
         }
     }
 }

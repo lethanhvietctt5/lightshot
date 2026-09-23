@@ -28,6 +28,8 @@
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Lightshot uses the microphone only to record your narration during a screen recording, and only when you switch the microphone on.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Lightshot transcribes your narration on this Mac to make captions in the Studio editor. Nothing is sent to a server.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Lightshot uses the camera only to show you in a corner of a screen recording, and only when you switch the camera on.</string>
 </dict>

@@ -20,6 +20,8 @@ public enum PermissionKind: String, CaseIterable, Sendable, Identifiable {
     case camera
     /// Input Monitoring — the keystroke overlay's listen-only `CGEvent` tap (story 30).
     case inputMonitoring
+    /// Speech Recognition — on-device transcription for Studio captions (spec 0007, round 2).
+    case speechRecognition
 
     public var id: String { rawValue }
 }

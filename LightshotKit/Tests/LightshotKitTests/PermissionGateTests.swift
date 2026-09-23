@@ -57,5 +57,6 @@ private final class FakePermission: PermissionAuthorizing, @unchecked Sendable {
     #expect(RecordingToggle.showKeystrokes.requiredPermission == .inputMonitoring)
     #expect(RecordingToggle.computerAudio.requiredPermission == nil)
     #expect(RecordingToggle.highlightClicks.requiredPermission == nil)
-    #expect(PermissionKind.allCases.count == 4)
+    // Speech Recognition (spec 0007, round 2) is the Studio editor's, not a recorder toggle's.
+    #expect(PermissionKind.allCases == [.screenRecording, .microphone, .camera, .inputMonitoring, .speechRecognition])
 }

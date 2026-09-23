@@ -17,6 +17,8 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
     private var exportPopover: NSPopover?
     /// Files a project's export into history and the save location (story 27); set by the app.
     var fileExport: ((URL, String?) async -> URL?)?
+    /// Asks for Speech Recognition (captions, spec 0007 round 2); set by the app.
+    var ensureSpeechPermission: (() async -> Bool)?
 
     private static let exportItem = NSToolbarItem.Identifier("videoEditor.export")
 
@@ -36,6 +38,7 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
         model.presentExport = { [weak self] in self?.toggleExport() }
         model.onLoaded = { [weak self] in self?.window?.toolbar?.validateVisibleItems() }
         model.fileExport = fileExport
+        model.ensureSpeechPermission = ensureSpeechPermission
         self.model = model
         exportPopover?.close()
         exportPopover = nil
@@ -152,6 +155,7 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
     #if DEBUG
     /// Development aid for the `-studioSeek` launch argument.
     func debugSeek(to time: Double) { model?.seek(to: time) }
+    func debugPanel(_ name: String) { if let panel = StudioEditorModel.Panel(rawValue: name) { model?.panel = panel } }
     #endif
 
     /// Quitting skips `windowWillClose`: save, drop the backup and cancel an export here instead.

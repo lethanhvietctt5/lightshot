@@ -44,8 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let path = UserDefaults.standard.string(forKey: "openStudioProject") {
             controller.openStudioProject(at: URL(fileURLWithPath: path))
             let seek = UserDefaults.standard.double(forKey: "studioSeek")
-            if seek > 0 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [controller] in controller.debugSeekStudio(to: seek) }
+            let panel = UserDefaults.standard.string(forKey: "studioPanel")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [controller] in
+                if seek > 0 { controller.debugSeekStudio(to: seek) }
+                if let panel { controller.debugStudioPanel(panel) }
             }
         }
         #endif
