@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let file = UserDefaults.standard.string(forKey: "previewFile").map { URL(fileURLWithPath: $0) }
             controller.debugPreviewSurface(surface, file: file)
         }
+        if UserDefaults.standard.bool(forKey: "previewRecordingStatusItem") { statusMenu?.debugShowRecordingItem() }
         // Development aid: `-previewRecordingControls YES` shows the controls pill as during a take.
         if UserDefaults.standard.bool(forKey: "previewRecordingControls") { controller.debugShowRecordingControls() }
         if UserDefaults.standard.string(forKey: "previewDevicePicker") != nil { controller.toggleRecording() }
