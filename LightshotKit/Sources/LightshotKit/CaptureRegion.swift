@@ -28,3 +28,23 @@ public enum CaptureRegion: Equatable, Codable, Sendable {
     /// display to the same `RecordingService.start` as a rect or a window.
     case display(id: UInt32)
 }
+
+/// What a recording of a `CaptureRegion` streams (spec 0006, story 5): the whole display, or an
+/// area of it. There is deliberately no window-only case — a recording is of a place on screen, so
+/// an app opened over it mid-take is recorded, as in CleanShot X. (Screenshots of a window still
+/// capture the window alone; that is `CaptureService`'s business, not this.)
+public enum RecordedArea: Equatable, Sendable {
+    case display(id: UInt32)
+    /// A sub-rect of the display, standardized, in screen points (top-left origin).
+    case area(Rect)
+}
+
+extension CaptureRegion {
+    /// A picked window records the area its frame covers, exactly like a drawn rect over it.
+    public var recordedArea: RecordedArea {
+        switch self {
+        case let .display(id): .display(id: id)
+        case let .rect(rect), let .window(_, rect): .area(rect.standardized)
+        }
+    }
+}
