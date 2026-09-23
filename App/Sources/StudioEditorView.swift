@@ -145,7 +145,8 @@ struct StudioRailButton: View {
 /// The rendered canvas; a click toggles playback, or sets the selected zoom's focus while picking.
 private struct StudioPreview: View {
     let model: StudioEditorModel
-    @State private var isDragging = false
+    private enum DragTarget { case camera, annotation }
+    @State private var dragTarget: DragTarget?
 
     var body: some View {
         ZStack {
@@ -154,20 +155,33 @@ private struct StudioPreview: View {
                 GeometryReader { geometry in
                     StudioPlayerSurface(player: model.player)
                         .contentShape(Rectangle())
-                        // Drag a selected text annotation around the card (story 32); one drag, one undo.
+                        // Drag the camera bubble (story 33) or a selected text annotation (story 32)
+                        // around the card; one drag, one undo step.
                         .gesture(
                             DragGesture(minimumDistance: 3)
                                 .onChanged { value in
-                                    guard model.selectedAnnotation != nil else { return }
-                                    if !isDragging { isDragging = true; model.beginChange() }
-                                    model.dragSelectedAnnotation(toCanvas: CGPoint(
-                                        x: value.location.x / geometry.size.width, y: value.location.y / geometry.size.height
-                                    ))
+                                    let size = geometry.size
+                                    let point = CGPoint(x: value.location.x / size.width, y: value.location.y / size.height)
+                                    if dragTarget == nil {
+                                        let start = CGPoint(x: value.startLocation.x / size.width, y: value.startLocation.y / size.height)
+                                        if model.cameraFraction?.contains(start) == true {
+                                            dragTarget = .camera
+                                        } else if model.selectedAnnotation != nil {
+                                            dragTarget = .annotation
+                                        } else {
+                                            return
+                                        }
+                                        model.beginChange()
+                                    }
+                                    switch dragTarget {
+                                    case .camera: model.dragCamera(toCanvas: point)
+                                    case .annotation: model.dragSelectedAnnotation(toCanvas: point)
+                                    case nil: break
+                                    }
                                 }
                                 .onEnded { _ in
-                                    if isDragging { isDragging = false; model.endChange() }
-                                },
-                            including: model.selectedAnnotation != nil ? .all : .subviews
+                                    if dragTarget != nil { dragTarget = nil; model.endChange() }
+                                }
                         )
                         .onTapGesture(coordinateSpace: .local) { location in
                             if model.isPickingFocus {

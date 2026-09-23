@@ -81,6 +81,8 @@ final class StudioEditorModel {
     private(set) var currentTime: Double = 0
     /// Source filmstrip, evenly spaced over the source.
     private(set) var thumbnails: [CGImage] = []
+    /// Audio peaks evenly spaced over the source, `0…1` (round 2, story 33).
+    private(set) var waveform: [Float] = []
 
     // Export
     var saveMode: SaveMode = .newFile
@@ -205,6 +207,7 @@ final class StudioEditorModel {
             installTimeObserver()
             rebuild()
             loadThumbnails(sources)
+            loadWaveform(sources)
             onLoaded?()
         } catch {
             loadError = error.localizedDescription
@@ -226,6 +229,52 @@ final class StudioEditorModel {
             }
             thumbnails = images
         }
+    }
+
+    /// Peaks of the first audio track, read once at a low rate (story 33).
+    private func loadWaveform(_ sources: StudioComposition.Sources) {
+        guard let track = sources.screenAudio.first else { return }
+        let asset = sources.screen
+        let buckets = max(200, Int(sources.duration * 40))
+        Task.detached(priority: .utility) {
+            guard let reader = try? AVAssetReader(asset: asset) else { return }
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 8000, AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false,
+            ])
+            reader.add(output)
+            guard reader.startReading() else { return }
+            var samples: [Float] = []
+            while let buffer = output.copyNextSampleBuffer(), let block = CMSampleBufferGetDataBuffer(buffer) {
+                let length = CMBlockBufferGetDataLength(block)
+                var chunk = [Float](repeating: 0, count: length / MemoryLayout<Float>.size)
+                chunk.withUnsafeMutableBytes { _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
+                samples += chunk
+            }
+            let peaks = WaveformPeaks.buckets(samples, count: buckets)
+            await MainActor.run { self.waveform = peaks }
+        }
+    }
+
+    /// The waveform peak nearest a source time.
+    func waveformPeak(atSource time: Double) -> Float {
+        guard !waveform.isEmpty, let sources, sources.duration > 0 else { return 0 }
+        let i = Int(time / sources.duration * Double(waveform.count))
+        return waveform[min(max(i, 0), waveform.count - 1)]
+    }
+
+    /// Output times a timeline drag snaps to (story 33): the ends, the playhead, every clip
+    /// boundary, and the edges of zooms and texts — except the dragged item's own.
+    func snapTargets(excluding excluded: UUID? = nil) -> [Double] {
+        var targets = [0, duration, currentTime]
+        targets += timeline.segments.flatMap { [$0.outputStart, $0.outputEnd] }
+        for zoom in edits.zooms where zoom.id != excluded {
+            targets += [timeline.outputTime(atSource: zoom.start), timeline.outputTime(atSource: zoom.end)].compactMap { $0 }
+        }
+        for annotation in edits.annotations where annotation.id != excluded {
+            targets += [timeline.outputTime(atSource: annotation.start), timeline.outputTime(atSource: annotation.end)].compactMap { $0 }
+        }
+        return targets
     }
 
     /// The source thumbnail nearest a source time.
@@ -429,6 +478,23 @@ final class StudioEditorModel {
         guard let layout = previewState?.layout else { return nil }
         return CGRect(x: layout.content.minX / layout.canvas.width, y: layout.content.minY / layout.canvas.height,
                       width: layout.content.width / layout.canvas.width, height: layout.content.height / layout.canvas.height)
+    }
+
+    /// The camera bubble in preview-view fractions, when it is shown (story 33: drag it there).
+    var cameraFraction: CGRect? {
+        guard hasCamera, edits.camera.visible, let content = contentFraction, let layout = previewState?.layout else { return nil }
+        let local = CameraBubbleLayout.frame(edits.camera.bubble, in: Size(width: layout.content.width, height: layout.content.height))
+        return CGRect(
+            x: content.minX + local.minX / layout.canvas.width, y: content.minY + local.minY / layout.canvas.height,
+            width: local.width / layout.canvas.width, height: local.height / layout.canvas.height
+        )
+    }
+
+    /// Move the camera bubble so its centre is at a point of the preview (0…1 of the canvas).
+    func dragCamera(toCanvas point: CGPoint) {
+        guard let content = contentFraction else { return }
+        let anchor = Point(x: min(max((point.x - content.minX) / content.width, 0), 1), y: min(max((point.y - content.minY) / content.height, 0), 1))
+        set(\.camera.bubble.anchor, anchor)
     }
 
     /// Move the selected annotation to a point of the preview (0…1 of the canvas), during a drag.
