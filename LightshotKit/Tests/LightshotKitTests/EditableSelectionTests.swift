@@ -177,3 +177,23 @@ private func drawn(_ a: Point, _ b: Point, ratio: AspectRatio = .freeform, squar
             == Rect(x: 900, y: 700, width: 100, height: 100))
     #expect(EditableSelection(bounds: bounds, rect: Rect(x: 998, y: 798, width: 100, height: 50)).rect == nil)
 }
+
+// MARK: - Default recording area
+
+@Test func theDefaultRecordingAreaIsACentred720pRectOnALargeDisplay() {
+    let rect = EditableSelection.defaultRecordingRect(in: Rect(x: 0, y: 0, width: 2560, height: 1440))
+    #expect(rect == Rect(x: 640, y: 360, width: 1280, height: 720))
+}
+
+@Test func onASmallDisplayTheDefaultAreaIsSixtyPercentWideAndStays16By9() {
+    let rect = EditableSelection.defaultRecordingRect(in: Rect(x: 0, y: 0, width: 1440, height: 900))
+    #expect(rect.width == 864 && rect.height == 486)
+    #expect(rect.midX == 720 && rect.midY == 450)
+}
+
+@Test func onATallDisplayTheDefaultAreaStillFits() {
+    let bounds = Rect(x: 0, y: 0, width: 800, height: 1200)
+    let rect = EditableSelection.defaultRecordingRect(in: bounds)
+    #expect(rect.width <= 800 * 0.6 + 1e-9 && rect.height <= 1200)
+    #expect(abs(rect.width / rect.height - 16.0 / 9) < 0.01)
+}

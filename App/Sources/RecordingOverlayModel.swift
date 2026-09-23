@@ -108,10 +108,10 @@ final class RecordingOverlayModel {
         case nil:
             selection = EditableSelection(bounds: bounds)
         }
-        // Nothing usable to pre-fill: start from almost the whole display (LIG-42, as CleanShot
-        // does), so the size fields are filled and Record works at once; any drag replaces it.
+        // Nothing usable to pre-fill: start from a centred 16:9 area (`defaultRecordingRect`), so
+        // the size fields are filled and Record works at once; any drag replaces it.
         if !selection.hasSelection, snappedWindow == nil {
-            selection = EditableSelection(bounds: bounds, rect: bounds.insetBy(dx: Self.defaultInset, dy: Self.defaultInset))
+            selection = EditableSelection(bounds: bounds, rect: EditableSelection.defaultRecordingRect(in: bounds))
         }
         // The camera on by default (Settings) still passes the permission gate first (story 41):
         // an ungranted camera turns the toggle off for this take rather than opening the device.
@@ -385,7 +385,6 @@ final class RecordingOverlayModel {
 
     private static let dragThreshold: Double = 3
     /// How far the default selection sits inside the display's edges, in points.
-    private static let defaultInset: Double = 40
 
     /// SwiftUI's drag gesture carries no modifiers; read the Option key live instead.
     private static var optionHeld: Bool { NSEvent.modifierFlags.contains(.option) }
