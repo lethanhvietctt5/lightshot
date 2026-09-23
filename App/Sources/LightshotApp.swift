@@ -42,7 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Development aid: `-openStudioProject <folder>` opens a studio project at launch, so the
         // Studio editor can be exercised without recording a take.
         if let path = UserDefaults.standard.string(forKey: "openStudioProject") {
-            controller.openStudioProject(at: URL(fileURLWithPath: path))
+            let url = URL(fileURLWithPath: path)
+            if ["mp4", "mov"].contains(url.pathExtension.lowercased()) {
+                let input = StudioTake.inputURL(forScreen: url)
+                controller.openVideoEditor(at: url, input: FileManager.default.fileExists(atPath: input.path) ? input : nil)
+            } else {
+                controller.openStudioProject(at: url)
+            }
             let seek = UserDefaults.standard.double(forKey: "studioSeek")
             let panel = UserDefaults.standard.string(forKey: "studioPanel")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [controller] in

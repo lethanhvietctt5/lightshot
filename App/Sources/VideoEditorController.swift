@@ -27,9 +27,10 @@ final class VideoEditorController: NSObject, NSWindowDelegate, NSToolbarDelegate
         present(StudioEditorModel(session: .project(project, store)))
     }
 
-    /// A plain movie (a non-studio take, or one from history).
-    func open(_ url: URL) {
-        present(StudioEditorModel(session: .file(url)))
+    /// A plain movie (a non-studio take, or one from history), with the take's pointer / click
+    /// data when it has any.
+    func open(_ url: URL, input: URL? = nil) {
+        present(StudioEditorModel(session: .file(url, input: input)))
     }
 
     private func present(_ model: StudioEditorModel) {

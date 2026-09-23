@@ -56,10 +56,7 @@ struct StudioCaptionsPanel: View {
             .toggleStyle(.switch).font(.system(size: 13))
         if model.edits.captions.visible {
             labelled("Size") {
-                Picker("Size", selection: Binding(get: { model.edits.captions.style.size }, set: { model.set(\.captions.style.size, $0) })) {
-                    ForEach(CaptionSize.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
+                StudioChoices(options: CaptionSize.allCases, title: { $0.title }, selection: Binding(get: { model.edits.captions.style.size }, set: { model.set(\.captions.style.size, $0) }))
             }
             labelled("Position") {
                 Picker("Position", selection: Binding(get: { model.edits.captions.style.position }, set: { model.set(\.captions.style.position, $0) })) {

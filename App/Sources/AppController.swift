@@ -615,8 +615,8 @@ final class AppController: NSObject, CaptureUI {
     }
 
     /// The video editor (stories 35–36), on a saved recording.
-    func openVideoEditor(at url: URL) {
-        videoEditor.open(url)
+    func openVideoEditor(at url: URL, input: URL?) {
+        videoEditor.open(url, input: input)
     }
 
     /// A studio project in the Studio editor (spec 0007, stories 3–4).

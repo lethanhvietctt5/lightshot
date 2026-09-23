@@ -38,8 +38,10 @@ actor SCRecordingService: RecordingService {
     private var output: StreamOutput?
     private var writer: RecordingWriter?
     private var microphone: MicrophoneCapture?
-    /// A studio take's input data and camera movie (spec 0007); `nil` for an ordinary take.
-    private var studio: StudioTakeRecorder?
+    /// The take's pointer / click / key data (spec 0007) — every video take records it, so zooms
+    /// can follow the cursor and Auto Zoom find the clicks — plus, for a studio take, the camera
+    /// as its own movie. `nil` for a GIF take.
+    private var takeData: StudioTakeRecorder?
     /// The pointer feed for the click highlight (story 29) and the key feed for the keystroke
     /// overlay (story 30), each running only while its overlay is on.
     private let pointerEvents: any InputEventSource
@@ -135,11 +137,13 @@ actor SCRecordingService: RecordingService {
                     throw error
                 }
             }
-            // A studio take records the ingredients instead of a finished picture (spec 0007): input
-            // as data, the camera as its own movie; nothing is composited into the frames.
-            let studio = options.studio ? StudioTakeRecorder(
+            // Every video take keeps its input as data (spec 0007). A studio take goes further and
+            // records the ingredients instead of a finished picture: the camera as its own movie,
+            // nothing composited into the frames, no cursor drawn in.
+            let takeData = options.studio || options.output.kind == .video ? StudioTakeRecorder(
                 regionOrigin: target.regionOrigin,
                 regionSize: Size(width: target.pointSize.width, height: target.pointSize.height),
+                cursorInVideo: configuration.showsCursor,
                 queue: queue,
                 cameraScratchURL: url.deletingPathExtension().appendingPathExtension("camera-writing.mov")
             ) : nil
@@ -149,8 +153,8 @@ actor SCRecordingService: RecordingService {
             if case let .device(deviceID) = options.camera {
                 do {
                     try cameraFeed.start(deviceID: deviceID, settings: options.cameraBubble)
-                    if let studio {
-                        studio.attachCamera(cameraFeed)
+                    if options.studio, let takeData {
+                        takeData.attachCamera(cameraFeed)
                     } else {
                         camera = CameraOverlay(feed: cameraFeed, regionSize: Size(width: target.pointSize.width, height: target.pointSize.height))
                     }
@@ -176,7 +180,7 @@ actor SCRecordingService: RecordingService {
             )
             let systemMeter = systemAudioMeter
             var onFrame: (@Sendable (Double) -> Void)?
-            if let studio { onFrame = { studio.frameArrived(at: $0) } }
+            if let takeData { onFrame = { takeData.frameArrived(at: $0) } }
             let output = StreamOutput(
                 writer: writer,
                 compositor: compositor.isActive ? compositor : nil,
@@ -196,35 +200,30 @@ actor SCRecordingService: RecordingService {
                 try await stream.startCapture()
             } catch {
                 microphone?.stop()
-                studio?.cancel()
+                takeData?.cancel()
                 writer.cancel()
                 throw error
             }
             microphone?.start()
-            if let studio {
-                // Every pointer move and click is data for the studio cursor; keys only with the
-                // grant and the keystroke toggle on (secure input still suppresses them).
-                let queue = self.queue
-                let forward: @Sendable (InputEvent) -> Void = { event in
-                    let now = StudioTakeRecorder.hostNow()
-                    queue.async { studio.record(event, at: now) }
+            // One feed for both consumers: the take data gets every pointer move and click (and keys
+            // with the grant and the toggle on — secure input still suppresses them); the
+            // compositor draws what its overlays are configured for and ignores the rest.
+            let queue = self.queue
+            let highlights = compositor.isActive && options.highlightClicks
+            let forward: @Sendable (InputEvent) -> Void = { event in
+                let now = StudioTakeRecorder.hostNow()
+                queue.async {
+                    takeData?.record(event, at: now)
+                    compositor.handle(event, at: now)
                 }
+            }
+            if highlights || takeData != nil {
+                // Seed where the pointer already is: the first frames must not wait for a move.
                 forward(.pointer(.moved(MouseEventMonitor.pointer())))
                 pointerEvents.start(onEvent: forward)
-                if options.showKeystrokes, KeyEventTap.isAuthorized { keyEvents.start(onEvent: forward) }
             }
-            if compositor.isActive {
-                let queue = self.queue
-                let forward: @Sendable (InputEvent) -> Void = { event in
-                    let now = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()))
-                    queue.async { compositor.handle(event, at: now) }
-                }
-                if options.highlightClicks {
-                    // Seed the halo where the pointer already is: the first frames must not wait for a move.
-                    compositor.handle(.pointer(.moved(MouseEventMonitor.pointer())), at: 0)
-                    pointerEvents.start(onEvent: forward)
-                }
-                if options.showKeystrokes, KeyEventTap.isAuthorized { keyEvents.start(onEvent: forward) }
+            if options.showKeystrokes, KeyEventTap.isAuthorized, takeData != nil || compositor.isActive {
+                keyEvents.start(onEvent: forward)
             }
             audioMeter.level = 0
             systemAudioMeter.level = 0
@@ -234,7 +233,7 @@ actor SCRecordingService: RecordingService {
             self.output = output
             self.writer = writer
             self.microphone = microphone
-            self.studio = studio
+            self.takeData = takeData
             self.finalURL = url
             holdDisplayAwake()
             return .success(())
@@ -249,14 +248,14 @@ actor SCRecordingService: RecordingService {
 
     func pause() async {
         guard let writer else { return }
-        let studio = studio, now = StudioTakeRecorder.hostNow()
-        queue.async { writer.pause(); studio?.pause(at: now) }
+        let takeData = takeData, now = StudioTakeRecorder.hostNow()
+        queue.async { writer.pause(); takeData?.pause(at: now) }
     }
 
     func resume() async {
         guard let writer else { return }
-        let studio = studio, now = StudioTakeRecorder.hostNow()
-        queue.async { writer.resume(); studio?.resume(at: now) }
+        let takeData = takeData, now = StudioTakeRecorder.hostNow()
+        queue.async { writer.resume(); takeData?.resume(at: now) }
     }
 
     func stop() async -> Result<URL, RecordingError> {
@@ -276,11 +275,11 @@ actor SCRecordingService: RecordingService {
             // file itself is unusable.
             log.error("stopCapture failed: \(error.localizedDescription, privacy: .public)")
         }
-        let studio = self.studio
+        let takeData = self.takeData
         do {
             let movie = try await writer.finish(at: stopTime, on: queue)
             if let streamError = output.failure {
-                studio?.cancel()
+                takeData?.cancel()
                 // The stream died mid-take: a failure is reported, so the movie must not linger
                 // for recovery to mistake it for a crashed take.
                 try? FileManager.default.removeItem(at: movie)
@@ -290,21 +289,21 @@ actor SCRecordingService: RecordingService {
             do {
                 try await MP4Remuxer.remux(movie, to: finalURL)
                 try? FileManager.default.removeItem(at: movie)
-                await studio?.finish(at: CMTimeGetSeconds(stopTime), screen: finalURL)
+                await takeData?.finish(at: CMTimeGetSeconds(stopTime), screen: finalURL)
                 return .success(finalURL)
             } catch {
                 // The movie is complete and playable; hand it over as it is (under its own `.mov`
                 // extension) rather than lose it.
                 log.error("MP4 rewrap failed, delivering the QuickTime movie: \(error.localizedDescription, privacy: .public)")
-                await studio?.finish(at: CMTimeGetSeconds(stopTime), screen: movie)
+                await takeData?.finish(at: CMTimeGetSeconds(stopTime), screen: movie)
                 return .success(movie)
             }
         } catch let error as RecordingError {
-            studio?.cancel()
+            takeData?.cancel()
             log.error("Recording failed to finish: \(String(describing: error), privacy: .public)")
             return .failure(error)
         } catch {
-            studio?.cancel()
+            takeData?.cancel()
             log.error("Recording failed to finish: \(error.localizedDescription, privacy: .public)")
             return .failure(Self.mapError(error))
         }
@@ -313,7 +312,7 @@ actor SCRecordingService: RecordingService {
     func cancel() async {
         defer { tearDown() }
         microphone?.stop()
-        studio?.cancel()
+        takeData?.cancel()
         try? await stream?.stopCapture()
         guard let writer else { return }
         queue.sync { writer.cancel() }
@@ -324,7 +323,7 @@ actor SCRecordingService: RecordingService {
     private func microphoneDidVanish() {
         microphone?.stop()
         microphone = nil
-        studio = nil
+        takeData = nil
         audioMeter.level = 0
         if let writer { queue.async { writer.audioSourceLost(.microphone) } }
     }
@@ -333,7 +332,7 @@ actor SCRecordingService: RecordingService {
     /// the coordinator's follow-up `cancel`/`stop` finds nothing running.
     private func streamDidFail() {
         guard let writer else { return }
-        studio?.cancel()
+        takeData?.cancel()
         queue.sync { writer.cancel() }
         tearDown()
     }

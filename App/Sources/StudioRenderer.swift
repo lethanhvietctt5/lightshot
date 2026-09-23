@@ -20,6 +20,9 @@ final class StudioRenderState: @unchecked Sendable {
     let keyEvents: [TimedKeyEvent]
     let background: CIImage
     let systemIsDark: Bool
+    /// `false` when the cursor is already in the movie (an ordinary take): the data still steers
+    /// the zoom camera, but no second cursor or click effect is drawn.
+    let drawsCursor: Bool
 
     init(edits: StudioEdits, input: StudioInput?, sourceSize: Size, assetURL: (String) -> URL?, context: CIContext) {
         self.edits = edits
@@ -36,6 +39,7 @@ final class StudioRenderState: @unchecked Sendable {
         keyEvents = input?.keys ?? []
         background = StudioBackgroundRenderer.render(edits.background, blur: edits.canvas.backgroundBlur, canvas: layout.canvas, assetURL: assetURL, context: context)
         systemIsDark = KeystrokeOverlayAppearance.systemIsDark
+        drawsCursor = !(input?.cursorInVideo ?? false)
     }
 
     /// The canvas rect in Core Image coordinates.
@@ -126,7 +130,7 @@ enum StudioFrameRenderer {
         }
 
         // The cursor and its clicks, drawn from data (stories 14–19).
-        if edits.cursor.visible, let cursor = state.cursor, let position = cursor.position(at: t) {
+        if state.drawsCursor, edits.cursor.visible, let cursor = state.cursor, let position = cursor.position(at: t) {
             let opacity = edits.cursor.hideWhenIdle ? cursor.idleOpacity(at: t, delay: edits.cursor.idleDelay) : 1
             let pointsToCanvas = content.width / viewport.rect.width / max(state.regionSize.width, 1)
             if opacity > 0 {

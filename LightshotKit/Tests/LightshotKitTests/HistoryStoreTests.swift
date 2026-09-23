@@ -292,3 +292,16 @@ private func movieFixture(in dir: TempDir, bytes: [UInt8] = [0, 1, 2, 3]) -> URL
     #expect(store.all().isEmpty)
     #expect(try FileManager.default.contentsOfDirectory(atPath: blocked.path).filter { $0.hasSuffix("-thumb.png") }.isEmpty)
 }
+
+@Test func aTakesInputSidecarMovesInWithItAndIsDeletedWithIt() throws {
+    let dir = TempDir()
+    let store = HistoryStore(directory: dir.url.appendingPathComponent("history"))
+    let take = movieFixture(in: dir)
+    try Data("{}".utf8).write(to: StudioTake.inputURL(forScreen: take))
+    let record = try store.add(mediaAt: take, kind: .video, pixelWidth: 10, pixelHeight: 10, duration: 1, thumbnail: solidImage().data, source: .recording)
+    let sidecar = StudioTake.inputURL(forScreen: record.fileURL)
+    #expect(FileManager.default.fileExists(atPath: sidecar.path))
+    #expect(!FileManager.default.fileExists(atPath: StudioTake.inputURL(forScreen: take).path))
+    try store.remove(record)
+    #expect(!FileManager.default.fileExists(atPath: sidecar.path))
+}
