@@ -46,6 +46,8 @@ public protocol CaptureUI: AnyObject {
     func presentPostRecordingOverlay(_ recording: PendingRecording)
     /// Open the saved recording in the video editor (story 33; the editor itself is R14).
     func openVideoEditor(at url: URL)
+    /// Open a studio project in the Studio editor (spec 0007, stories 3–4).
+    func openStudio(_ project: StudioProject)
     /// A GIF take is converting (stories 37–38): show progress with a Cancel that calls `cancel`.
     func presentGIFConversion(cancel: @escaping () -> Void)
     func updateGIFConversion(progress: Double)
@@ -77,6 +79,8 @@ public final class AppCoordinator {
     private let gifEncoder: GIFEncoding?
     private let mediaMetadata: MediaMetadataSource?
     private let scratchDirectory: URL
+    /// Where studio takes become projects (spec 0007); `nil` files them as ordinary recordings.
+    private let studioProjects: StudioProjectStore?
     private let sleep: (TimeInterval) async -> Void
     private let clock: () -> TimeInterval
     private unowned let ui: CaptureUI
@@ -113,6 +117,7 @@ public final class AppCoordinator {
         gifEncoder: GIFEncoding? = nil,
         mediaMetadata: MediaMetadataSource? = nil,
         scratchDirectory: URL = FileManager.default.temporaryDirectory,
+        studioProjects: StudioProjectStore? = nil,
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
         },
@@ -130,6 +135,7 @@ public final class AppCoordinator {
         self.mediaMetadata = mediaMetadata
         self.mediaSink = mediaSink
         self.scratchDirectory = scratchDirectory
+        self.studioProjects = studioProjects
         self.sleep = sleep
         self.clock = clock
         self.ui = ui
@@ -519,6 +525,17 @@ public final class AppCoordinator {
     /// the result is routed by the after-recording setting.
     private func finished(_ file: URL) async {
         let duration = recordingSession.elapsed(at: clock())
+        // A studio take (spec 0007) is ingredients, not a finished video: it becomes a project and
+        // opens in the Studio editor, whose export is what gets saved and filed into history.
+        if recordingSession.options?.studio == true, let studioProjects {
+            let name = settings.recordingDestination(pathExtension: "mp4").deletingPathExtension().lastPathComponent
+            do {
+                ui.openStudio(try studioProjects.create(fromTake: file, name: name))
+                return
+            } catch {
+                ui.presentRecordingFailure(.systemFailure("The studio project could not be created: \(error.localizedDescription)"))
+            }
+        }
         // Read now: the take's own after-recording choice (Studio Mode → the editor) outlives
         // the session, which is idle again by the time a GIF conversion ends.
         let after = recordingSession.options?.afterRecording ?? settings.recordingDefaults.afterRecording
@@ -591,6 +608,18 @@ public final class AppCoordinator {
             file: record.fileURL, kind: recording.kind, duration: recording.duration,
             origin: .freshInHistory(id: record.id), suggestedName: suggestedName(for: recording.file)
         )
+    }
+
+    /// The most recent studio projects, newest first, for the menu bar (spec 0007, story 4).
+    public func recentStudioProjects(limit: Int = 10) -> [StudioProject] {
+        studioProjects?.recent(limit: limit) ?? []
+    }
+
+    /// Reopen a studio project folder in the Studio editor (story 4); a folder that is no longer
+    /// a project is ignored.
+    public func openStudioProject(at url: URL) {
+        guard let project = studioProjects?.open(url) else { return }
+        ui.openStudio(project)
     }
 
     /// History's files are named by id; the overlay should still offer the pattern's name.

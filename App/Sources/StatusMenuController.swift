@@ -128,6 +128,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(item("History…", icon: "clock.arrow.circlepath", key: "y", modifiers: [.command, .shift]) { [controller] in
             controller.showHistory()
         })
+        if let studio = studioProjectsItem() { menu.addItem(studio) }
 
         menu.addItem(.separator())
 
@@ -178,6 +179,23 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         ) { [controller] in
             controller.toggleRecording()
         }
+    }
+
+    /// Recent studio projects (spec 0007, story 4), reopened in the Studio editor; hidden until
+    /// there is one.
+    private func studioProjectsItem() -> NSMenuItem? {
+        let projects = controller.recentStudioProjects()
+        guard !projects.isEmpty else { return nil }
+        let item = self.item("Studio Projects", icon: "film.stack") {}
+        item.action = nil
+        let submenu = NSMenu()
+        for project in projects {
+            submenu.addItem(self.item(project.name) { [controller] in
+                controller.openStudioProject(at: project.url)
+            })
+        }
+        item.submenu = submenu
+        return item
     }
 
     /// Fullscreen capture, with a per-display submenu on a multi-monitor setup (story 8): a single

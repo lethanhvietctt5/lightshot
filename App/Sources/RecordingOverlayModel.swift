@@ -352,11 +352,13 @@ final class RecordingOverlayModel {
     /// Start GIF: recorded as video, converted afterwards (R13).
     func startGIF() { start(.gif) }
 
-    /// Record in Studio Mode (LIG-42): a video take that opens in the video editor when it stops,
-    /// whatever the After-recording setting says.
+    /// Record in Studio Mode (LIG-42, spec 0007): a studio take — clean screen, input as data, the
+    /// camera as its own movie — that opens in the Studio editor when it stops, whatever the
+    /// After-recording setting says.
     func startStudio() {
         var overrides = overrides
         overrides.afterRecording = .openEditor
+        overrides.studio = true
         start(.video, overrides: overrides)
     }
 
