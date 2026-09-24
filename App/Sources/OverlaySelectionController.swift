@@ -3,15 +3,17 @@ import ScreenCaptureKit
 import SwiftUI
 import LightshotKit
 
-/// The concrete `OverlayController`: a full-screen dimmed `NSWindow` that resolves the user's
-/// choice into a `CaptureRegion` (or `nil` on Escape). The pre-capture step — it never captures.
+/// The concrete `OverlayController`: full-screen dimmed `NSWindow`s that resolve the user's choice
+/// into a `CaptureRegion` (or `nil` on Escape). The pre-capture step — it never captures.
 ///
 /// A thin OS wrapper (no unit tests; the coordinator's overlay → capture ordering is tested against
 /// a fake). Every entry point bridges the window's imperative lifecycle to `async` via a checked
-/// continuation, resumed exactly once when the user confirms or cancels: `selectRegion()` drags a
-/// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14),
+/// continuation, resumed exactly once when the user confirms or cancels: `selectRegion(over:)` drags
+/// a rect (LIG-13), `selectWindow(over:)` hover-highlights and clicks a window (LIG-14),
 /// `selectRecording(initial:defaults:)` runs the editable recording selection with the recorder
-/// toolbar (spec 0006). v1 covers the main screen; per-display selection is a follow-up.
+/// toolbar (spec 0006). The two screenshot modes put one overlay window on every display (spec 0011)
+/// and resolve regions in global top-left screen points; the recording overlay stays on the main
+/// screen.
 @MainActor
 final class OverlaySelectionController: OverlayController {
     /// The recorder toolbar's settings shortcut: cancels the overlay and opens Settings.
@@ -25,7 +27,8 @@ final class OverlaySelectionController: OverlayController {
     /// The cameras the toolbar's device menu lists (story 27), and the preview bubble it shows.
     private let cameras: () async -> [CameraDevice]
     private let cameraBubble: CameraBubbleController?
-    private var window: OverlayKeyWindow?
+    /// The overlay windows up now — one per display for the screenshot modes, one for recording.
+    private var windows: [OverlayKeyWindow] = []
 
     init(
         openSettings: @escaping () -> Void = {},
@@ -45,22 +48,27 @@ final class OverlaySelectionController: OverlayController {
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
     private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
 
-    func selectRegion() async -> CaptureRegion? {
+    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion? {
         resolveStaleContinuation()
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentRectOverlay()
+            presentRectOverlay(over: frozen)
         }
     }
 
-    func selectWindow() async -> CaptureRegion? {
+    func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion? {
         resolveStaleContinuation()
-        // Enumerate the on-screen windows *before* the overlay appears, so our own full-screen
-        // overlay is never among the hover candidates or the window that gets captured.
-        let windows = await Self.hoverableWindows()
+        // The candidates are the windows as they were at the freeze, so the highlights line up with
+        // the stills (spec 0011). Without a freeze, enumerate the on-screen windows *before* the
+        // overlay appears, so our own full-screen overlay is never among the hover candidates.
+        let windows = if let frozen {
+            frozen.windows.map { WindowHoverOverlayModel.HoverWindow(id: $0.id, frame: $0.frame) }
+        } else {
+            await Self.hoverableWindows()
+        }
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentWindowOverlay(windows: windows)
+            presentWindowOverlay(windows: windows, over: frozen)
         }
     }
 
@@ -89,7 +97,7 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
-    /// The main screen every overlay covers in v1: its frame, backing scale and display id.
+    /// The main screen the recording overlay covers: its frame, backing scale and display id.
     private struct ScreenGeometry {
         let frame: NSRect
         let scale: Double
@@ -106,33 +114,85 @@ final class OverlaySelectionController: OverlayController {
         )
     }
 
-    private func presentRectOverlay() {
-        let geometry = Self.mainScreen()
-        let frame = geometry.frame
-
-        let model = SelectionOverlayModel(pixelScale: geometry.scale) { [weak self] region in
-            self?.finish(with: region)
-        }
-
-        let window = makeOverlayWindow(frame: frame)
-        window.onConfirm = { model.confirm() }
-        window.onCancel = { model.cancel() }
-        window.contentView = NSHostingView(rootView: SelectionOverlayView(model: model))
-        present(window, at: frame)
+    /// One display an overlay window covers: its AppKit frame (to place the window), its bounds in
+    /// global top-left screen points (the space regions and frozen frames use), its backing scale
+    /// and display id.
+    private struct OverlayScreen {
+        let frame: NSRect
+        let bounds: Rect
+        let scale: Double
+        let displayID: UInt32
     }
 
-    private func presentWindowOverlay(windows: [WindowHoverOverlayModel.HoverWindow]) {
-        let frame = Self.mainScreen().frame
-
-        let model = WindowHoverOverlayModel(windows: windows) { [weak self] region in
-            self?.finish(with: region)
+    private static func overlayScreens() -> [OverlayScreen] {
+        NSScreen.screens.compactMap { screen in
+            guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+                return nil
+            }
+            let bounds = CGDisplayBounds(id)
+            return OverlayScreen(
+                frame: screen.frame,
+                bounds: Rect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height),
+                scale: Double(screen.backingScaleFactor),
+                displayID: UInt32(id)
+            )
         }
+    }
 
-        let window = makeOverlayWindow(frame: frame)
-        window.onConfirm = { model.confirmHovered() }
-        window.onCancel = { model.cancel() }
-        window.contentView = NSHostingView(rootView: WindowHoverOverlayView(model: model))
-        present(window, at: frame)
+    /// The drag overlay on every display (spec 0011). Each window's model works in its own screen's
+    /// points; the region it resolves is shifted into global points before it's reported.
+    private func presentRectOverlay(over frozen: FrozenScreen?) {
+        let overlays = Self.overlayScreens().map { screen in
+            let origin = screen.bounds.origin
+            let model = SelectionOverlayModel(pixelScale: screen.scale) { [weak self] region in
+                guard case let .rect(local)? = region else { self?.finish(with: nil); return }
+                self?.finish(with: .rect(Rect(
+                    x: local.minX + origin.x, y: local.minY + origin.y, width: local.width, height: local.height
+                )))
+            }
+            let window = makeOverlayWindow(frame: screen.frame)
+            window.onConfirm = { model.confirm() }
+            window.onCancel = { model.cancel() }
+            window.contentView = Self.content(
+                NSHostingView(rootView: SelectionOverlayView(model: model)),
+                over: frozen?.displays.first { $0.displayID == screen.displayID },
+                size: screen.frame.size
+            )
+            return (window, screen.frame)
+        }
+        present(overlays)
+    }
+
+    /// The window picker on every display (spec 0011). Each model gets the candidates in its own
+    /// screen's points; a pick is reported with the window's global frame.
+    private func presentWindowOverlay(windows: [WindowHoverOverlayModel.HoverWindow], over frozen: FrozenScreen?) {
+        let globalFrames = Dictionary(windows.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        let overlays = Self.overlayScreens().map { screen in
+            let origin = screen.bounds.origin
+            let local = windows.map { window in
+                WindowHoverOverlayModel.HoverWindow(id: window.id, frame: Rect(
+                    x: window.frame.minX - origin.x, y: window.frame.minY - origin.y,
+                    width: window.frame.width, height: window.frame.height
+                ))
+            }
+            let model = WindowHoverOverlayModel(windows: local) { [weak self] region in
+                guard case let .window(id, _)? = region, let frame = globalFrames[id] else {
+                    self?.finish(with: nil)
+                    return
+                }
+                self?.finish(with: .window(id: id, frame: frame))
+            }
+            let window = makeOverlayWindow(frame: screen.frame)
+            window.onConfirm = { model.confirmHovered() }
+            window.onCancel = { model.cancel() }
+            window.contentView = Self.content(
+                NSHostingView(rootView: WindowHoverOverlayView(model: model)),
+                over: frozen?.displays.first { $0.displayID == screen.displayID },
+                size: screen.frame.size
+            )
+            return (window, screen.frame)
+        }
+        present(overlays)
     }
 
     /// The recording overlay (spec 0006): the editable selection with window pick and Fullscreen.
@@ -170,7 +230,27 @@ final class OverlaySelectionController: OverlayController {
         window.onCancel = { model.cancel() }
         window.onArrow = { dx, dy, shift in model.arrow(dx: dx, dy: dy, shift: shift) }
         window.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
-        present(window, at: frame)
+        present([(window, frame)])
+    }
+
+    /// Freeze Screen (spec 0011): `content` over an opaque backdrop of its display's frozen still, so
+    /// nothing underneath the overlay moves while the user selects — the dimming and the undimmed
+    /// selection then show the still, not the live screen. The still is decoded once, here, and
+    /// drawn by a layer at the window's exact frame. No still (the self-timer area path) leaves
+    /// `content` as is.
+    private static func content(_ content: NSView, over frozen: FrozenDisplay?, size: NSSize) -> NSView {
+        guard let frozen,
+              let source = CGImageSourceCreateWithData(frozen.image.data as CFData, nil),
+              let still = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return content }
+        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        container.wantsLayer = true
+        container.layer?.contents = still
+        container.layer?.contentsGravity = .resize
+        content.frame = container.bounds
+        content.autoresizingMask = [.width, .height]
+        container.addSubview(content)
+        return container
     }
 
     /// The shared borderless, screen-saver-level, transparent full-screen window every mode presents
@@ -179,11 +259,23 @@ final class OverlaySelectionController: OverlayController {
         OverlayKeyWindow.fullScreen(frame: frame)
     }
 
-    private func present(_ window: OverlayKeyWindow, at frame: NSRect) {
-        window.setFrame(frame, display: true)
-        self.window = window
+    /// Show `overlays` and make the one under the pointer key, so Escape and Return reach it first;
+    /// clicking another display's overlay makes that one key.
+    private func present(_ overlays: [(window: OverlayKeyWindow, frame: NSRect)]) {
+        windows = overlays.map(\.window)
         NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        let pointer = NSEvent.mouseLocation
+        for (window, frame) in overlays {
+            window.setFrame(frame, display: true)
+            window.orderFront(nil)
+        }
+        (overlays.first { NSMouseInRect(pointer, $0.frame, false) } ?? overlays.first)?.window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Close every overlay window.
+    private func dismissWindows() {
+        windows.forEach { $0.orderOut(nil) }
+        windows = []
     }
 
     /// The capture candidates for window mode: on-screen, normal-layer windows other than our own,
@@ -198,14 +290,8 @@ final class OverlaySelectionController: OverlayController {
             onScreenWindowsOnly: true
         ) else { return [] }
 
-        let ownBundleID = Bundle.main.bundleIdentifier
         return content.windows
-            .filter { window in
-                window.isOnScreen
-                    && window.windowLayer == 0            // normal app windows, not menu bar/dock/desktop
-                    && window.frame.width >= 1 && window.frame.height >= 1
-                    && window.owningApplication?.bundleIdentifier != ownBundleID
-            }
+            .filter(SCCaptureService.isWindowCandidate)
             .map { window in
                 WindowHoverOverlayModel.HoverWindow(
                     id: window.windowID,
@@ -222,16 +308,14 @@ final class OverlaySelectionController: OverlayController {
     private func finish(with region: CaptureRegion?) {
         guard let continuation else { return }  // ignore a second resolution (e.g. key after click)
         self.continuation = nil
-        window?.orderOut(nil)
-        window = nil
+        dismissWindows()
         continuation.resume(returning: region)
     }
 
     private func finishRecording(with choice: RecordingChoice?) {
         guard let recordingContinuation else { return }
         self.recordingContinuation = nil
-        window?.orderOut(nil)
-        window = nil
+        dismissWindows()
         // No take (Escape, the Settings shortcut, a stale overlay): the preview goes with the
         // toolbar. With a take, it stays through the countdown and the recording (story 26).
         if choice == nil { cameraBubble?.hide() }

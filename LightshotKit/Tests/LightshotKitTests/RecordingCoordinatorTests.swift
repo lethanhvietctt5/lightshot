@@ -198,6 +198,12 @@ private final class IdleCaptureService: CaptureService, @unchecked Sendable {
     func requestAuthorization() async -> CaptureAuthorizationStatus { .authorized }
     func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> { .failure(.userCancelled) }
+    private(set) var freezeCount = 0
+    func freezeScreen() async -> Result<FrozenScreen, CaptureError> {
+        freezeCount += 1
+        return .success(FrozenScreen(displays: [], windows: []))
+    }
+    func freezeWindowImages() async -> [UInt32: CapturedImage] { [:] }
 }
 /// Hands back a canned recording choice and records what it was asked to pre-fill / seed with.
 @MainActor
@@ -206,8 +212,8 @@ private final class StubOverlay: OverlayController {
     private(set) var initials: [CaptureRegion?] = []
     private(set) var seededDefaults: [RecordingDefaults] = []
     private(set) var regionCallCount = 0
-    func selectRegion() async -> CaptureRegion? { regionCallCount += 1; return nil }
-    func selectWindow() async -> CaptureRegion? { nil }
+    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion? { regionCallCount += 1; return nil }
+    func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion? { nil }
     func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         initials.append(initial)
         seededDefaults.append(defaults)
@@ -285,6 +291,7 @@ private final class Harness {
     let history: HistoryStore?
     let historyDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("coordinator-history-\(UUID().uuidString)")
     let settings = StubSettings()
+    let capture = IdleCaptureService()
     let clock = ManualClock()
     let overlay = StubOverlay()
     let coordinator: AppCoordinator
@@ -304,7 +311,7 @@ private final class Harness {
         let clock = self.clock
         history = withHistory ? HistoryStore(directory: historyDirectory) : nil
         coordinator = AppCoordinator(
-            captureService: IdleCaptureService(),
+            captureService: capture,
             overlay: overlay,
             imageSource: IdleImageSource(),
             imageSink: IdleImageSink(),
@@ -374,6 +381,7 @@ private let display = CaptureRegion.display(id: 7)
     await h.coordinator.captureText()
 
     #expect(h.overlay.regionCallCount == 0)   // no selection overlay over the take
+    #expect(h.capture.freezeCount == 0)       // …and no freeze flickering over it
 }
 
 @Test @MainActor func ocrTextRunsAgainOnceTheTakeHasEnded() async {

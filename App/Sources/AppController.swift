@@ -679,6 +679,62 @@ final class AppController: NSObject, CaptureUI {
             guard let file else { return }
             presentPostRecordingOverlay(PendingRecording(file: file, kind: .video, duration: 5, origin: .historyItem(id: UUID())))
         case "preparing": presentRecordingPreparation(cancel: {})
+        case "frozenArea", "frozenWindow":
+            // Freeze Screen (spec 0011): the overlay on every display over `file` as each display's
+            // still, so the backdrops can be looked at without the grant. The window picker uses the
+            // real freeze's candidates when it can list them.
+            let displays = NSScreen.screens.compactMap { screen -> FrozenDisplay? in
+                guard let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else { return nil }
+                let bounds = CGDisplayBounds(id)
+                return FrozenDisplay(displayID: id, frame: Rect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height), image: image)
+            }
+            let overlay = OverlaySelectionController()
+            Task { @MainActor in
+                let windows = (try? await captureService.freezeScreen().get())?.windows ?? []
+                let frozen = FrozenScreen(displays: displays, windows: windows)
+                _ = name == "frozenArea" ? await overlay.selectRegion(over: frozen) : await overlay.selectWindow(over: frozen)
+            }
+        case "freeze":
+            // Freeze Screen (spec 0011): run the real freeze and window grab and write what they
+            // took — every display's still, every window's image, and the timings — into `file`, a
+            // folder, so the ScreenCaptureKit side can be checked without a selection.
+            guard let folder = file else { return }
+            Task { @MainActor in
+                var log = ""
+                for _ in 0..<3 {
+                    let start = Date()
+                    async let images = captureService.freezeWindowImages()
+                    _ = await captureService.freezeScreen()
+                    log += "freezeScreen \(Int(Date().timeIntervalSince(start) * 1000)) ms"
+                    _ = await images
+                    log += ", window images \(Int(Date().timeIntervalSince(start) * 1000)) ms\n"
+                }
+                async let images = captureService.freezeWindowImages()
+                switch await captureService.freezeScreen() {
+                case var .success(frozen):
+                    // `-previewActivate YES`: present the overlay as Capture Window does, so the
+                    // window grabs still in flight run while Lightshot takes focus.
+                    if UserDefaults.standard.bool(forKey: "previewActivate") {
+                        let overlay = OverlaySelectionController()
+                        let shown = frozen
+                        Task { @MainActor in _ = await overlay.selectWindow(over: shown) }
+                    }
+                    frozen.setWindowImages(await images)
+                    for display in frozen.displays {
+                        log += "display \(display.displayID) frame \(display.frame) \(display.image.pixelWidth)x\(display.image.pixelHeight) \(display.image.data.count / 1024) KB\n"
+                        try? display.image.data.write(to: folder.appendingPathComponent("display-\(display.displayID).tiff"))
+                    }
+                    for window in frozen.windows {
+                        log += "window \(window.id) frame \(window.frame) image \(window.image.map { "\($0.pixelWidth)x\($0.pixelHeight)" } ?? "none")\n"
+                        if let png = frozen.image(of: .window(id: window.id, frame: window.frame)) {
+                            try? png.data.write(to: folder.appendingPathComponent("window-\(window.id).png"))
+                        }
+                    }
+                case let .failure(error):
+                    log += "failed \(error)\n"
+                }
+                try? log.write(to: folder.appendingPathComponent("freeze.log"), atomically: true, encoding: .utf8)
+            }
         default: break
         }
     }

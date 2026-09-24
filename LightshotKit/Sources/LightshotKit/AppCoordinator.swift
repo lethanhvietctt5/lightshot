@@ -190,17 +190,31 @@ public final class AppCoordinator {
     }
 
     /// Area capture flow (stories 1–5, 14). Runs first-run permission onboarding (story 57) up
-    /// front so the prompt precedes the drag. Then ordering matters: the **overlay runs first** to
-    /// resolve a `CaptureRegion` (drag a rect, Escape to cancel), *then* `CaptureService` captures
-    /// it — the service needs a target. A cancelled overlay (`nil`) is a silent no-op with no
-    /// capture. On success the capture opens in the editor (or the post-capture toolbar at the
-    /// selection, per `openInEditor`); failures route exactly as fullscreen does —
-    /// `permissionDenied` to recovery, `userCancelled` silent, the rest to a distinct message — so
-    /// a capture never lands the user in a blank editor.
+    /// front so the prompt precedes the drag. Then the screen **freezes** (spec 0011): one still is
+    /// taken, the overlay runs over it to resolve a `CaptureRegion` (drag a rect, Escape to cancel),
+    /// and the result is that still cut to the selection — what the user saw is what they get, with
+    /// no second, live capture. A cancelled overlay (`nil`) is a silent no-op. On success the capture
+    /// opens in the editor (or the post-capture toolbar at the selection, per `openInEditor`);
+    /// failures route as every capture's do — `permissionDenied` to recovery, `userCancelled`
+    /// silent, the rest to a distinct message — so a capture never lands the user in a blank editor.
+    ///
+    /// With a self-timer set there is no freeze: the timer exists to capture a *later* screen, so
+    /// the overlay runs live and the region is captured live after the wait (story 10).
     public func captureArea() async {
         lastCapture = .area
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
-        guard let region = await overlay.selectRegion() else { return }
+        guard settings.captureDelay <= 0 else {
+            await captureLiveArea()
+            return
+        }
+        guard let (region, image) = await selectFrozenArea() else { return }
+        record(image, source: .area)
+        presentCapture(image, at: region)
+    }
+
+    /// The self-timer area path: overlay over the live screen, the wait, then a live capture.
+    private func captureLiveArea() async {
+        guard let region = await overlay.selectRegion(over: nil) else { return }
         // Self-timer (story 10) runs *after* the region is chosen but *before* the shot fires, so the
         // user can set up transient UI over the selection they just made.
         await applyCaptureDelay()
@@ -208,11 +222,45 @@ public final class AppCoordinator {
         case let .success(image):
             record(image, source: .area)
             presentCapture(image, at: region)
-        case .failure(.permissionDenied):
-            ui.presentPermissionDenied(.screenRecording)
-        case .failure(.userCancelled):
-            break
         case let .failure(error):
+            routeCaptureFailure(error)
+        }
+    }
+
+    /// Freeze Screen (spec 0011): take the still, select over it, and cut the selection out of it.
+    /// `nil` when the freeze failed (already routed), the user cancelled, or the selection missed
+    /// the screen (routed as a failure, never a blank image). Shared by area capture and OCR Text.
+    private func selectFrozenArea() async -> (region: CaptureRegion, image: CapturedImage)? {
+        guard let frozen = await freezeScreen() else { return nil }
+        guard let region = await overlay.selectRegion(over: frozen) else { return nil }
+        guard let image = frozen.image(of: region) else {
+            ui.presentCaptureFailure(.systemFailure("The selection is outside the screen."))
+            return nil
+        }
+        return (region, image)
+    }
+
+    /// Take the frozen screen the overlay will sit on, routing a failure exactly as a capture
+    /// failure — and returning `nil` so the overlay is never shown over a blank or black screen.
+    private func freezeScreen() async -> FrozenScreen? {
+        switch await captureService.freezeScreen() {
+        case let .success(frozen):
+            return frozen
+        case let .failure(error):
+            routeCaptureFailure(error)
+            return nil
+        }
+    }
+
+    /// Where every screenshot-side capture failure goes: `permissionDenied` to the Screen
+    /// Recording recovery path, `userCancelled` nowhere, the rest to a distinct message.
+    private func routeCaptureFailure(_ error: CaptureError) {
+        switch error {
+        case .permissionDenied:
+            ui.presentPermissionDenied(.screenRecording)
+        case .userCancelled:
+            break
+        default:
             ui.presentCaptureFailure(error)
         }
     }
@@ -255,31 +303,51 @@ public final class AppCoordinator {
     }
 
     /// Window capture flow (stories 6–7). Runs first-run permission onboarding (story 57) up front,
-    /// then is structurally identical to `captureArea()` — only the overlay mode differs:
-    /// `selectWindow()` hover-highlights windows and resolves the clicked one to a `.window`
-    /// `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then captures cleanly
-    /// without its surroundings. Escape (`nil`) is a silent no-op with no capture; success records
-    /// the capture in history and opens it in the editor (or the toolbar at the window, per
-    /// `openInEditor`); failures route
-    /// exactly as the other paths do — `permissionDenied` to recovery, `userCancelled` silent, the
-    /// rest to a distinct message — so a capture never lands the user in a blank editor.
+    /// then freezes the desktop (spec 0011) with each candidate window grabbed on its own, so the
+    /// picker sits on the stills and the picked window comes back as it was at the trigger — clean,
+    /// never cut from a still, which would drag in whatever overlaps it. `selectWindow(over:)`
+    /// hover-highlights windows and resolves the clicked one to a `.window` `CaptureRegion`. A
+    /// window with no frozen image, and every window under a self-timer, is captured live by
+    /// `CaptureService.captureRegion(_:)` instead. Escape (`nil`) is a silent no-op with no capture;
+    /// success records the capture in history and opens it in the editor (or the toolbar at the
+    /// window, per `openInEditor`); failures route exactly as the other paths do, so a capture never
+    /// lands the user in a blank editor.
     public func captureWindow() async {
         lastCapture = .window
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
-        guard let region = await overlay.selectWindow() else { return }
-        // Self-timer (story 10): delay after the window is picked, before it is captured.
+        let isTimed = settings.captureDelay > 0
+        guard let (region, frozenImage) = await selectFrozenWindow(withImages: !isTimed) else { return }
+        if let frozenImage {
+            record(frozenImage, source: .window)
+            presentCapture(frozenImage, at: region)
+            return
+        }
+        // Self-timer (story 10): delay after the window is picked, before it is captured. Also the
+        // fallback for a window with no frozen image: capture it live.
         await applyCaptureDelay()
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .window)
             presentCapture(image, at: region)
-        case .failure(.permissionDenied):
-            ui.presentPermissionDenied(.screenRecording)
-        case .failure(.userCancelled):
-            break
         case let .failure(error):
-            ui.presentCaptureFailure(error)
+            routeCaptureFailure(error)
         }
+    }
+
+    /// Freeze Screen for Capture Window (spec 0011): freeze, pick a window over the stills, and —
+    /// `withImages` — hand back the picked window as it was at the trigger. Each window's own image
+    /// is grabbed at the trigger, alongside the freeze, but the picker doesn't wait for it; it's
+    /// collected at the click. With a self-timer the window is captured live after the wait, so the
+    /// images aren't grabbed. The frozen screen goes when this returns, before any wait. `nil` when
+    /// the freeze failed (already routed) or the user cancelled.
+    private func selectFrozenWindow(withImages: Bool) async -> (region: CaptureRegion, image: CapturedImage?)? {
+        let captureService = captureService
+        async let windowImages = withImages ? captureService.freezeWindowImages() : [:]
+        guard var frozen = await freezeScreen() else { return nil }
+        guard let region = await overlay.selectWindow(over: frozen) else { return nil }
+        guard withImages else { return (region, nil) }
+        frozen.setWindowImages(await windowImages)
+        return (region, frozen.image(of: region))
     }
 
     /// Repeat-last-capture-mode (story 9): re-fire whichever of area/window/fullscreen the user ran
@@ -300,37 +368,28 @@ public final class AppCoordinator {
         }
     }
 
-    /// OCR Text (spec 0010): the area overlay runs first, the region is captured, its text is
-    /// recognised on-device and put on the clipboard as plain text. No editor, no history item, no
-    /// self-timer, and Repeat Last Capture keeps pointing at the last screenshot. Nothing readable
-    /// (or a recognition failure) leaves the clipboard alone and says so. Capture failures route
-    /// exactly as area capture's do. Ignored while a take is active, so the overlay never lands in
-    /// the recording.
+    /// OCR Text (spec 0010): the screen freezes (spec 0011), the area overlay runs over the still,
+    /// and the text in the selection cut from it is recognised on-device and put on the clipboard
+    /// as plain text. No editor, no history item, no self-timer, and Repeat Last Capture keeps
+    /// pointing at the last screenshot. Nothing readable (or a recognition failure) leaves the
+    /// clipboard alone and says so. Freeze failures route exactly as area capture's do. Ignored
+    /// while a take is active, so the overlay never lands in the recording.
     public func captureText() async {
         guard let textRecognizer, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
-        guard let region = await overlay.selectRegion() else { return }
-        switch await captureService.captureRegion(region) {
-        case let .success(image):
-            ui.presentTextCaptureStatus(.reading)
-            switch await textRecognizer.recognizeText(in: image) {
-            case let .success(lines):
-                let text = TextCapture.plainText(from: lines)
-                if text.isEmpty {
-                    ui.presentTextCaptureStatus(.noText)
-                } else {
-                    imageSink.copyText(text)
-                    ui.presentTextCaptureStatus(.copied(text))
-                }
-            case let .failure(error):
-                ui.presentTextCaptureStatus(.failed(error.message))
+        guard let (_, image) = await selectFrozenArea() else { return }
+        ui.presentTextCaptureStatus(.reading)
+        switch await textRecognizer.recognizeText(in: image) {
+        case let .success(lines):
+            let text = TextCapture.plainText(from: lines)
+            if text.isEmpty {
+                ui.presentTextCaptureStatus(.noText)
+            } else {
+                imageSink.copyText(text)
+                ui.presentTextCaptureStatus(.copied(text))
             }
-        case .failure(.permissionDenied):
-            ui.presentPermissionDenied(.screenRecording)
-        case .failure(.userCancelled):
-            break
         case let .failure(error):
-            ui.presentCaptureFailure(error)
+            ui.presentTextCaptureStatus(.failed(error.message))
         }
     }
 
