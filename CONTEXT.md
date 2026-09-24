@@ -101,3 +101,12 @@ The trim / resize / quality / audio window. Not the annotation editor.
 
 **Input visualisation**:
 Click highlighting and the keystroke overlay, collectively.
+
+### OCR Text
+
+**OCR Text**:
+The capture action that turns a selected screen area into plain text on the clipboard. It opens no editor and adds nothing to history.
+_Avoid_: Capture Text (CleanShot's name), text grab, scan
+
+**Text capture**:
+One run of OCR Text, from selection to clipboard. Unlike a capture, it produces no image.

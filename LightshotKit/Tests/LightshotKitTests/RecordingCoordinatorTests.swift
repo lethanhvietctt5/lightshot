@@ -184,6 +184,12 @@ private final class SpyUI: CaptureUI {
     func dismissGIFConversion() { gifDismissals += 1 }
     func resolveCancelledGIFConversion() async -> Bool { cancelResolutions += 1; return keepVideoOnCancel }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
+    func presentTextCaptureStatus(_ status: TextCaptureStatus) {}
+}
+
+/// OCR Text is wired so the recording-guard test proves the guard, not a missing recogniser.
+private struct IdleTextRecognizer: TextRecognizer {
+    func recognizeText(in image: CapturedImage) async -> Result<[RecognizedLine], TextRecognitionError> { .success([]) }
 }
 
 // The capture-side seams are irrelevant here; minimal stubs keep the coordinator constructible.
@@ -199,7 +205,8 @@ private final class StubOverlay: OverlayController {
     var choice: RecordingChoice? = RecordingChoice(region: .display(id: 7), output: .video)
     private(set) var initials: [CaptureRegion?] = []
     private(set) var seededDefaults: [RecordingDefaults] = []
-    func selectRegion() async -> CaptureRegion? { nil }
+    private(set) var regionCallCount = 0
+    func selectRegion() async -> CaptureRegion? { regionCallCount += 1; return nil }
     func selectWindow() async -> CaptureRegion? { nil }
     func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         initials.append(initial)
@@ -214,6 +221,7 @@ private final class IdleImageSource: ImageSource {
 }
 private final class IdleImageSink: ImageSink {
     func copyToClipboard(_ image: RenderedImage) {}
+    func copyText(_ text: String) {}
     func write(_ image: RenderedImage, to url: URL, format: ImageFormat) throws {}
 }
 @MainActor
@@ -309,6 +317,7 @@ private final class Harness {
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
             studioProjects: studio ? StudioProjectStore(directory: studioDirectory) : nil,
             studioFlattener: flattener,
+            textRecognizer: IdleTextRecognizer(),
             sleep: { seconds in await clock.sleep(seconds) },
             clock: { clock.now },
             ui: ui
@@ -353,6 +362,29 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.ui.finished == h.sink.saves.map(\.to))
     #expect(h.ui.overlays.isEmpty && h.ui.editors.isEmpty)
     #expect(h.ui.states == [.recording, .stopping, .finished(URL(fileURLWithPath: "/tmp/scratch/take.mp4"))])
+}
+
+// MARK: - OCR Text during a take (spec 0010)
+
+@Test @MainActor func ocrTextIsIgnoredWhileARecordingIsActive() async {
+    let h = Harness()
+    await h.coordinator.toggleRecording()
+    #expect(h.coordinator.isRecording)
+
+    await h.coordinator.captureText()
+
+    #expect(h.overlay.regionCallCount == 0)   // no selection overlay over the take
+}
+
+@Test @MainActor func ocrTextRunsAgainOnceTheTakeHasEnded() async {
+    let h = Harness()
+    h.settings.recordingDefaults.afterRecording = .saveSilently
+    await h.coordinator.toggleRecording()
+    await h.coordinator.toggleRecording()
+
+    await h.coordinator.captureText()
+
+    #expect(h.overlay.regionCallCount == 1)
 }
 
 // MARK: - After recording (stories 32–34)

@@ -20,6 +20,9 @@ public enum CaptureAction: String, CaseIterable, Codable, Sendable, Identifiable
     /// Start a screen recording, or stop the one in progress (spec 0006, stories 1–2). One chord
     /// toggles both so the user never hunts for a second shortcut mid-take.
     case recordScreen
+    /// OCR Text (spec 0010): select an area and copy the text recognised in it. Declared after
+    /// `recordScreen` so settings list it in menu order; ships unbound like the recording actions.
+    case captureText
     /// Pause a running recording, or resume a paused one (story 42).
     case pauseResumeRecording
     /// Throw the current take away and start again (story 42).
@@ -35,6 +38,7 @@ public enum CaptureAction: String, CaseIterable, Codable, Sendable, Identifiable
         case .fullscreen: return "Capture Fullscreen"
         case .repeatLast: return "Repeat Last Capture"
         case .recordScreen: return "Record Screen"
+        case .captureText: return "OCR Text"
         case .pauseResumeRecording: return "Pause/Resume Recording"
         case .restartRecording: return "Restart Recording"
         }

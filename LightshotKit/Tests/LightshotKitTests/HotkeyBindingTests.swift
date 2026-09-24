@@ -33,6 +33,7 @@ import Foundation
     #expect(defaults[.recordScreen] == nil)
     #expect(defaults[.pauseResumeRecording] == nil)
     #expect(defaults[.restartRecording] == nil)
+    #expect(defaults[.captureText] == nil)     // OCR Text (spec 0010) ships unbound too
     #expect(defaults.conflicts.isEmpty)        // shipped defaults never clash
 }
 
@@ -45,6 +46,15 @@ import Foundation
         HotkeyConflict(binding: bindings[.area]!, actions: [.area, .recordScreen])
     ])
     #expect(bindings.conflictingAction(for: bindings[.recordScreen]!, excluding: .recordScreen) == .area)
+}
+
+@Test func ocrTextIsListedAfterRecordScreenAndTakesPartInConflictDetection() {
+    #expect(CaptureAction.captureText.title == "OCR Text")
+    #expect(CaptureAction.recordScreen < .captureText)
+    #expect(CaptureAction.captureText < .pauseResumeRecording)
+    var bindings = HotkeyBindings.defaults
+    bindings[.captureText] = HotkeyBinding(keyCode: 20, modifiers: [.command, .control], keyLabel: "3")
+    #expect(bindings.conflictingAction(for: bindings[.captureText]!, excluding: .captureText) == .fullscreen)
 }
 
 @Test func distinctChordsProduceNoConflict() {

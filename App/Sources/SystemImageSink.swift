@@ -17,6 +17,13 @@ final class SystemImageSink: ImageSink {
         pasteboard.writeObjects([nsImage])
     }
 
+    /// OCR Text (spec 0010): plain text only, so a paste never brings formatting along.
+    func copyText(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
     func write(_ image: RenderedImage, to url: URL, format: ImageFormat) throws {
         try encode(image, as: format).write(to: url, options: .atomic)
     }

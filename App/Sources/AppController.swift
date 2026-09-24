@@ -59,6 +59,7 @@ final class AppController: NSObject, CaptureUI {
     /// frame dimming around the recording area (story 16, LIG-65).
     private let recordingControls = RecordingControlsController()
     private let recordingFrame = RecordingFrameController()
+    private let textCaptureNotice = TextCaptureNoticeController()
     /// The previous recording state, so `presentRecordingState` can play the start / stop cues on
     /// the transitions that deserve them.
     private var lastRecordingState: RecordingSession.State = .idle
@@ -101,6 +102,7 @@ final class AppController: NSObject, CaptureUI {
             scratchDirectory: Self.supportDirectory,
             studioProjects: StudioProjectStore(directory: Self.studioProjectsDirectory),
             studioFlattener: StudioFlattener(store: StudioProjectStore(directory: Self.studioProjectsDirectory)),
+            textRecognizer: VisionTextRecognizer(),
             ui: self
         )
         // A studio project's export is filed like a finished recording (spec 0007, story 27).
@@ -172,6 +174,7 @@ final class AppController: NSObject, CaptureUI {
         case .fullscreen: captureFullscreen()
         case .repeatLast: repeatLast()
         case .recordScreen: toggleRecording()
+        case .captureText: captureText()
         case .pauseResumeRecording: pauseResumeRecording()
         case .restartRecording: restartRecording()
         }
@@ -268,6 +271,12 @@ final class AppController: NSObject, CaptureUI {
     /// Menu / hotkey entry point for area capture: overlay → capture → post-capture toolbar.
     func captureArea() {
         Task { await coordinator.captureArea() }
+    }
+
+    /// Menu / hotkey entry point for OCR Text (spec 0010): overlay → capture → recognised text on
+    /// the clipboard.
+    func captureText() {
+        Task { await coordinator.captureText() }
     }
 
     /// Menu / hotkey entry point for window capture: hover-highlight overlay → capture → toolbar.
@@ -489,6 +498,10 @@ final class AppController: NSObject, CaptureUI {
         }
     }
 
+    func presentTextCaptureStatus(_ status: TextCaptureStatus) {
+        textCaptureNotice.show(status)
+    }
+
     func presentCaptureFailure(_ error: CaptureError) {
         let alert = NSAlert()
         alert.messageText = "Couldn’t take the screenshot"
@@ -701,6 +714,15 @@ final class AppController: NSObject, CaptureUI {
             ? .rect(Rect(x: parts[0], y: parts[1], width: parts[2], height: parts[3]))
             : .display(id: CGMainDisplayID())
         recordingFrame.show(around: region, dimsOutside: dims, isPaused: paused)
+    }
+
+    func debugShowTextNotice(_ name: String) {
+        switch name {
+        case "reading": presentTextCaptureStatus(.reading)
+        case "none": presentTextCaptureStatus(.noText)
+        case "failed": presentTextCaptureStatus(.failed("Text recognition failed: the request was cancelled."))
+        default: presentTextCaptureStatus(.copied("The quick brown fox jumps over the lazy dog and keeps running past the fence\nsecond line"))
+        }
     }
 
     func debugSeekStudio(to time: Double) { videoEditor.debugSeek(to: time) }

@@ -125,6 +125,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             controller.captureWindow()
         })
         menu.addItem(recordItem(hotkeys: hotkeys))
+        // OCR Text (spec 0010): unavailable during a take, so its overlay never lands in the video.
+        let ocrItem = captureItem(.captureText, icon: "text.viewfinder", hotkeys: hotkeys) { [controller] in
+            controller.captureText()
+        }
+        // The menu auto-enables items, so an item with no action is what reads as disabled.
+        if controller.isRecording { ocrItem.action = nil }
+        menu.addItem(ocrItem)
 
         menu.addItem(.separator())
 
