@@ -31,4 +31,10 @@ public protocol CaptureService: PermissionAuthorizing {
     /// service captures it. Same typed-`Result` contract as fullscreen: a failure is never a
     /// silently empty image, and `permissionDenied` still routes to the System-Settings recovery.
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError>
+
+    /// Take one still of the display the selection overlay covers (spec 0011, Freeze Screen),
+    /// honouring the include-cursor setting. Called *before* the overlay exists, so none of
+    /// Lightshot's windows are in it. The overlay shows it as its backdrop and an area result is cut
+    /// from it; failures route exactly as a capture's do, and the overlay is never shown.
+    func freezeScreen() async -> Result<FrozenScreen, CaptureError>
 }

@@ -56,6 +56,31 @@ final class SCCaptureService: CaptureService {
         }
     }
 
+    /// Freeze Screen (spec 0011): one still of the display the selection overlay covers — the main
+    /// screen, exactly as `OverlaySelectionController` resolves it — through the same display grab
+    /// as fullscreen, so cursor, permission mapping and encoding match. Its frame is that screen's
+    /// size in points at the origin, the space the overlay reports rects in.
+    ///
+    /// The still is uncompressed TIFF, not PNG: it only lives for one selection, and a 5K PNG
+    /// encode plus the backdrop's decode measured ~225 ms before the overlay could appear, against
+    /// ~20 ms for TIFF. The area cut from it is encoded as PNG as usual.
+    func freezeScreen() async -> Result<FrozenScreen, CaptureError> {
+        let screen = await MainActor.run { () -> (id: UInt32, size: CGSize)? in
+            guard let screen = NSScreen.main ?? NSScreen.screens.first,
+                  let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            else { return nil }
+            return (UInt32(id), screen.frame.size)
+        }
+        guard let screen else { return .failure(.noDisplayAvailable) }
+        return await capture(displayID: screen.id, encode: Self.tiffData) { full, _ in full }.map { still in
+            FrozenScreen(
+                displayID: screen.id,
+                frame: Rect(x: 0, y: 0, width: screen.size.width, height: screen.size.height),
+                image: still
+            )
+        }
+    }
+
     private func captureRect(_ rect: Rect) async -> Result<CapturedImage, CaptureError> {
         // The overlay runs on the main screen, so the rect is captured from the primary display.
         await capture(displayID: nil) { full, scale in
@@ -125,6 +150,7 @@ final class SCCaptureService: CaptureService {
     /// silent failure to the wrong screen.
     private func capture(
         displayID: UInt32?,
+        encode: (CGImage) -> Data? = pngData,
         _ transform: (_ full: CGImage, _ scale: CGFloat) -> CGImage?
     ) async -> Result<CapturedImage, CaptureError> {
         do {
@@ -156,8 +182,8 @@ final class SCCaptureService: CaptureService {
             guard let cgImage = transform(fullImage, scale) else {
                 return .failure(.systemFailure("The selected region was empty."))
             }
-            guard let data = Self.pngData(from: cgImage) else {
-                return .failure(.systemFailure("Could not encode the captured image as PNG."))
+            guard let data = encode(cgImage) else {
+                return .failure(.systemFailure("Could not encode the captured image."))
             }
             return .success(
                 CapturedImage(pixelWidth: cgImage.width, pixelHeight: cgImage.height, data: data)
@@ -191,5 +217,15 @@ final class SCCaptureService: CaptureService {
     private static func pngData(from cgImage: CGImage) -> Data? {
         let rep = NSBitmapImageRep(cgImage: cgImage)
         return rep.representation(using: .png, properties: [:])
+    }
+
+    /// Uncompressed TIFF — the frozen still's fast encoding (see `freezeScreen()`).
+    private static func tiffData(from cgImage: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, "public.tiff" as CFString, 1, nil) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 }

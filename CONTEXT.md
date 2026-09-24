@@ -110,3 +110,13 @@ _Avoid_: Capture Text (CleanShot's name), text grab, scan
 
 **Text capture**:
 One run of OCR Text, from selection to clipboard. Unlike a capture, it produces no image.
+
+### Freeze Screen
+
+**Frozen screen**:
+One still of a display, taken when Capture Area, Capture Window or OCR Text starts. The selection overlay shows it as its backdrop, and an area result is cut from it. Never stored.
+_Avoid_: snapshot, freeze-frame image
+
+**Freeze**:
+Taking the frozen screen and showing it under the selection overlay.
+_Avoid_: pause, lock

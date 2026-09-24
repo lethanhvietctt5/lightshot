@@ -8,8 +8,8 @@ import LightshotKit
 ///
 /// A thin OS wrapper (no unit tests; the coordinator's overlay → capture ordering is tested against
 /// a fake). Every entry point bridges the window's imperative lifecycle to `async` via a checked
-/// continuation, resumed exactly once when the user confirms or cancels: `selectRegion()` drags a
-/// rect (LIG-13), `selectWindow()` hover-highlights and clicks a window (LIG-14),
+/// continuation, resumed exactly once when the user confirms or cancels: `selectRegion(over:)` drags
+/// a rect (LIG-13), `selectWindow(over:)` hover-highlights and clicks a window (LIG-14),
 /// `selectRecording(initial:defaults:)` runs the editable recording selection with the recorder
 /// toolbar (spec 0006). v1 covers the main screen; per-display selection is a follow-up.
 @MainActor
@@ -45,22 +45,22 @@ final class OverlaySelectionController: OverlayController {
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
     private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
 
-    func selectRegion() async -> CaptureRegion? {
+    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion? {
         resolveStaleContinuation()
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentRectOverlay()
+            presentRectOverlay(over: frozen)
         }
     }
 
-    func selectWindow() async -> CaptureRegion? {
+    func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion? {
         resolveStaleContinuation()
         // Enumerate the on-screen windows *before* the overlay appears, so our own full-screen
         // overlay is never among the hover candidates or the window that gets captured.
         let windows = await Self.hoverableWindows()
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentWindowOverlay(windows: windows)
+            presentWindowOverlay(windows: windows, over: frozen)
         }
     }
 
@@ -106,7 +106,7 @@ final class OverlaySelectionController: OverlayController {
         )
     }
 
-    private func presentRectOverlay() {
+    private func presentRectOverlay(over frozen: FrozenScreen?) {
         let geometry = Self.mainScreen()
         let frame = geometry.frame
 
@@ -117,11 +117,11 @@ final class OverlaySelectionController: OverlayController {
         let window = makeOverlayWindow(frame: frame)
         window.onConfirm = { model.confirm() }
         window.onCancel = { model.cancel() }
-        window.contentView = NSHostingView(rootView: SelectionOverlayView(model: model))
+        window.contentView = Self.content(NSHostingView(rootView: SelectionOverlayView(model: model)), over: frozen, size: frame.size)
         present(window, at: frame)
     }
 
-    private func presentWindowOverlay(windows: [WindowHoverOverlayModel.HoverWindow]) {
+    private func presentWindowOverlay(windows: [WindowHoverOverlayModel.HoverWindow], over frozen: FrozenScreen?) {
         let frame = Self.mainScreen().frame
 
         let model = WindowHoverOverlayModel(windows: windows) { [weak self] region in
@@ -131,7 +131,7 @@ final class OverlaySelectionController: OverlayController {
         let window = makeOverlayWindow(frame: frame)
         window.onConfirm = { model.confirmHovered() }
         window.onCancel = { model.cancel() }
-        window.contentView = NSHostingView(rootView: WindowHoverOverlayView(model: model))
+        window.contentView = Self.content(NSHostingView(rootView: WindowHoverOverlayView(model: model)), over: frozen, size: frame.size)
         present(window, at: frame)
     }
 
@@ -171,6 +171,25 @@ final class OverlaySelectionController: OverlayController {
         window.onArrow = { dx, dy, shift in model.arrow(dx: dx, dy: dy, shift: shift) }
         window.contentView = NSHostingView(rootView: RecordingOverlayView(model: model))
         present(window, at: frame)
+    }
+
+    /// Freeze Screen (spec 0011): `content` over an opaque backdrop of the frozen still, so nothing
+    /// underneath the overlay moves while the user selects — the dimming and the undimmed selection
+    /// then show the still, not the live screen. The still is decoded once, here, and drawn by a
+    /// layer at the window's exact frame. No still (the self-timer path) leaves `content` as is.
+    private static func content(_ content: NSView, over frozen: FrozenScreen?, size: NSSize) -> NSView {
+        guard let frozen,
+              let source = CGImageSourceCreateWithData(frozen.image.data as CFData, nil),
+              let still = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return content }
+        let container = NSView(frame: NSRect(origin: .zero, size: size))
+        container.wantsLayer = true
+        container.layer?.contents = still
+        container.layer?.contentsGravity = .resize
+        content.frame = container.bounds
+        content.autoresizingMask = [.width, .height]
+        container.addSubview(content)
+        return container
     }
 
     /// The shared borderless, screen-saver-level, transparent full-screen window every mode presents

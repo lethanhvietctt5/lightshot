@@ -679,6 +679,15 @@ final class AppController: NSObject, CaptureUI {
             guard let file else { return }
             presentPostRecordingOverlay(PendingRecording(file: file, kind: .video, duration: 5, origin: .historyItem(id: UUID())))
         case "preparing": presentRecordingPreparation(cancel: {})
+        case "frozenArea", "frozenWindow":
+            // Freeze Screen (spec 0011): the selection overlay over `file` as the frozen still,
+            // stretched to the main screen, so the backdrop can be looked at without the grant.
+            let size = (NSScreen.main ?? NSScreen.screens[0]).frame.size
+            let frozen = FrozenScreen(displayID: CGMainDisplayID(), frame: Rect(x: 0, y: 0, width: size.width, height: size.height), image: image)
+            let overlay = OverlaySelectionController()
+            Task { @MainActor in
+                _ = name == "frozenArea" ? await overlay.selectRegion(over: frozen) : await overlay.selectWindow(over: frozen)
+            }
         default: break
         }
     }

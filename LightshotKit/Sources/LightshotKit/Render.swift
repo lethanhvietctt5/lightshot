@@ -329,7 +329,7 @@ private func cgColor(_ c: RGBAColor) -> CGColor {
     CGColor(red: c.red, green: c.green, blue: c.blue, alpha: c.alpha)
 }
 
-private func decodeImage(_ data: Data) -> CGImage? {
+func decodeImage(_ data: Data) -> CGImage? {
     guard !data.isEmpty,
           let source = CGImageSourceCreateWithData(data as CFData, nil),
           let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
@@ -337,7 +337,7 @@ private func decodeImage(_ data: Data) -> CGImage? {
     return image
 }
 
-private func encodePNG(_ image: CGImage) -> Data {
+func encodePNG(_ image: CGImage) -> Data {
     let data = NSMutableData()
     guard let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else {
         return Data()
