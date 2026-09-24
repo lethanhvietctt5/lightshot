@@ -32,9 +32,14 @@ public protocol CaptureService: PermissionAuthorizing {
     /// silently empty image, and `permissionDenied` still routes to the System-Settings recovery.
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError>
 
-    /// Take one still of the display the selection overlay covers (spec 0011, Freeze Screen),
-    /// honouring the include-cursor setting. Called *before* the overlay exists, so none of
-    /// Lightshot's windows are in it. The overlay shows it as its backdrop and an area result is cut
-    /// from it; failures route exactly as a capture's do, and the overlay is never shown.
+    /// Freeze the desktop (spec 0011, Freeze Screen): a still of every display, honouring the
+    /// include-cursor setting, plus the window picker's candidates with their frames (no images).
+    /// Called *before* any overlay exists, so none of Lightshot's windows are in it. Failures route
+    /// exactly as a capture's do, and the overlay is never shown.
     func freezeScreen() async -> Result<FrozenScreen, CaptureError>
+
+    /// Each window-picker candidate grabbed on its own, clean — for Capture Window, started together
+    /// with `freezeScreen()` so the picked window comes back as it was at the trigger, while the
+    /// overlay doesn't wait for it. Keyed by window id; a window whose grab failed is missing.
+    func freezeWindowImages() async -> [UInt32: CapturedImage]
 }

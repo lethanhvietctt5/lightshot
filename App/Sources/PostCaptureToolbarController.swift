@@ -68,24 +68,31 @@ final class PostCaptureToolbarController {
         panel = nil
     }
 
-    /// Places the toolbar centered just below the selection, converting the overlay's top-left
-    /// screen points into AppKit's bottom-left global coordinates. Falls back above the selection
-    /// when there's no room below, and clamps horizontally to the screen.
+    /// Places the toolbar centered just below the selection, converting its global top-left screen
+    /// points (spec 0011: the overlay covers every display) into AppKit's bottom-left global
+    /// coordinates, flipped about the primary display. Falls back above the selection when there's
+    /// no room below, and clamps horizontally to the screen that holds most of the selection.
     private func frameOrigin(for rect: Rect, size: NSSize) -> NSPoint {
         let selection = rect.standardized
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        let primaryHeight = NSScreen.screens.first?.frame.maxY ?? 900
+        let flipped = NSRect(
+            x: selection.minX, y: primaryHeight - selection.maxY,
+            width: selection.width, height: selection.height
+        )
+        let screen = NSScreen.screens.max { a, b in
+            let x = a.frame.intersection(flipped), y = b.frame.intersection(flipped)
+            return x.width * x.height < y.width * y.height
+        }
         let screenFrame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let gap: CGFloat = 8
 
-        // Selection bottom edge in bottom-left global space.
-        let selectionBottomY = screenFrame.maxY - selection.maxY
-        var originY = selectionBottomY - gap - size.height
+        var originY = flipped.minY - gap - size.height
         if originY < screenFrame.minY {
             // No room below — sit above the selection's top edge instead.
-            originY = screenFrame.maxY - selection.minY + gap
+            originY = flipped.maxY + gap
         }
 
-        var originX = screenFrame.minX + selection.midX - size.width / 2
+        var originX = flipped.midX - size.width / 2
         originX = min(max(originX, screenFrame.minX + gap), screenFrame.maxX - size.width - gap)
         return NSPoint(x: originX, y: originY)
     }

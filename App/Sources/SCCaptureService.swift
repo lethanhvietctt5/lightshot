@@ -6,15 +6,17 @@ import LightshotKit
 ///
 /// A thin wrapper with no unit tests — it needs a real display + TCC state; the coordinator routing
 /// it feeds is tested against a fake. Three paths, one seam: fullscreen (LIG-7) captures the whole
-/// primary display; the area path (LIG-13) captures that display and crops to the overlay's `.rect`;
+/// chosen display; the area path (LIG-13) captures the display under the `.rect` and crops to it;
 /// the window path (LIG-14) captures a single `.window` by its id via a window content filter — just
 /// that window, its shadow trimmed. macOS 14+ only: uses `SCScreenshotManager`, never the deprecated
 /// `CGWindowListCreateImage`.
 ///
 /// Fullscreen honors the chosen display on a multi-monitor setup (LIG-20, story 8): a passed
-/// `displayID` selects that `SCDisplay`, and `nil` falls back to the primary display. The area and
-/// window paths still target the **primary display** (the main screen's backing scale for the window
-/// path), matching the overlay, which runs on the main screen.
+/// `displayID` selects that `SCDisplay`, and `nil` falls back to the primary display. Regions are in
+/// global top-left screen points, since the overlay covers every display (spec 0011): the area path
+/// crops the display the rect overlaps most, and the window path scales by the backing scale of the
+/// display holding the window. Freeze Screen grabs every display (and, for Capture Window, every
+/// candidate window) at the trigger.
 final class SCCaptureService: CaptureService {
     /// Whether to draw the cursor into the capture (story 12). A closure, not a stored flag, so it
     /// reads the live `SettingsStore` value at capture time rather than a value frozen at launch.
@@ -37,7 +39,7 @@ final class SCCaptureService: CaptureService {
     }
 
     func captureFullscreen(displayID: UInt32?) async -> Result<CapturedImage, CaptureError> {
-        await capture(displayID: displayID) { full, _ in full }
+        await capture(pick: { displays in displayID.flatMap { id in displays.first { $0.displayID == id } } }) { full, _, _ in full }
     }
 
     func captureRegion(_ region: CaptureRegion) async -> Result<CapturedImage, CaptureError> {
@@ -56,52 +58,121 @@ final class SCCaptureService: CaptureService {
         }
     }
 
-    /// Freeze Screen (spec 0011): one still of the display the selection overlay covers — the main
-    /// screen, from the overlay's own `mainScreen()` — through the same display grab as fullscreen,
-    /// so cursor and permission mapping match. Its frame is that screen's size in points at the
-    /// origin, the space the overlay reports rects in.
+    /// Freeze Screen (spec 0011): the whole desktop at the trigger. Every display is grabbed at
+    /// once, through the same display grab as fullscreen so cursor and permission mapping match;
+    /// frames are the displays' global top-left points (`SCDisplay.frame`), the space the overlay
+    /// reports regions in. The window picker's candidates come along with their frames; their own
+    /// images come from `freezeWindowImages()`, which Capture Window starts at the same moment.
     ///
-    /// Lightshot's own windows above the floating level are left out of the still: a previous
+    /// Lightshot's own windows above the floating level are left out of the stills: a previous
     /// overlay still closing, the post-capture toolbar, the OCR notice, the status menu. Pins
     /// (floating) and editor windows stay in, as they do in a live capture.
     ///
-    /// The still is uncompressed TIFF, not PNG: it only lives for one selection, and a 5K PNG
+    /// Stills are uncompressed TIFF, not PNG: they only live for one selection, and a 5K PNG
     /// encode plus the backdrop's decode measured ~225 ms before the overlay could appear, against
-    /// ~20 ms for TIFF. The area cut from it is encoded as PNG as usual.
+    /// ~20 ms for TIFF. Whatever is taken from them is encoded as PNG.
     func freezeScreen() async -> Result<FrozenScreen, CaptureError> {
-        let screen = await MainActor.run { OverlaySelectionController.mainScreen() }
-        let ownProcess = ProcessInfo.processInfo.processIdentifier
-        let floating = NSWindow.Level.floating.rawValue
-        let still = await capture(
-            displayID: screen.displayID,
-            excluding: { windows in
-                windows.filter {
-                    $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating
-                }
-            },
-            encode: Self.tiffData
-        ) { full, _ in full }
-        return still.map { still in
-            FrozenScreen(
-                displayID: screen.displayID,
-                frame: Rect(x: 0, y: 0, width: screen.frame.width, height: screen.frame.height),
-                image: still
-            )
+        do {
+            let snapshot = try await Self.snapshot()
+            let displays = try await Self.grabDisplays(snapshot, showsCursor: includeCursor())
+            guard !displays.isEmpty else { return .failure(.noDisplayAvailable) }
+            let windows = snapshot.windows.map { FrozenWindow(id: $0.windowID, frame: Rect($0.frame), image: nil) }
+            return .success(FrozenScreen(displays: displays, windows: windows))
+        } catch {
+            return .failure(Self.mapError(error))
         }
     }
 
+    /// Every window-picker candidate grabbed on its own, concurrently, shadow trimmed (spec 0011).
+    /// A window whose grab fails is left out, and is captured live if it's picked.
+    func freezeWindowImages() async -> [UInt32: CapturedImage] {
+        guard let snapshot = try? await Self.snapshot() else { return [:] }
+        return await Self.grabWindows(snapshot, showsCursor: includeCursor())
+    }
+
+    /// The on-screen desktop a freeze grabs from: every display, our own windows to leave out of
+    /// the stills, and the window picker's candidates, front-most first.
+    private static func snapshot() async throws -> Snapshot {
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        let ownProcess = ProcessInfo.processInfo.processIdentifier
+        let floating = NSWindow.Level.floating.rawValue
+        return Snapshot(
+            displays: content.displays,
+            excluded: content.windows.filter {
+                $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating
+            },
+            windows: content.windows.filter(OverlaySelectionController.isWindowCandidate)
+        )
+    }
+
+    /// The shareable-content objects one freeze grabs from, handed to concurrent grabs together.
+    /// `@unchecked Sendable`: `SCDisplay` / `SCWindow` aren't marked Sendable, but they are
+    /// immutable snapshots of the window server's state that are only read here.
+    private struct Snapshot: @unchecked Sendable {
+        let displays: [SCDisplay]
+        /// Our own windows to leave out of the stills.
+        let excluded: [SCWindow]
+        /// The window picker's candidates.
+        let windows: [SCWindow]
+    }
+
+    /// Every display's still, concurrently, in `snapshot.displays` order.
+    private static func grabDisplays(_ snapshot: Snapshot, showsCursor: Bool) async throws -> [FrozenDisplay] {
+        try await withThrowingTaskGroup(of: (Int, FrozenDisplay?).self) { group in
+            for index in snapshot.displays.indices {
+                group.addTask {
+                    let display = snapshot.displays[index]
+                    let still = try await grab(display, excluding: snapshot.excluded, showsCursor: showsCursor)
+                    let image = tiffData(from: still).map {
+                        CapturedImage(pixelWidth: still.width, pixelHeight: still.height, data: $0)
+                    }
+                    return (index, image.map { FrozenDisplay(displayID: display.displayID, frame: Rect(display.frame), image: $0) })
+                }
+            }
+            var byIndex: [Int: FrozenDisplay] = [:]
+            for try await (index, frozen) in group { byIndex[index] = frozen }
+            return snapshot.displays.indices.compactMap { byIndex[$0] }
+        }
+    }
+
+    /// Each candidate window's own image, concurrently, keyed by window id — missing where a grab
+    /// failed.
+    private static func grabWindows(_ snapshot: Snapshot, showsCursor: Bool) async -> [UInt32: CapturedImage] {
+        await withTaskGroup(of: (UInt32, CapturedImage?).self) { group in
+            for index in snapshot.windows.indices {
+                group.addTask {
+                    let window = snapshot.windows[index]
+                    guard let image = try? await grab(window, on: snapshot.displays, showsCursor: showsCursor),
+                          let data = tiffData(from: image)
+                    else { return (window.windowID, nil) }
+                    return (window.windowID, CapturedImage(pixelWidth: image.width, pixelHeight: image.height, data: data))
+                }
+            }
+            var images: [UInt32: CapturedImage] = [:]
+            for await (id, image) in group { images[id] = image }
+            return images
+        }
+    }
+
+    /// The live area path (the self-timer case; spec 0011 freezes otherwise): the display the rect
+    /// overlaps most, cropped in that display's pixels. The rect is in global top-left points.
     private func captureRect(_ rect: Rect) async -> Result<CapturedImage, CaptureError> {
-        // The overlay runs on the main screen, so the rect is captured from the primary display.
-        await capture(displayID: nil) { full, scale in
-            // The selection arrives in screen points (top-left origin); the captured image is the
-            // display at native pixels, also top-left origin — so the crop is the selection scaled
-            // to pixels, clamped to the image so an overshoot at the edge can't fail the crop.
-            let standardized = rect.standardized
+        let selection = rect.standardized
+        let target = CGRect(x: selection.minX, y: selection.minY, width: selection.width, height: selection.height)
+        return await capture(pick: { displays in
+            displays.max { a, b in
+                let x = a.frame.intersection(target), y = b.frame.intersection(target)
+                return x.width * x.height < y.width * y.height
+            }
+        }) { full, scale, displayFrame in
+            // The captured image is the display at native pixels, top-left origin — so the crop is
+            // the selection relative to the display, scaled to pixels, clamped to the image so an
+            // overshoot at the edge can't fail the crop.
             let pixelRect = CGRect(
-                x: (standardized.minX * scale).rounded(.down),
-                y: (standardized.minY * scale).rounded(.down),
-                width: (standardized.width * scale).rounded(),
-                height: (standardized.height * scale).rounded()
+                x: ((target.minX - displayFrame.minX) * scale).rounded(.down),
+                y: ((target.minY - displayFrame.minY) * scale).rounded(.down),
+                width: (target.width * scale).rounded(),
+                height: (target.height * scale).rounded()
             ).intersection(CGRect(x: 0, y: 0, width: full.width, height: full.height))
             guard !pixelRect.isNull, !pixelRect.isEmpty else { return nil }
             return full.cropping(to: pixelRect)
@@ -122,23 +193,7 @@ final class SCCaptureService: CaptureService {
             guard let window = content.windows.first(where: { $0.windowID == id }) else {
                 return .failure(.systemFailure("The selected window is no longer available."))
             }
-
-            let filter = SCContentFilter(desktopIndependentWindow: window)
-            let config = SCStreamConfiguration()
-            // Native (Retina) resolution: the window frame is in points; scale up to pixels. v1
-            // targets the primary display (same scope as the rect path and the overlay), so the
-            // main screen's backing scale is used; per-display window capture is a follow-up.
-            let scale = (NSScreen.main ?? NSScreen.screens.first)?.backingScaleFactor ?? 2
-            config.width = Int((window.frame.width * scale).rounded())
-            config.height = Int((window.frame.height * scale).rounded())
-            config.showsCursor = includeCursor()   // honor the cursor toggle here too (story 12)
-            // Trim the drop shadow so the capture is the window's own content, not its surroundings.
-            config.ignoreShadowsSingleWindow = true
-
-            let cgImage = try await SCScreenshotManager.captureImage(
-                contentFilter: filter,
-                configuration: config
-            )
+            let cgImage = try await Self.grab(window, on: content.displays, showsCursor: includeCursor())
             guard let data = Self.pngData(from: cgImage) else {
                 return .failure(.systemFailure("Could not encode the captured image as PNG."))
             }
@@ -150,18 +205,46 @@ final class SCCaptureService: CaptureService {
         }
     }
 
-    /// Captures a display's full image, hands it (with the display's backing scale) to `transform`
-    /// to produce the final `CGImage`, then encodes it — sharing the shareable-content query,
-    /// permission mapping, and PNG encoding across the fullscreen and region paths.
+    /// One window on its own at native resolution — the backing scale of the display holding its
+    /// centre — with its drop shadow trimmed, so it's the window's own content, not its surroundings.
+    private static func grab(_ window: SCWindow, on displays: [SCDisplay], showsCursor: Bool) async throws -> CGImage {
+        let centre = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        let scale = displays.first { $0.frame.contains(centre) }.map(backingScale(for:)) ?? 2
+        let config = SCStreamConfiguration()
+        config.width = Int((window.frame.width * scale).rounded())
+        config.height = Int((window.frame.height * scale).rounded())
+        config.showsCursor = showsCursor   // honor the cursor toggle here too (story 12)
+        config.ignoreShadowsSingleWindow = true
+        return try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: window),
+            configuration: config
+        )
+    }
+
+    /// One whole display at native (Retina) resolution: display dimensions are in points, scaled up
+    /// by *this* display's backing scale — not the main screen's, which may differ on a
+    /// multi-monitor setup or when the captured display isn't the primary one.
+    private static func grab(_ display: SCDisplay, excluding: [SCWindow], showsCursor: Bool) async throws -> CGImage {
+        let scale = backingScale(for: display)
+        let config = SCStreamConfiguration()
+        config.width = Int((CGFloat(display.width) * scale).rounded())
+        config.height = Int((CGFloat(display.height) * scale).rounded())
+        config.showsCursor = showsCursor
+        return try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(display: display, excludingWindows: excluding),
+            configuration: config
+        )
+    }
+
+    /// Captures a display's full image, hands it (with the display's backing scale and global
+    /// frame) to `transform` to produce the final `CGImage`, then encodes it as PNG — sharing the
+    /// shareable-content query, permission mapping, and encoding across the fullscreen and rect paths.
     ///
-    /// `displayID` selects the target on a multi-monitor setup (story 8): the matching `SCDisplay`,
-    /// or the primary display (`displays.first`) when it is `nil` or no display matches — never a
-    /// silent failure to the wrong screen.
+    /// `pick` chooses the target on a multi-monitor setup (story 8); the primary display
+    /// (`displays.first`) stands in when it picks nothing — never a silent failure to no screen.
     private func capture(
-        displayID: UInt32?,
-        excluding: ([SCWindow]) -> [SCWindow] = { _ in [] },
-        encode: (CGImage) -> Data? = pngData,
-        _ transform: (_ full: CGImage, _ scale: CGFloat) -> CGImage?
+        pick: ([SCDisplay]) -> SCDisplay?,
+        _ transform: (_ full: CGImage, _ scale: CGFloat, _ displayFrame: CGRect) -> CGImage?
     ) async -> Result<CapturedImage, CaptureError> {
         do {
             // The shareable-content query is the first thing that fails when Screen Recording
@@ -170,30 +253,15 @@ final class SCCaptureService: CaptureService {
                 false,
                 onScreenWindowsOnly: false
             )
-            let chosen = displayID.flatMap { id in content.displays.first { $0.displayID == id } }
-            guard let display = chosen ?? content.displays.first else {
+            guard let display = pick(content.displays) ?? content.displays.first else {
                 return .failure(.noDisplayAvailable)
             }
-
-            let filter = SCContentFilter(display: display, excludingWindows: excluding(content.windows))
-            let config = SCStreamConfiguration()
-            // Native (Retina) resolution: display dimensions are in points; scale up to pixels
-            // using *this* display's backing scale — not the main screen's, which may differ on a
-            // multi-monitor setup or when the captured display isn't the primary one.
-            let scale = Self.backingScale(for: display)
-            config.width = Int((CGFloat(display.width) * scale).rounded())
-            config.height = Int((CGFloat(display.height) * scale).rounded())
-            config.showsCursor = includeCursor()
-
-            let fullImage = try await SCScreenshotManager.captureImage(
-                contentFilter: filter,
-                configuration: config
-            )
-            guard let cgImage = transform(fullImage, scale) else {
+            let fullImage = try await Self.grab(display, excluding: [], showsCursor: includeCursor())
+            guard let cgImage = transform(fullImage, Self.backingScale(for: display), display.frame) else {
                 return .failure(.systemFailure("The selected region was empty."))
             }
-            guard let data = encode(cgImage) else {
-                return .failure(.systemFailure("Could not encode the captured image."))
+            guard let data = Self.pngData(from: cgImage) else {
+                return .failure(.systemFailure("Could not encode the captured image as PNG."))
             }
             return .success(
                 CapturedImage(pixelWidth: cgImage.width, pixelHeight: cgImage.height, data: data)
@@ -237,5 +305,12 @@ final class SCCaptureService: CaptureService {
         }
         CGImageDestinationAddImage(destination, cgImage, nil)
         return CGImageDestinationFinalize(destination) ? data as Data : nil
+    }
+}
+
+private extension Rect {
+    /// A Core Graphics rect in global top-left points as the domain's `Rect`.
+    init(_ rect: CGRect) {
+        self.init(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
     }
 }

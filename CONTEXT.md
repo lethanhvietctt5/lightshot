@@ -114,7 +114,7 @@ One run of OCR Text, from selection to clipboard. Unlike a capture, it produces 
 ### Freeze Screen
 
 **Frozen screen**:
-One still of a display, taken when Capture Area, Capture Window or OCR Text starts. The selection overlay shows it as its backdrop, and an area result is cut from it. Never stored.
+The desktop at the moment Capture Area, Capture Window or OCR Text starts: a still of every display, plus each window's own image for Capture Window. The selection overlay shows it as its backdrop, and results are taken from it. Never stored.
 _Avoid_: snapshot, freeze-frame image
 
 **Freeze**:

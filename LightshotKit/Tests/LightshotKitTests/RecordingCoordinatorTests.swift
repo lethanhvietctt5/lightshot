@@ -201,9 +201,9 @@ private final class IdleCaptureService: CaptureService, @unchecked Sendable {
     private(set) var freezeCount = 0
     func freezeScreen() async -> Result<FrozenScreen, CaptureError> {
         freezeCount += 1
-        let still = CapturedImage(pixelWidth: 0, pixelHeight: 0, data: Data())
-        return .success(FrozenScreen(displayID: 7, frame: Rect(x: 0, y: 0, width: 0, height: 0), image: still))
+        return .success(FrozenScreen(displays: [], windows: []))
     }
+    func freezeWindowImages() async -> [UInt32: CapturedImage] { [:] }
 }
 /// Hands back a canned recording choice and records what it was asked to pre-fill / seed with.
 @MainActor

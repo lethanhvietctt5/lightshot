@@ -61,13 +61,18 @@ private let green: [UInt8] = [0, 255, 0]
 private let blue: [UInt8] = [0, 0, 255]
 private let white: [UInt8] = [255, 255, 255]
 
-/// A 200 × 100 pt display at 2x — 400 × 200 px — at the origin.
-private func frozen(origin: Point = Point(x: 0, y: 0)) -> FrozenScreen {
-    FrozenScreen(
-        displayID: 1,
+/// A 200 × 100 pt display at `scale` — 400 × 200 px at 2x — with its top-left at `origin`.
+private func display(_ id: UInt32 = 1, origin: Point = Point(x: 0, y: 0), scale: Int = 2) -> FrozenDisplay {
+    FrozenDisplay(
+        displayID: id,
         frame: Rect(x: origin.x, y: origin.y, width: 200, height: 100),
-        image: quadrantStill(points: (200, 100), scale: 2)
+        image: quadrantStill(points: (200, 100), scale: scale)
     )
+}
+
+/// One 2x display at `origin`, no windows.
+private func frozen(origin: Point = Point(x: 0, y: 0)) -> FrozenScreen {
+    FrozenScreen(displays: [display(origin: origin)], windows: [])
 }
 
 @Test func cropOfOneQuadrantIsThatQuadrantAtNativePixels() throws {
@@ -101,7 +106,7 @@ private func frozen(origin: Point = Point(x: 0, y: 0)) -> FrozenScreen {
 }
 
 @Test func aDisplayAwayFromTheOriginIsOffsetBeforeCropping() throws {
-    // A display whose top-left sits at (1000, 500) in screen points.
+    // A display whose top-left sits at (1000, 500) in global screen points.
     let screen = frozen(origin: Point(x: 1000, y: 500))
     let crop = try #require(screen.image(of: .rect(Rect(x: 1010, y: 510, width: 20, height: 20))))
 
@@ -109,9 +114,62 @@ private func frozen(origin: Point = Point(x: 0, y: 0)) -> FrozenScreen {
     #expect(colours(in: crop) == [red])
 }
 
-@Test func windowAndDisplayRegionsAreNeverCutFromTheStill() {
-    #expect(frozen().image(of: .window(id: 7, frame: Rect(x: 0, y: 0, width: 50, height: 50))) == nil)
+@Test func aDisplayRegionIsNeverCutFromTheStills() {
     #expect(frozen().image(of: .display(id: 1)) == nil)
+}
+
+// MARK: - Every display
+
+/// Display 1 at 2x at the origin, display 2 at 1x to its right.
+private func twoDisplays() -> FrozenScreen {
+    FrozenScreen(
+        displays: [display(1), display(2, origin: Point(x: 200, y: 0), scale: 1)],
+        windows: []
+    )
+}
+
+@Test func anAreaOnTheSecondDisplayIsCutFromItsStillAtItsOwnScale() throws {
+    // 210…240 pt is 10…40 pt into display 2 — its top-left (red) quadrant, at 1x.
+    let crop = try #require(twoDisplays().image(of: .rect(Rect(x: 210, y: 10, width: 30, height: 20))))
+
+    #expect(crop.pixelWidth == 30)
+    #expect(crop.pixelHeight == 20)
+    #expect(colours(in: crop) == [red])
+}
+
+@Test func anAreaStraddlingTwoDisplaysIsClampedToTheOneItOverlapsMost() throws {
+    // 180…260 pt: 20 pt on display 1, 60 pt on display 2 — so display 2, clamped to 200…260.
+    let crop = try #require(twoDisplays().image(of: .rect(Rect(x: 180, y: 10, width: 80, height: 20))))
+
+    #expect(crop.pixelWidth == 60)                  // 1x
+    #expect(colours(in: crop) == [red])
+}
+
+// MARK: - Windows
+
+@Test func aWindowIsItsFrozenImageAsAPNG() throws {
+    let still = quadrantStill(points: (30, 20), scale: 2)
+    let screen = FrozenScreen(
+        displays: [display()],
+        windows: [FrozenWindow(id: 7, frame: Rect(x: 10, y: 10, width: 30, height: 20), image: still)]
+    )
+
+    let image = try #require(screen.image(of: .window(id: 7, frame: Rect(x: 10, y: 10, width: 30, height: 20))))
+
+    #expect(image.pixelWidth == 60)
+    #expect(image.pixelHeight == 40)
+    #expect(CGImageSourceGetType(CGImageSourceCreateWithData(image.data as CFData, nil)!) == "public.png" as CFString)
+    #expect(colours(in: image) == [red, green, blue, white])
+}
+
+@Test func aWindowWithNoFrozenImageGivesNothing() {
+    let screen = FrozenScreen(
+        displays: [display()],
+        windows: [FrozenWindow(id: 7, frame: Rect(x: 10, y: 10, width: 30, height: 20), image: nil)]
+    )
+
+    #expect(screen.image(of: .window(id: 7, frame: Rect(x: 10, y: 10, width: 30, height: 20))) == nil)
+    #expect(screen.image(of: .window(id: 8, frame: Rect(x: 10, y: 10, width: 30, height: 20))) == nil)
 }
 
 @Test func fractionalSelectionsRoundLikeTheLiveRectCapture() throws {
@@ -132,9 +190,12 @@ private func frozen(origin: Point = Point(x: 0, y: 0)) -> FrozenScreen {
     CGImageDestinationAddImage(destination, CGImageSourceCreateImageAtIndex(source, 0, nil)!, nil)
     CGImageDestinationFinalize(destination)
     let screen = FrozenScreen(
-        displayID: 1,
-        frame: Rect(x: 0, y: 0, width: 200, height: 100),
-        image: CapturedImage(pixelWidth: 400, pixelHeight: 200, data: tiff as Data)
+        displays: [FrozenDisplay(
+            displayID: 1,
+            frame: Rect(x: 0, y: 0, width: 200, height: 100),
+            image: CapturedImage(pixelWidth: 400, pixelHeight: 200, data: tiff as Data)
+        )],
+        windows: []
     )
 
     let crop = try #require(screen.image(of: .rect(Rect(x: 10, y: 60, width: 40, height: 20))))

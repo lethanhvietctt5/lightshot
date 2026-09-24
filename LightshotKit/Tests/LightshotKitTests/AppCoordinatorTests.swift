@@ -33,6 +33,9 @@ private final class StubCaptureService: CaptureService, @unchecked Sendable {
     /// freeze the same way — so the failure-routing tests hold for the frozen paths too.
     var freezeResult: Result<FrozenScreen, CaptureError>
     private(set) var freezeCount = 0
+    /// The windows' own images handed back by `freezeWindowImages()` — the sample window's, by default.
+    var windowImages: [UInt32: CapturedImage] = [4242: sampleWindowImage()]
+    private(set) var windowImagesRequestCount = 0
 
     init(
         _ result: Result<CapturedImage, CaptureError>,
@@ -69,6 +72,10 @@ private final class StubCaptureService: CaptureService, @unchecked Sendable {
     func freezeScreen() async -> Result<FrozenScreen, CaptureError> {
         freezeCount += 1
         return freezeResult
+    }
+    func freezeWindowImages() async -> [UInt32: CapturedImage] {
+        windowImagesRequestCount += 1
+        return windowImages
     }
 }
 
@@ -200,26 +207,44 @@ private func sampleImage() -> CapturedImage {
     CapturedImage(pixelWidth: 2560, pixelHeight: 1440, data: Data([0x89, 0x50, 0x4E, 0x47]))
 }
 
-/// A 1000 × 800 pt main display frozen at 2x — a real PNG, so the coordinator's crop of it works.
-/// Built once: every frozen-path test shares the same still.
-private let frozenStill: FrozenScreen = {
+/// A solid-colour PNG of `width` × `height` px — real bytes, so the coordinator's crop of it works.
+private func solidPNG(width: Int, height: Int) -> CapturedImage {
     let context = CGContext(
-        data: nil, width: 2000, height: 1600, bitsPerComponent: 8, bytesPerRow: 0,
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!,
         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
     )!
     context.setFillColor(CGColor(red: 0.2, green: 0.4, blue: 0.6, alpha: 1))
-    context.fill(CGRect(x: 0, y: 0, width: 2000, height: 1600))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     let data = NSMutableData()
     let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil)!
     CGImageDestinationAddImage(destination, context.makeImage()!, nil)
     CGImageDestinationFinalize(destination)
-    return FrozenScreen(
+    return CapturedImage(pixelWidth: width, pixelHeight: height, data: data as Data)
+}
+
+/// A 1000 × 800 pt main display frozen at 2x, with the sample window (id 4242) as a picker
+/// candidate — its own image comes separately, from `freezeWindowImages()`. Built once: every
+/// frozen-path test shares the same stills.
+private let frozenStill = FrozenScreen(
+    displays: [FrozenDisplay(
         displayID: 1,
         frame: Rect(x: 0, y: 0, width: 1000, height: 800),
-        image: CapturedImage(pixelWidth: 2000, pixelHeight: 1600, data: data as Data)
-    )
-}()
+        image: solidPNG(width: 2000, height: 1600)
+    )],
+    windows: [FrozenWindow(id: 4242, frame: Rect(x: 200, y: 140, width: 800, height: 600), image: nil)]
+)
+
+/// The sample window's own image at the freeze: 800 × 600 pt at 2x.
+private let frozenWindowStill = solidPNG(width: 1600, height: 1200)
+private func sampleWindowImage() -> CapturedImage { frozenWindowStill }
+
+/// What Capture Window should hand on for the sample window: its frozen image, as a PNG capture.
+private func frozenSampleWindowCapture() -> CapturedImage? {
+    var frozen = sampleFrozenScreen()
+    frozen.windows[0].image = sampleWindowImage()
+    return frozen.image(of: sampleWindowRegion())
+}
 
 private func sampleFrozenScreen() -> FrozenScreen { frozenStill }
 
@@ -722,8 +747,8 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(overlay.windowCallCount == 1)           // window mode consults selectWindow()…
     #expect(overlay.callCount == 0)                 // …not the drag-a-rect path
-    #expect(capture.capturedRegions == [region])    // …then the resolved window is captured
-    #expect(ui.openedImages == [image])             // success opens straight in the editor (LIG-23)
+    #expect(capture.capturedRegions.isEmpty)        // …and the window comes from the freeze
+    #expect(ui.openedImages == [frozenSampleWindowCapture()!])   // straight to the editor (LIG-23)
     #expect(ui.toolbars.isEmpty)                    // …with no toolbar step in between
     #expect(ui.failures.isEmpty)
 }
@@ -747,7 +772,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureWindow()
 
     #expect(ui.toolbars.count == 1)                 // the setting off brings the toolbar back
-    #expect(ui.toolbars.first?.image == image)
+    #expect(ui.toolbars.first?.image == frozenSampleWindowCapture())
     #expect(ui.toolbars.first?.region == region)    // positioned at the window
     #expect(ui.openedImages.isEmpty)                // the toolbar, not the editor, is the surface
 }
@@ -1662,25 +1687,67 @@ private func frozenCoordinator(
 }
 
 @MainActor
-@Test func windowCaptureFreezesThePickerButCapturesTheWindowLive() async {
-    for delay in [0.0, 2.0] {
-        let settings = StubSettings()
-        settings.captureDelay = delay
-        let capture = StubCaptureService(.success(sampleImage()))
-        let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
-        let delays = DelaySpy()
-        let ui = SpyUI()
-        let coordinator = frozenCoordinator(
-            capture: capture, overlay: overlay, settings: settings, delays: delays, ui: ui
-        )
+@Test func windowCaptureGivesThePickedWindowAsItWasAtTheFreeze() async throws {
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: capture, overlay: overlay, ui: ui)
 
-        await coordinator.captureWindow()
+    await coordinator.captureWindow()
 
-        #expect(overlay.backdrops == [sampleFrozenScreen()])
-        #expect(delays.waits == (delay > 0 ? [delay] : []))
-        #expect(capture.capturedRegions == [sampleWindowRegion()])   // clean, live window capture
-        #expect(ui.openedImages == [sampleImage()])
-    }
+    #expect(capture.windowImagesRequestCount == 1)            // window images grabbed at the freeze
+    #expect(overlay.backdrops == [sampleFrozenScreen()])
+    #expect(capture.capturedRegions.isEmpty)                  // no live grab at the click
+    let opened = try #require(ui.openedImages.first)
+    #expect(opened == frozenSampleWindowCapture())
+    #expect(opened.pixelWidth == 1600)                        // the frozen window's own image
+}
+
+@MainActor
+@Test func aWindowWithNoFrozenImageIsCapturedLive() async {
+    let capture = StubCaptureService(.success(sampleImage()))
+    capture.windowImages = [:]                                // its own grab failed
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(
+        capture: capture, overlay: StubOverlay(region: nil, windowRegion: sampleWindowRegion()), ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(capture.capturedRegions == [sampleWindowRegion()])
+    #expect(ui.openedImages == [sampleImage()])
+}
+
+@MainActor
+@Test func windowCaptureWithASelfTimerFreezesThePickerButCapturesLiveAfterTheWait() async {
+    let settings = StubSettings()
+    settings.captureDelay = 2
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: nil, windowRegion: sampleWindowRegion())
+    let delays = DelaySpy()
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(
+        capture: capture, overlay: overlay, settings: settings, delays: delays, ui: ui
+    )
+
+    await coordinator.captureWindow()
+
+    #expect(capture.windowImagesRequestCount == 0)            // no window images: they'd go unused
+    #expect(overlay.backdrops == [sampleFrozenScreen()])
+    #expect(delays.waits == [2])
+    #expect(capture.capturedRegions == [sampleWindowRegion()])
+    #expect(ui.openedImages == [sampleImage()])
+}
+
+@MainActor
+@Test func areaAndOCRFreezesSkipTheWindowImages() async {
+    let h = TextCaptureHarness(recognition: .success([recognizedLine("hi", y: 0)]))
+
+    await h.coordinator.captureArea()
+    await h.coordinator.captureText()
+
+    #expect(h.capture.freezeCount == 2)
+    #expect(h.capture.windowImagesRequestCount == 0)
 }
 
 @MainActor

@@ -303,21 +303,39 @@ public final class AppCoordinator {
     }
 
     /// Window capture flow (stories 6–7). Runs first-run permission onboarding (story 57) up front,
-    /// then freezes the screen (spec 0011) so the picker sits on a still. Unlike an area, the
-    /// window is *not* cut from the still — that would drag in whatever overlaps it — so
-    /// `selectWindow(over:)` hover-highlights windows and resolves the clicked one to a `.window`
-    /// `CaptureRegion`, which the **same** `CaptureService.captureRegion(_:)` then captures cleanly
-    /// without its surroundings. Escape (`nil`) is a silent no-op with no capture; success records
-    /// the capture in history and opens it in the editor (or the toolbar at the window, per
-    /// `openInEditor`); failures route
-    /// exactly as the other paths do — `permissionDenied` to recovery, `userCancelled` silent, the
-    /// rest to a distinct message — so a capture never lands the user in a blank editor.
+    /// then freezes the desktop (spec 0011) with each candidate window grabbed on its own, so the
+    /// picker sits on the stills and the picked window comes back as it was at the trigger — clean,
+    /// never cut from a still, which would drag in whatever overlaps it. `selectWindow(over:)`
+    /// hover-highlights windows and resolves the clicked one to a `.window` `CaptureRegion`. A
+    /// window with no frozen image, and every window under a self-timer, is captured live by
+    /// `CaptureService.captureRegion(_:)` instead. Escape (`nil`) is a silent no-op with no capture;
+    /// success records the capture in history and opens it in the editor (or the toolbar at the
+    /// window, per `openInEditor`); failures route exactly as the other paths do, so a capture never
+    /// lands the user in a blank editor.
     public func captureWindow() async {
         lastCapture = .window
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
-        guard let frozen = await freezeScreen() else { return }
+        // Each window's own image is grabbed at the trigger, alongside the freeze, but the picker
+        // doesn't wait for it — it's collected at the click. With a self-timer the window is
+        // captured live after the wait (story 10), so the images would go unused.
+        let isTimed = settings.captureDelay > 0
+        let captureService = captureService
+        async let windowImages = isTimed ? [:] : captureService.freezeWindowImages()
+        guard var frozen = await freezeScreen() else { return }
         guard let region = await overlay.selectWindow(over: frozen) else { return }
-        // Self-timer (story 10): delay after the window is picked, before it is captured.
+        if !isTimed {
+            let images = await windowImages
+            for index in frozen.windows.indices {
+                frozen.windows[index].image = images[frozen.windows[index].id]
+            }
+            if let image = frozen.image(of: region) {
+                record(image, source: .window)
+                presentCapture(image, at: region)
+                return
+            }
+        }
+        // Self-timer (story 10): delay after the window is picked, before it is captured. Also the
+        // fallback for a window with no frozen image: capture it live.
         await applyCaptureDelay()
         switch await captureService.captureRegion(region) {
         case let .success(image):
