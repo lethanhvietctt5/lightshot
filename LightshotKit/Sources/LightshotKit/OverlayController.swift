@@ -11,8 +11,9 @@ import Foundation
 ///
 /// The two entry points map to the spec's two selection modes and share the same overlay
 /// infrastructure: `selectRegion(over:)` drags a rect (LIG-13), `selectWindow(over:)`
-/// hover-highlights and clicks a window (LIG-14). Both resolve to a `CaptureRegion` (or `nil` on
-/// Escape) fed to the same `CaptureService.captureRegion(_:)`.
+/// hover-highlights and clicks a window (LIG-14). Both resolve to a `CaptureRegion` in global
+/// top-left screen points (or `nil` on Escape); the coordinator takes the result from the frozen
+/// screen, or — on the self-timer paths — from `CaptureService.captureRegion(_:)`.
 @MainActor
 public protocol OverlayController: AnyObject {
     /// Present the drag-a-rect selection overlay and await the user's choice (stories 2–5).
@@ -20,8 +21,9 @@ public protocol OverlayController: AnyObject {
     /// Resolves to the chosen `CaptureRegion`, or `nil` when the user cancels (Escape) — a `nil`
     /// is a silent no-op, never a capture. The overlay is dismissed by the time this returns.
     ///
-    /// `frozen` is the still to select over (spec 0011, Freeze Screen): the overlay shows it as an
-    /// opaque backdrop so nothing underneath moves. `nil` selects over the live screen.
+    /// `frozen` is the desktop to select over (spec 0011, Freeze Screen): the overlay covers every
+    /// display and shows each one's still as an opaque backdrop so nothing underneath moves. `nil`
+    /// selects over the live screens.
     func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion?
 
     /// Present the window-capture overlay and await the user's choice (stories 6–7): windows
@@ -30,7 +32,7 @@ public protocol OverlayController: AnyObject {
     /// Resolves to a `.window` `CaptureRegion` for the clicked window, or `nil` on cancel — the
     /// same silent-no-op contract as `selectRegion(over:)`. The overlay is dismissed by the time this
     /// returns, so it is never itself the window that gets captured. `frozen` is the backdrop, as
-    /// for `selectRegion(over:)`; the picked window itself is still captured live.
+    /// for `selectRegion(over:)`, and its windows are the candidates, at their positions then.
     func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion?
 
     /// Present the recording overlay (spec 0006, stories 3–9): drag a rect that stays editable

@@ -45,6 +45,14 @@ public struct FrozenScreen: Equatable, Sendable {
         }
     }
 
+    /// Give each window its own image from `images` (by window id), as `freezeWindowImages()`
+    /// returns them; a window missing from `images` keeps no image and is captured live if picked.
+    public mutating func setWindowImages(_ images: [UInt32: CapturedImage]) {
+        for index in windows.indices {
+            windows[index].image = images[windows[index].id]
+        }
+    }
+
     /// The area two rects share, `0` when they don't meet.
     private func overlap(_ a: Rect, _ b: Rect) -> Double {
         let width = min(a.maxX, b.maxX) - max(a.minX, b.minX)

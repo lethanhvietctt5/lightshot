@@ -712,8 +712,14 @@ final class AppController: NSObject, CaptureUI {
                 async let images = captureService.freezeWindowImages()
                 switch await captureService.freezeScreen() {
                 case var .success(frozen):
-                    let byID = await images
-                    for index in frozen.windows.indices { frozen.windows[index].image = byID[frozen.windows[index].id] }
+                    // `-previewActivate YES`: present the overlay as Capture Window does, so the
+                    // window grabs still in flight run while Lightshot takes focus.
+                    if UserDefaults.standard.bool(forKey: "previewActivate") {
+                        let overlay = OverlaySelectionController()
+                        let shown = frozen
+                        Task { @MainActor in _ = await overlay.selectWindow(over: shown) }
+                    }
+                    frozen.setWindowImages(await images)
                     for display in frozen.displays {
                         log += "display \(display.displayID) frame \(display.frame) \(display.image.pixelWidth)x\(display.image.pixelHeight) \(display.image.data.count / 1024) KB\n"
                         try? display.image.data.write(to: folder.appendingPathComponent("display-\(display.displayID).tiff"))

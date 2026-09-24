@@ -101,8 +101,18 @@ final class SCCaptureService: CaptureService {
             excluded: content.windows.filter {
                 $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating
             },
-            windows: content.windows.filter(OverlaySelectionController.isWindowCandidate)
+            windows: content.windows.filter(isWindowCandidate)
         )
+    }
+
+    /// Whether `window` is a window-capture candidate: on screen, a normal app window (not the menu
+    /// bar, Dock or desktop), not empty, and not one of ours. Shared by Freeze Screen's candidates
+    /// and the live window picker (`OverlaySelectionController`), so the two agree.
+    static func isWindowCandidate(_ window: SCWindow) -> Bool {
+        window.isOnScreen
+            && window.windowLayer == 0
+            && window.frame.width >= 1 && window.frame.height >= 1
+            && window.owningApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
     }
 
     /// The shareable-content objects one freeze grabs from, handed to concurrent grabs together.

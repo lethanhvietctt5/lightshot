@@ -315,24 +315,12 @@ public final class AppCoordinator {
     public func captureWindow() async {
         lastCapture = .window
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
-        // Each window's own image is grabbed at the trigger, alongside the freeze, but the picker
-        // doesn't wait for it — it's collected at the click. With a self-timer the window is
-        // captured live after the wait (story 10), so the images would go unused.
         let isTimed = settings.captureDelay > 0
-        let captureService = captureService
-        async let windowImages = isTimed ? [:] : captureService.freezeWindowImages()
-        guard var frozen = await freezeScreen() else { return }
-        guard let region = await overlay.selectWindow(over: frozen) else { return }
-        if !isTimed {
-            let images = await windowImages
-            for index in frozen.windows.indices {
-                frozen.windows[index].image = images[frozen.windows[index].id]
-            }
-            if let image = frozen.image(of: region) {
-                record(image, source: .window)
-                presentCapture(image, at: region)
-                return
-            }
+        guard let (region, frozenImage) = await selectFrozenWindow(withImages: !isTimed) else { return }
+        if let frozenImage {
+            record(frozenImage, source: .window)
+            presentCapture(frozenImage, at: region)
+            return
         }
         // Self-timer (story 10): delay after the window is picked, before it is captured. Also the
         // fallback for a window with no frozen image: capture it live.
@@ -344,6 +332,22 @@ public final class AppCoordinator {
         case let .failure(error):
             routeCaptureFailure(error)
         }
+    }
+
+    /// Freeze Screen for Capture Window (spec 0011): freeze, pick a window over the stills, and —
+    /// `withImages` — hand back the picked window as it was at the trigger. Each window's own image
+    /// is grabbed at the trigger, alongside the freeze, but the picker doesn't wait for it; it's
+    /// collected at the click. With a self-timer the window is captured live after the wait, so the
+    /// images aren't grabbed. The frozen screen goes when this returns, before any wait. `nil` when
+    /// the freeze failed (already routed) or the user cancelled.
+    private func selectFrozenWindow(withImages: Bool) async -> (region: CaptureRegion, image: CapturedImage?)? {
+        let captureService = captureService
+        async let windowImages = withImages ? captureService.freezeWindowImages() : [:]
+        guard var frozen = await freezeScreen() else { return nil }
+        guard let region = await overlay.selectWindow(over: frozen) else { return nil }
+        guard withImages else { return (region, nil) }
+        frozen.setWindowImages(await windowImages)
+        return (region, frozen.image(of: region))
     }
 
     /// Repeat-last-capture-mode (story 9): re-fire whichever of area/window/fullscreen the user ran

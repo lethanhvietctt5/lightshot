@@ -291,7 +291,7 @@ final class OverlaySelectionController: OverlayController {
         ) else { return [] }
 
         return content.windows
-            .filter(isWindowCandidate)
+            .filter(SCCaptureService.isWindowCandidate)
             .map { window in
                 WindowHoverOverlayModel.HoverWindow(
                     id: window.windowID,
@@ -303,16 +303,6 @@ final class OverlaySelectionController: OverlayController {
                     )
                 )
             }
-    }
-
-    /// Whether `window` is a window-capture candidate: on screen, a normal app window (not the menu
-    /// bar, Dock or desktop), not empty, and not one of ours. Shared with Freeze Screen's window
-    /// grab (`SCCaptureService.freezeScreen`), so the picker and the frozen windows agree.
-    nonisolated static func isWindowCandidate(_ window: SCWindow) -> Bool {
-        window.isOnScreen
-            && window.windowLayer == 0
-            && window.frame.width >= 1 && window.frame.height >= 1
-            && window.owningApplication?.bundleIdentifier != Bundle.main.bundleIdentifier
     }
 
     private func finish(with region: CaptureRegion?) {

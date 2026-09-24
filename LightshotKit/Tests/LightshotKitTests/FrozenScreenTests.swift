@@ -204,3 +204,18 @@ private func twoDisplays() -> FrozenScreen {
     #expect(type == "public.png" as CFString)
     #expect(colours(in: crop) == [blue])
 }
+
+@Test func windowImagesAreMatchedToTheirWindowsById() {
+    let a = quadrantStill(points: (30, 20), scale: 1)
+    var screen = FrozenScreen(
+        displays: [display()],
+        windows: [
+            FrozenWindow(id: 7, frame: Rect(x: 0, y: 0, width: 30, height: 20), image: nil),
+            FrozenWindow(id: 8, frame: Rect(x: 50, y: 0, width: 30, height: 20), image: nil),
+        ]
+    )
+
+    screen.setWindowImages([8: a, 99: a])
+
+    #expect(screen.windows.map(\.image) == [nil, a])
+}
