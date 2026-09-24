@@ -323,12 +323,8 @@ public final class AppCoordinator {
         case let .success(image):
             record(image, source: .window)
             presentCapture(image, at: region)
-        case .failure(.permissionDenied):
-            ui.presentPermissionDenied(.screenRecording)
-        case .failure(.userCancelled):
-            break
         case let .failure(error):
-            ui.presentCaptureFailure(error)
+            routeCaptureFailure(error)
         }
     }
 
@@ -354,8 +350,8 @@ public final class AppCoordinator {
     /// and the text in the selection cut from it is recognised on-device and put on the clipboard
     /// as plain text. No editor, no history item, no self-timer, and Repeat Last Capture keeps
     /// pointing at the last screenshot. Nothing readable (or a recognition failure) leaves the
-    /// clipboard alone and says so. Freeze failures route exactly as area capture's do. Ignored while a take is active, so the overlay never lands in
-    /// the recording.
+    /// clipboard alone and says so. Freeze failures route exactly as area capture's do. Ignored
+    /// while a take is active, so the overlay never lands in the recording.
     public func captureText() async {
         guard let textRecognizer, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded() else { return }

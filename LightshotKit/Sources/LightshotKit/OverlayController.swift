@@ -10,9 +10,9 @@ import Foundation
 /// which is how the coordinator's overlay → capture → toolbar ordering is verified with no screen.
 ///
 /// The two entry points map to the spec's two selection modes and share the same overlay
-/// infrastructure: `selectRegion(over:)` drags a rect (LIG-13), `selectWindow(over:)` hover-highlights and
-/// clicks a window (LIG-14). Both resolve to a `CaptureRegion` (or `nil` on Escape) fed to the
-/// same `CaptureService.captureRegion(_:)`.
+/// infrastructure: `selectRegion(over:)` drags a rect (LIG-13), `selectWindow(over:)`
+/// hover-highlights and clicks a window (LIG-14). Both resolve to a `CaptureRegion` (or `nil` on
+/// Escape) fed to the same `CaptureService.captureRegion(_:)`.
 @MainActor
 public protocol OverlayController: AnyObject {
     /// Present the drag-a-rect selection overlay and await the user's choice (stories 2–5).

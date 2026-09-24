@@ -164,6 +164,8 @@ When I start Capture Area, Capture Window or OCR Text (from the menu, a hotkey, 
 ## As built
 
 - **The still is uncompressed TIFF, not PNG.** Measured offline on this machine: a PNG encode of a full-display still took 88 ms at 2940 × 1912 and 157 ms at 5120 × 2880. The backdrop's decode added 36–69 ms, so the overlay would have appeared up to ~225 ms late. Uncompressed TIFF took 6–13 ms to encode and 4–7 ms to decode. `FrozenScreen` accepts any ImageIO-readable still, and the area cut from it is still PNG.
-- **Which display freezes.** `SCCaptureService.freezeScreen()` grabs `NSScreen.main`, the screen the overlay covers. The live rect path still grabs the first shareable display. The two are the same on a single display.
+- **Which display freezes.** `SCCaptureService.freezeScreen()` grabs the screen from the overlay's own `mainScreen()` lookup, so the still and the overlay can't disagree. The live rect path still grabs the first shareable display. The two are the same on a single display.
+- **Lightshot's own windows are left out of the still.** The grab excludes this process's windows above the floating level: a previous overlay still closing when a new capture starts (story 33), the post-capture toolbar, the OCR notice, and the status menu. Pins (floating level) and editor windows stay in, as they do in a live capture.
+- **Memory.** The uncompressed 5K still is ~59 MB. It's decoded again for the backdrop and for the crop, so peak memory is roughly 2–3× that while the overlay is up. It's all released when the use case returns.
 - **Backdrop.** The overlay's content view is a layer-backed container whose layer draws the still, with the SwiftUI overlay as a subview above it.
 - **DEBUG preview.** `-previewSurface frozenArea|frozenWindow -previewFile <png>` opens the area or window overlay over a still loaded from a file. It needs no Screen Recording grant.

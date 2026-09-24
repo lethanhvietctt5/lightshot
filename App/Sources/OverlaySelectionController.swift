@@ -89,14 +89,16 @@ final class OverlaySelectionController: OverlayController {
         }
     }
 
-    /// The main screen every overlay covers in v1: its frame, backing scale and display id.
-    private struct ScreenGeometry {
+    /// The main screen every overlay covers in v1: its frame, backing scale and display id. Also
+    /// what Freeze Screen grabs (`SCCaptureService.freezeScreen()`), so the still always matches
+    /// the overlay it sits under.
+    struct ScreenGeometry {
         let frame: NSRect
         let scale: Double
         let displayID: UInt32
     }
 
-    private static func mainScreen() -> ScreenGeometry {
+    static func mainScreen() -> ScreenGeometry {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let number = screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
         return ScreenGeometry(
