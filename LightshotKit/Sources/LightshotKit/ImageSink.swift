@@ -11,6 +11,9 @@ public protocol ImageSink {
     /// Place the rendered image on the system clipboard.
     func copyToClipboard(_ image: RenderedImage)
 
+    /// Replace the clipboard with `text` as plain text only (OCR Text, spec 0010).
+    func copyText(_ text: String)
+
     /// Write the rendered image to disk at `url`, encoded as `format` (stories 41–42, 44).
     ///
     /// The exact `ImageFormat` — including `jpeg(quality:)` — flows through unchanged, which is what

@@ -8,7 +8,7 @@ Canonical working agreement for any AI agent (Claude Code, Copilot, Codex, …) 
 
 ## Current state — read first
 
-The app is shipping (see [`docs/releases/`](docs/releases) for per-version highlights). Specs [`0001`](specs)–`0009` are implemented: screenshot capture and annotation, release and distribution, the editor passes, the menu-bar menu, screen recording, the Studio video editor, light/dark appearance, and auto redact.
+The app is shipping (see [`docs/releases/`](docs/releases) for per-version highlights). Specs [`0001`](specs)–`0010` are implemented: screenshot capture and annotation, release and distribution, the editor passes, the menu-bar menu, screen recording, the Studio video editor, light/dark appearance, auto redact, and OCR Text.
 
 - [`LightshotKit/`](LightshotKit) — the SwiftPM domain-core package. Pure Swift, **no AppKit / ScreenCaptureKit imports**, with a Swift Testing suite per module.
 - [`App/`](App) — the menu-bar app (`LSUIElement`) and the concrete ScreenCaptureKit / AVFoundation / AppKit services.
@@ -24,7 +24,7 @@ Guidance:
 
 The spec's testing strategy dictates the structure:
 
-- **A SwiftPM package for the domain core** (`LightshotKit/`) — `AnnotationDocument`, the pure `render` function, `StudioDocument` and its pure models (`StudioTimeline`, `ZoomCamera`, `CursorPath`, `CanvasLayout`, `StudioCaptions`), `RecordingSession`, `HistoryStore`, `AppCoordinator`, `ThemePalette`, `SensitiveDataScanner` (auto redact), and the service *protocols* (`CaptureService`, `RecordingService`, `ImageSource`, `ImageSink`, `MediaSink`, `HotkeyService`, `AudioInputService`, `CameraService`, `InputEventSource`, `SettingsStore`, …). Pure Swift, **no AppKit / ScreenCaptureKit imports**. This is what makes `swift test` fast and screen-free.
+- **A SwiftPM package for the domain core** (`LightshotKit/`) — `AnnotationDocument`, the pure `render` function, `StudioDocument` and its pure models (`StudioTimeline`, `ZoomCamera`, `CursorPath`, `CanvasLayout`, `StudioCaptions`), `RecordingSession`, `HistoryStore`, `AppCoordinator`, `ThemePalette`, `SensitiveDataScanner` (auto redact), `TextCapture` (OCR Text), and the service *protocols* (`CaptureService`, `RecordingService`, `TextRecognizer`, `ImageSource`, `ImageSink`, `MediaSink`, `HotkeyService`, `AudioInputService`, `CameraService`, `InputEventSource`, `SettingsStore`, …). Pure Swift, **no AppKit / ScreenCaptureKit imports**. This is what makes `swift test` fast and screen-free.
 - **An Xcode app target for the OS shell** (`App/`, built via the generated `Lightshot.xcodeproj`) — the menu-bar app plus the concrete ScreenCaptureKit / AVFoundation / AppKit implementations of those protocols (capture, recording, overlays, pin board, hotkeys, sinks, the Studio compositor and exporter).
 
 The seam between the two is the point: the app depends on the package, never the reverse.

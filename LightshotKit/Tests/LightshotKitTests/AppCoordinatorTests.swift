@@ -90,7 +90,9 @@ private final class StubImageSource: ImageSource {
 private final class SpyImageSink: ImageSink {
     private(set) var copied: [RenderedImage] = []
     private(set) var written: [(image: RenderedImage, url: URL, format: ImageFormat)] = []
+    private(set) var copiedText: [String] = []
     func copyToClipboard(_ image: RenderedImage) { copied.append(image) }
+    func copyText(_ text: String) { copiedText.append(text) }
     func write(_ image: RenderedImage, to url: URL, format: ImageFormat) throws {
         written.append((image, url, format))
     }
@@ -154,6 +156,20 @@ private final class SpyUI: CaptureUI {
     func dismissGIFConversion() {}
     func resolveCancelledGIFConversion() async -> Bool { true }
     func presentRecordingFailure(_ error: RecordingError) {}
+    private(set) var textResults: [TextCaptureStatus] = []
+    func presentTextCaptureStatus(_ status: TextCaptureStatus) { textResults.append(status) }
+}
+
+/// Hands back canned recognised lines (or a failure) and records which images it was asked to read.
+@MainActor
+private final class SpyTextRecognizer: TextRecognizer {
+    var result: Result<[RecognizedLine], TextRecognitionError>
+    private(set) var recognized: [CapturedImage] = []
+    init(_ result: Result<[RecognizedLine], TextRecognitionError>) { self.result = result }
+    func recognizeText(in image: CapturedImage) async -> Result<[RecognizedLine], TextRecognitionError> {
+        recognized.append(image)
+        return result
+    }
 }
 
 private func sampleImage() -> CapturedImage {
@@ -1262,4 +1278,195 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(overlay.windowCallCount == 2)       // repeat replays window, the latest mode
     #expect(capture.capturedDisplays == [nil])  // …and does not re-fire the earlier fullscreen
+}
+
+// MARK: - OCR Text (spec 0010)
+
+private func recognizedLine(_ text: String, y: Double) -> RecognizedLine {
+    RecognizedLine(
+        text: text,
+        words: [RecognizedWord(range: 0..<text.utf16.count, box: Rect(x: 0, y: y, width: 100, height: 20))]
+    )
+}
+
+@MainActor
+private struct TextCaptureHarness {
+    let capture: StubCaptureService
+    let overlay: StubOverlay
+    let recognizer: SpyTextRecognizer
+    let sink = SpyImageSink()
+    let settings = StubSettings()
+    let ui = SpyUI()
+    let delays = DelaySpy()
+    let coordinator: AppCoordinator
+
+    init(
+        capture: Result<CapturedImage, CaptureError> = .success(sampleImage()),
+        status: CaptureAuthorizationStatus = .authorized,
+        requestResult: CaptureAuthorizationStatus = .authorized,
+        region: CaptureRegion? = sampleRegion(),
+        recognition: Result<[RecognizedLine], TextRecognitionError> = .success([])
+    ) {
+        self.capture = StubCaptureService(capture, status: status, requestResult: requestResult)
+        overlay = StubOverlay(region: region)
+        recognizer = SpyTextRecognizer(recognition)
+        let delays = self.delays
+        coordinator = AppCoordinator(
+            captureService: self.capture,
+            overlay: overlay,
+            imageSource: unusedImageSource(),
+            imageSink: sink,
+            settings: settings,
+            textRecognizer: recognizer,
+            sleep: { await delays.sleep($0) },
+            ui: ui
+        )
+    }
+}
+
+@MainActor
+@Test func captureTextCopiesTheRecognisedTextOfTheSelectedArea() async {
+    let h = TextCaptureHarness(recognition: .success([
+        recognizedLine("second line", y: 40),
+        recognizedLine("first line", y: 0),
+    ]))
+
+    await h.coordinator.captureText()
+
+    #expect(h.overlay.callCount == 1)
+    #expect(h.capture.capturedRegions == [sampleRegion()])   // the region the overlay returned
+    #expect(h.recognizer.recognized == [sampleImage()])
+    #expect(h.sink.copiedText == ["first line\nsecond line"])
+    #expect(h.ui.textResults == [.reading, .copied("first line\nsecond line")])
+    #expect(h.ui.openedImages.isEmpty)                         // no editor
+    #expect(h.ui.toolbars.isEmpty)                             // no post-capture toolbar
+    #expect(h.sink.copied.isEmpty)                             // no image on the clipboard
+}
+
+@MainActor
+@Test func captureTextCancelledOverlayDoesNothing() async {
+    let h = TextCaptureHarness(region: nil)
+
+    await h.coordinator.captureText()
+
+    #expect(h.capture.capturedRegions.isEmpty)
+    #expect(h.recognizer.recognized.isEmpty)
+    #expect(h.sink.copiedText.isEmpty)
+    #expect(h.ui.textResults.isEmpty)
+}
+
+@MainActor
+@Test func captureTextWithNothingReadableLeavesTheClipboardAlone() async {
+    for lines in [[], [recognizedLine("   ", y: 0)]] {
+        let h = TextCaptureHarness(recognition: .success(lines))
+
+        await h.coordinator.captureText()
+
+        #expect(h.sink.copiedText.isEmpty)
+        #expect(h.ui.textResults == [.reading, .noText])
+    }
+}
+
+@MainActor
+@Test func captureTextRecognitionFailureIsReportedAndCopiesNothing() async {
+    let h = TextCaptureHarness(recognition: .failure(TextRecognitionError("Vision gave up")))
+
+    await h.coordinator.captureText()
+
+    #expect(h.sink.copiedText.isEmpty)
+    #expect(h.ui.textResults == [.reading, .failed("Vision gave up")])
+}
+
+@MainActor
+@Test func captureTextRoutesCaptureFailuresLikeAreaCapture() async {
+    let denied = TextCaptureHarness(capture: .failure(.permissionDenied))
+    await denied.coordinator.captureText()
+    #expect(denied.ui.deniedKinds == [.screenRecording])
+    #expect(denied.recognizer.recognized.isEmpty)
+    #expect(denied.ui.textResults.isEmpty)
+
+    let failed = TextCaptureHarness(capture: .failure(.systemFailure("boom")))
+    await failed.coordinator.captureText()
+    #expect(failed.ui.failures == [.systemFailure("boom")])
+    #expect(failed.ui.textResults.isEmpty)
+
+    let cancelled = TextCaptureHarness(capture: .failure(.userCancelled))
+    await cancelled.coordinator.captureText()
+    #expect(cancelled.ui.failures.isEmpty && cancelled.ui.textResults.isEmpty)
+    #expect(cancelled.ui.permissionDeniedCount == 0)
+}
+
+@MainActor
+@Test func captureTextRunsFirstRunOnboardingBeforeTheOverlay() async {
+    // First ever capture: the system prompt goes up and returns un-authorized straight away.
+    let h = TextCaptureHarness(status: .notDetermined, requestResult: .notDetermined)
+
+    await h.coordinator.captureText()
+
+    #expect(h.capture.requestAuthorizationCount == 1)
+    #expect(h.overlay.callCount == 0)   // the system prompt is on screen, not our overlay
+}
+
+@MainActor
+@Test func captureTextIgnoresTheSelfTimer() async {
+    let h = TextCaptureHarness(recognition: .success([recognizedLine("hi", y: 0)]))
+    h.settings.captureDelay = 3
+
+    await h.coordinator.captureText()
+
+    #expect(h.delays.waits.isEmpty)
+    #expect(h.sink.copiedText == ["hi"])
+}
+
+@MainActor
+@Test func captureTextLeavesRepeatLastCaptureOnTheLastScreenshot() async {
+    let h = TextCaptureHarness()
+    await h.coordinator.captureArea()
+    await h.coordinator.captureText()
+    await h.coordinator.repeatLastCapture()
+
+    // area, OCR Text, then repeat → area again: three overlay runs, and the last one was an image
+    // capture that reached the editor rather than another text capture.
+    #expect(h.overlay.callCount == 3)
+    #expect(h.ui.openedImages.count == 2)
+    #expect(h.recognizer.recognized.count == 1)
+}
+
+@MainActor
+@Test func captureTextWithoutARecognizerIsANoOp() async {
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: overlay,
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureText()
+
+    #expect(overlay.callCount == 0)
+}
+
+@MainActor
+@Test func captureTextAddsNothingToHistory() async {
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(sampleImage())),
+        overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        history: history,
+        textRecognizer: SpyTextRecognizer(.success([recognizedLine("hi", y: 0)])),
+        ui: ui
+    )
+
+    await coordinator.captureText()
+
+    #expect(history.all().isEmpty)
 }

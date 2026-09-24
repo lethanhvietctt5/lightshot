@@ -64,6 +64,11 @@ public protocol CaptureUI: AnyObject {
     func resolveCancelledGIFConversion() async -> Bool
     /// Surface a distinct, non-blank message for a recording failure other than permission/cancel.
     func presentRecordingFailure(_ error: RecordingError)
+
+    /// A text capture moved on (OCR Text, spec 0010): show a short, non-activating notice —
+    /// "reading" while recognition runs, then the copied text's first line, "no text found", or
+    /// the recognition error. Each status replaces the one before.
+    func presentTextCaptureStatus(_ status: TextCaptureStatus)
 }
 
 /// Composition root and use-case sequencer: captures through to the editor and back out through
@@ -90,6 +95,8 @@ public final class AppCoordinator {
     private let studioProjects: StudioProjectStore?
     /// Renders a take's project for sharing without the editor (S8 / LIG-57).
     private let studioFlattener: StudioFlattening?
+    /// Reads the text in an OCR Text selection (spec 0010); `nil` leaves OCR Text unavailable.
+    private let textRecognizer: TextRecognizer?
     /// The render in flight, so Cancel can reach it.
     private var preparation: Task<Void, Error>?
     private let sleep: (TimeInterval) async -> Void
@@ -130,6 +137,7 @@ public final class AppCoordinator {
         scratchDirectory: URL = FileManager.default.temporaryDirectory,
         studioProjects: StudioProjectStore? = nil,
         studioFlattener: StudioFlattening? = nil,
+        textRecognizer: TextRecognizer? = nil,
         sleep: @escaping (TimeInterval) async -> Void = { seconds in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
         },
@@ -149,6 +157,7 @@ public final class AppCoordinator {
         self.scratchDirectory = scratchDirectory
         self.studioProjects = studioProjects
         self.studioFlattener = studioFlattener
+        self.textRecognizer = textRecognizer
         self.sleep = sleep
         self.clock = clock
         self.ui = ui
@@ -288,6 +297,40 @@ public final class AppCoordinator {
             await captureWindow()
         case nil:
             break
+        }
+    }
+
+    /// OCR Text (spec 0010): the area overlay runs first, the region is captured, its text is
+    /// recognised on-device and put on the clipboard as plain text. No editor, no history item, no
+    /// self-timer, and Repeat Last Capture keeps pointing at the last screenshot. Nothing readable
+    /// (or a recognition failure) leaves the clipboard alone and says so. Capture failures route
+    /// exactly as area capture's do. Ignored while a take is active, so the overlay never lands in
+    /// the recording.
+    public func captureText() async {
+        guard let textRecognizer, !isRecording, !isStartingRecording else { return }
+        guard await guideFirstRunAuthorizationIfNeeded() else { return }
+        guard let region = await overlay.selectRegion() else { return }
+        switch await captureService.captureRegion(region) {
+        case let .success(image):
+            ui.presentTextCaptureStatus(.reading)
+            switch await textRecognizer.recognizeText(in: image) {
+            case let .success(lines):
+                let text = TextCapture.plainText(from: lines)
+                if text.isEmpty {
+                    ui.presentTextCaptureStatus(.noText)
+                } else {
+                    imageSink.copyText(text)
+                    ui.presentTextCaptureStatus(.copied(text))
+                }
+            case let .failure(error):
+                ui.presentTextCaptureStatus(.failed(error.message))
+            }
+        case .failure(.permissionDenied):
+            ui.presentPermissionDenied(.screenRecording)
+        case .failure(.userCancelled):
+            break
+        case let .failure(error):
+            ui.presentCaptureFailure(error)
         }
     }
 
