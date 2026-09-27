@@ -5,10 +5,11 @@ import LightshotKit
 /// The Quick Access Overlay for screenshots (spec 0014; CleanShot's Quick Access Overlay): each
 /// screenshot waits as a card in a bottom corner of the screen, newest at the bottom, until the user
 /// copies, saves, annotates, pins, drags or closes it. The stack and its placement are the core's
-/// (`QuickAccessStack`, `QuickAccessLayout`); this owns the panels, hover, auto-close and drag-out.
+/// (`QuickAccessStack`, `QuickAccessLayout.arrange`); this owns the panels, hover, auto-close and
+/// drag-out.
 ///
 /// A thin OS wrapper (no unit tests). Cards never take focus, and sit above the floating level so
-/// a freeze leaves them out of the next screenshot.
+/// every display grab leaves them out of the next screenshot.
 @MainActor
 final class QuickAccessController {
     /// What a card's buttons do. `save` and `saveAs` report whether the image was written, so a
@@ -19,8 +20,8 @@ final class QuickAccessController {
         let saveAs: (CapturedImage) -> Bool
         let annotate: (CapturedImage) -> Void
         let pin: (CapturedImage) -> Void
-        /// The image as a file to drag out, named and encoded like a default save.
-        let dragFile: (CapturedImage) -> URL?
+        /// The image written as a file into `folder`, named and encoded like a default save.
+        let dragFile: (CapturedImage, _ folder: URL) -> URL?
     }
 
     private let actions: Actions
@@ -29,17 +30,42 @@ final class QuickAccessController {
     private var cards: [UUID: Card] = [:]
     /// The screen the stack lives on while it's up: the one under the pointer when it started.
     private var screen: NSScreen?
+    /// The side the cards were last laid out on, so a Settings change moves them.
+    private var side: QuickAccessSide?
+    private var observers: [NSObjectProtocol] = []
+    /// Where drag-out files are written, one folder per card; emptied at launch (see `remove`).
+    private static let dragFolder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("Lightshot Drag", isDirectory: true)
 
     /// One card on screen.
     private struct Card {
         let panel: NSPanel
         let model: QuickAccessCardModel
         var autoClose: Task<Void, Never>?
+        /// When auto-close fires, while it's counting.
+        var deadline: Date?
+        /// How much of the auto-close interval is left while the pointer holds it.
+        var remaining: TimeInterval?
+        /// The card's drag-out file, written on the first drag.
+        var dragFile: URL?
     }
 
     init(actions: Actions, settings: @escaping () -> QuickAccessSettings) {
         self.actions = actions
         self.settings = settings
+        try? FileManager.default.removeItem(at: Self.dragFolder)
+        let center = NotificationCenter.default
+        // A display unplugged or rearranged: keep the stack on a screen that exists.
+        observers.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensChanged() }
+        })
+        // Position changed in Settings: move the cards that are up.
+        observers.append(center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.stack.cards.isEmpty, self.settings().side != self.side else { return }
+                self.layout()
+            }
+        })
     }
 
     func present(_ image: CapturedImage) {
@@ -52,37 +78,27 @@ final class QuickAccessController {
         let panel = makePanel(for: id, image: image, model: model)
         cards[id] = Card(panel: panel, model: model)
         layout(entering: id)
-        scheduleAutoClose(id)
+        startAutoClose(id, after: settings().autoClose.seconds)
     }
 
     func closeAll() {
-        for id in stack.cards.map(\.id) { remove(id, animated: false) }
+        for id in stack.cards.map(\.id) { remove(id, animated: false, relayout: false) }
     }
 
     // MARK: - Layout
 
-    /// Place every card from the core's layout, closing the oldest that no longer fit. A card just
-    /// added slides in from its side.
+    /// Place every card where the core's arrangement says, closing the ones that no longer fit. A
+    /// card just added slides in from its side.
     private func layout(entering newID: UUID? = nil) {
         guard let visible = (screen ?? NSScreen.main)?.visibleFrame else { return }
-        let area = Rect(x: visible.minX, y: visible.minY, width: visible.width, height: visible.height)
-        let sizes = stack.cards.map { cards[$0.id]?.model.size ?? Size(width: 0, height: 0) }
-        let overflow = stack.fitting(
-            cardHeights: sizes.map(\.height),
-            available: QuickAccessLayout.availableHeight(in: area),
-            spacing: QuickAccessLayout.spacing
-        )
-        for id in overflow { remove(id, animated: false, relayout: false) }
-
         let side = settings().side
-        let frames = QuickAccessLayout.frames(
-            for: stack.cards.map { cards[$0.id]?.model.size ?? Size(width: 0, height: 0) },
-            in: area, side: side
-        )
-        for (card, frame) in zip(stack.cards, frames) {
-            guard let panel = cards[card.id]?.panel else { continue }
-            let target = NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height)
-            if card.id == newID {
+        self.side = side
+        let arrangement = QuickAccessLayout.arrange(stack, in: Rect(visible), side: side)
+        for id in arrangement.closing { remove(id, animated: false, relayout: false) }
+        for (id, frame) in arrangement.frames {
+            guard let panel = cards[id]?.panel else { continue }
+            let target = frame.cgRect
+            if id == newID {
                 let offset = (target.width + QuickAccessLayout.margin) * (side == .left ? -1 : 1)
                 panel.setFrame(target.offsetBy(dx: offset, dy: 0), display: false)
                 panel.orderFrontRegardless()
@@ -95,22 +111,28 @@ final class QuickAccessController {
         }
     }
 
+    private func screensChanged() {
+        guard !stack.cards.isEmpty else { return }
+        if let screen, !NSScreen.screens.contains(screen) { self.screen = NSScreen.main }
+        layout()
+    }
+
     // MARK: - Cards
 
     private func makePanel(for id: UUID, image: CapturedImage, model: QuickAccessCardModel) -> NSPanel {
         let view = QuickAccessCardView(
             model: model,
-            copy: { [weak self] in self?.confirm(id) { self?.actions.copy(image); return true } },
-            save: { [weak self] in self?.confirm(id) { self?.actions.save(image) ?? false } },
-            saveAs: { [weak self] in if self?.actions.saveAs(image) == true { self?.remove(id) } },
-            annotate: { [weak self] in self?.remove(id); self?.actions.annotate(image) },
-            pin: { [weak self] in self?.remove(id); self?.actions.pin(image) },
+            copy: { [weak self] in self?.act(id) { self?.confirm(id) { self?.actions.copy(image); return true } } },
+            save: { [weak self] in self?.act(id) { self?.confirm(id) { self?.actions.save(image) ?? false } } },
+            saveAs: { [weak self] in self?.act(id) { if self?.actions.saveAs(image) == true { self?.remove(id) } } },
+            annotate: { [weak self] in self?.act(id) { self?.remove(id); self?.actions.annotate(image) } },
+            pin: { [weak self] in self?.act(id) { self?.remove(id); self?.actions.pin(image) } },
             close: { [weak self] in self?.remove(id) },
             closeAll: { [weak self] in self?.closeAll() },
             hovering: { [weak self] inside in self?.hover(id, inside: inside) }
         )
         let host = QuickAccessCardHostingView(rootView: view)
-        host.dragFile = { [weak self] in self?.actions.dragFile(image) }
+        host.dragFile = { [weak self] in self?.dragFile(for: id, image: image) }
         host.dragImage = model.image
         host.onDragEnded = { [weak self] dropped in self?.dragEnded(id, dropped: dropped) }
 
@@ -130,10 +152,16 @@ final class QuickAccessController {
         return panel
     }
 
+    /// Run a card's action, unless the card is already done (showing its tick) or gone.
+    private func act(_ id: UUID, _ action: () -> Void) {
+        guard let card = cards[id], !card.model.confirmed else { return }
+        action()
+    }
+
     /// Copy and Save: a tick on the card, then it goes. A failed action keeps the card.
     private func confirm(_ id: UUID, _ action: () -> Bool) {
         guard action(), let model = cards[id]?.model else { return }
-        cards[id]?.autoClose?.cancel()
+        stopAutoClose(id)
         model.confirmed = true
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
@@ -141,8 +169,18 @@ final class QuickAccessController {
         }
     }
 
+    /// The card's drag-out file, written once into the card's own folder.
+    private func dragFile(for id: UUID, image: CapturedImage) -> URL? {
+        guard cards[id] != nil, !(cards[id]?.model.confirmed ?? true) else { return nil }
+        if let url = cards[id]?.dragFile { return url }
+        let url = actions.dragFile(image, Self.dragFolder.appendingPathComponent(id.uuidString, isDirectory: true))
+        cards[id]?.dragFile = url
+        return url
+    }
+
     private func dragEnded(_ id: UUID, dropped: Bool) {
-        // ⌥ at the drop keeps the card when it would close, and closes it when it would stay.
+        // ⌥ at the drop inverts Close after dragging, as in CleanShot: it keeps a card that would
+        // close, and closes one that would stay.
         let keep = !settings().closeAfterDragging != NSEvent.modifierFlags.contains(.option)
         if dropped, !keep { remove(id) }
     }
@@ -151,6 +189,8 @@ final class QuickAccessController {
         guard let card = cards.removeValue(forKey: id) else { return }
         card.autoClose?.cancel()
         stack.remove(id)
+        // A dropped file stays: receivers such as Finder copy it after the drag session ends, so
+        // deleting it here loses the drop. The drag folder is emptied at the next launch instead.
         if animated {
             NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; card.panel.animator().alphaValue = 0 }) {
                 card.panel.orderOut(nil)
@@ -164,24 +204,37 @@ final class QuickAccessController {
 
     // MARK: - Auto-close
 
+    /// The pointer holds a card's countdown while it's over the card, and the countdown resumes
+    /// with what was left when it leaves.
     private func hover(_ id: UUID, inside: Bool) {
-        cards[id]?.model.hovering = inside
+        guard let card = cards[id] else { return }
+        card.model.hovering = inside
+        guard !card.model.confirmed else { return }
         if inside {
-            cards[id]?.autoClose?.cancel()
-            cards[id]?.autoClose = nil
-        } else {
-            scheduleAutoClose(id)
+            let left = card.deadline.map { max(0, $0.timeIntervalSinceNow) }
+            stopAutoClose(id)
+            cards[id]?.remaining = left
+        } else if let left = card.remaining {
+            startAutoClose(id, after: left)
         }
     }
 
-    private func scheduleAutoClose(_ id: UUID) {
-        cards[id]?.autoClose?.cancel()
-        guard let seconds = settings().autoClose.seconds, cards[id] != nil else { return }
+    private func startAutoClose(_ id: UUID, after seconds: TimeInterval?) {
+        stopAutoClose(id)
+        guard let seconds, cards[id] != nil else { return }
+        cards[id]?.deadline = Date().addingTimeInterval(seconds)
+        cards[id]?.remaining = nil
         cards[id]?.autoClose = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             self?.remove(id)
         }
+    }
+
+    private func stopAutoClose(_ id: UUID) {
+        cards[id]?.autoClose?.cancel()
+        cards[id]?.autoClose = nil
+        cards[id]?.deadline = nil
     }
 }
 

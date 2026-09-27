@@ -25,13 +25,14 @@ final class AppController: NSObject, CaptureUI {
     private var settingsWindow: NSWindow?
     /// Screenshots waiting in the corner when After Capture is Show Quick Access Overlay (spec 0014).
     private lazy var quickAccess = QuickAccessController(
+        // A card is the bare screenshot: every action works on it as an unannotated document.
         actions: QuickAccessController.Actions(
             copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) },
             save: { [weak self] in self?.quietSave(AnnotationDocument(baseImage: $0)) ?? false },
             saveAs: { [weak self] in self?.saveAs(AnnotationDocument(baseImage: $0)) ?? false },
             annotate: { [weak self] in self?.openEditor(with: $0) },
             pin: { [weak self] in self?.pin(AnnotationDocument(baseImage: $0)) },
-            dragFile: { [weak self] in self?.dragFile(for: AnnotationDocument(baseImage: $0)) }
+            dragFile: { [weak self] in self?.dragFile(for: AnnotationDocument(baseImage: $0), in: $1) }
         ),
         settings: { [weak self] in self?.settings.quickAccess ?? QuickAccessSettings() }
     )
@@ -925,16 +926,13 @@ final class AppController: NSObject, CaptureUI {
     }
 
     /// The document as a file to drag out of a Quick Access card (spec 0014): the drag payload the
-    /// coordinator builds, written to a fresh folder in the temporary directory under its suggested
-    /// name, so the receiving app gets a proper file name.
-    private func dragFile(for document: AnnotationDocument) -> URL? {
+    /// coordinator builds, written into `folder` under its suggested name, so the receiving app gets
+    /// a proper file name.
+    private func dragFile(for document: AnnotationDocument, in folder: URL) -> URL? {
         let item = coordinator.dragItem(for: document)
-        let folder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Lightshot Drag", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let url = folder
             .appendingPathComponent(item.suggestedName)
-            .appendingPathExtension(item.format == .png ? "png" : "jpg")
+            .appendingPathExtension(item.format.fileExtension)
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try item.data.write(to: url)

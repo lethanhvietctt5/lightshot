@@ -31,8 +31,6 @@ private func image(_ width: Int = 200, _ height: Int = 100) -> CapturedImage {
     #expect(stack.cards.map(\.id) == [a, c])
     stack.remove(UUID())                        // unknown id: nothing happens
     #expect(stack.cards.map(\.id) == [a, c])
-    stack.removeAll()
-    #expect(stack.cards.isEmpty)
 }
 
 @Test func theOldestCardsCloseFirstWhenTheStackDoesNotFit() {
@@ -40,9 +38,9 @@ private func image(_ width: Int = 200, _ height: Int = 100) -> CapturedImage {
     let ids = (0..<4).map { _ in stack.push(image()) }
 
     // Four 100 pt cards with 12 pt gaps need 436 pt; 300 pt fits the newest two (212 pt).
-    let closing = stack.fitting(cardHeights: [100, 100, 100, 100], available: 300, spacing: 12)
+    let closing = stack.overflow(cardHeights: [100, 100, 100, 100], available: 300, spacing: 12)
     #expect(closing == [ids[0], ids[1]])
-    #expect(stack.fitting(cardHeights: [100, 100, 100, 100], available: 436, spacing: 12).isEmpty)
+    #expect(stack.overflow(cardHeights: [100, 100, 100, 100], available: 436, spacing: 12).isEmpty)
 }
 
 @Test func theNewestCardIsKeptEvenWhenItAloneIsTooTall() {
@@ -50,8 +48,8 @@ private func image(_ width: Int = 200, _ height: Int = 100) -> CapturedImage {
     let old = stack.push(image())
     _ = stack.push(image())
 
-    #expect(stack.fitting(cardHeights: [100, 500], available: 300, spacing: 12) == [old])
-    #expect(QuickAccessStack().fitting(cardHeights: [], available: 300, spacing: 12).isEmpty)
+    #expect(stack.overflow(cardHeights: [100, 500], available: 300, spacing: 12) == [old])
+    #expect(QuickAccessStack().overflow(cardHeights: [], available: 300, spacing: 12).isEmpty)
 }
 
 // MARK: - Layout
@@ -115,4 +113,23 @@ private func image(_ width: Int = 200, _ height: Int = 100) -> CapturedImage {
     let partial = Data(#"{"side":"right"}"#.utf8)
     #expect(try JSONDecoder().decode(QuickAccessSettings.self, from: partial)
         == QuickAccessSettings(side: .right, autoClose: .never, closeAfterDragging: true))
+}
+
+@Test func arrangingPlacesEveryCardThatFitsAndClosesTheRest() {
+    var stack = QuickAccessStack()
+    let old = stack.push(image(1600, 1000))     // 220 × 137.5
+    let mid = stack.push(image(1000, 1000))     // 220 × 220
+    let new = stack.push(image(1600, 1000))     // 220 × 137.5
+    let visible = Rect(x: 0, y: 0, width: 1440, height: 32 + 137.5 + 12 + 220 + 50)   // room for two
+
+    let arrangement = QuickAccessLayout.arrange(stack, in: visible, side: .left)
+    #expect(arrangement.closing == [old])
+    #expect(arrangement.frames == [
+        new: Rect(x: 16, y: 16, width: 220, height: 137.5),
+        mid: Rect(x: 16, y: 16 + 137.5 + 12, width: 220, height: 220),
+    ])
+}
+
+@Test func autoCloseChoicesHaveTheirSettingsLabels() {
+    #expect(QuickAccessAutoClose.allCases.map(\.title) == ["Never", "After 10 seconds", "After 30 seconds", "After 1 minute"])
 }

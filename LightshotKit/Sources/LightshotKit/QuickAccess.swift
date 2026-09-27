@@ -27,14 +27,10 @@ public struct QuickAccessStack: Equatable, Sendable {
         cards.removeAll { $0.id == id }
     }
 
-    public mutating func removeAll() {
-        cards.removeAll()
-    }
-
-    /// The cards to close so the rest fit in `available` points, given each card's height (oldest
-    /// first, like `cards`) and the gap between cards: the oldest go first, and the newest is always
-    /// kept, even if it alone is taller.
-    public func fitting(cardHeights: [Double], available: Double, spacing: Double) -> [UUID] {
+    /// The cards that don't fit in `available` points and must close, given each card's height
+    /// (oldest first, like `cards`) and the gap between cards: the oldest go first, and the newest
+    /// is always kept, even if it alone is taller.
+    public func overflow(cardHeights: [Double], available: Double, spacing: Double) -> [UUID] {
         var used = 0.0
         var kept = 0
         for height in cardHeights.reversed() {
@@ -83,6 +79,24 @@ public enum QuickAccessLayout {
     public static func availableHeight(in visible: Rect) -> Double {
         visible.height - 2 * margin
     }
+
+    /// Where every card of `stack` goes on a screen, and which cards must close because the stack
+    /// no longer fits: the whole placement in one call.
+    public struct Arrangement: Equatable, Sendable {
+        public var frames: [UUID: Rect]
+        public var closing: [UUID]
+    }
+
+    public static func arrange(_ stack: QuickAccessStack, in visible: Rect, side: QuickAccessSide) -> Arrangement {
+        let sizes = stack.cards.map { cardSize(pixelWidth: $0.image.pixelWidth, pixelHeight: $0.image.pixelHeight) }
+        let closing = stack.overflow(cardHeights: sizes.map(\.height), available: availableHeight(in: visible), spacing: spacing)
+        let kept = zip(stack.cards, sizes).filter { !closing.contains($0.0.id) }
+        let placed = frames(for: kept.map(\.1), in: visible, side: side)
+        return Arrangement(
+            frames: Dictionary(uniqueKeysWithValues: zip(kept.map(\.0.id), placed)),
+            closing: closing
+        )
+    }
 }
 
 /// Which bottom corner the cards stack in.
@@ -97,6 +111,16 @@ public enum QuickAccessAutoClose: String, Codable, CaseIterable, Sendable {
     case after10s
     case after30s
     case after1min
+
+    /// The Settings picker's label.
+    public var title: String {
+        switch self {
+        case .never: return "Never"
+        case .after10s: return "After 10 seconds"
+        case .after30s: return "After 30 seconds"
+        case .after1min: return "After 1 minute"
+        }
+    }
 
     /// `nil` for never.
     public var seconds: TimeInterval? {

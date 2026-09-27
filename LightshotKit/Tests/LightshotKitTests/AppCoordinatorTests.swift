@@ -576,7 +576,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(overlay.callCount == 1)                 // the overlay runs first, once
     #expect(capture.capturedRegions.isEmpty)        // …and the selection is cut from the frozen still
     #expect(ui.openedImages == [sampleFrozenScreen().image(of: region)!])   // straight to the editor (LIG-23)
-    #expect(ui.quickAccess.isEmpty)                    // …with no card in between
+    #expect(ui.quickAccess.isEmpty)                 // …with no card in between
     #expect(ui.failures.isEmpty)
 }
 
@@ -598,7 +598,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     await coordinator.captureArea()
 
-    #expect(ui.quickAccess.count == 1)                 // the setting off shows a Quick Access card
+    #expect(ui.quickAccess.count == 1)              // the setting off shows a Quick Access card
     #expect(ui.quickAccess.first == sampleFrozenScreen().image(of: region))
     #expect(ui.openedImages.isEmpty)                // the card, not the editor, is the surface
 }
@@ -621,7 +621,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureArea()
 
     #expect(ui.openedImages.count == 1)             // first capture: editor
-    #expect(ui.quickAccess.count == 1)                 // second capture: a card, no restart needed
+    #expect(ui.quickAccess.count == 1)              // second capture: a card, no restart needed
 }
 
 @MainActor
@@ -646,6 +646,34 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     #expect(ui.quickAccess == [image])
     #expect(ui.openedImages == [image])
+}
+
+@MainActor
+@Test func theSelfTimerAndRepeatLastCapturePathsAlsoEndInQuickAccess() async {
+    // Spec 0014: every screenshot path goes through the same After Capture choice.
+    let image = sampleImage()
+    let ui = SpyUI()
+    let settings = StubSettings()
+    settings.openInEditor = false
+    settings.captureDelay = 3
+    let delays = DelaySpy()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: settings,
+        sleep: { await delays.sleep($0) },
+        ui: ui
+    )
+
+    await coordinator.captureArea()          // self-timer: a live capture after the wait
+    await coordinator.captureFullscreen()
+    await coordinator.repeatLastCapture()    // re-fires fullscreen
+
+    #expect(delays.waits == [3, 3, 3])
+    #expect(ui.quickAccess == [image, image, image])
+    #expect(ui.openedImages.isEmpty)
 }
 
 @MainActor
@@ -773,7 +801,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(overlay.callCount == 0)                 // …not the drag-a-rect path
     #expect(capture.capturedRegions.isEmpty)        // …and the window comes from the freeze
     #expect(ui.openedImages == [frozenSampleWindowCapture()!])   // straight to the editor (LIG-23)
-    #expect(ui.quickAccess.isEmpty)                    // …with no card in between
+    #expect(ui.quickAccess.isEmpty)                 // …with no card in between
     #expect(ui.failures.isEmpty)
 }
 
@@ -795,7 +823,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     await coordinator.captureWindow()
 
-    #expect(ui.quickAccess.count == 1)                 // the setting off shows a Quick Access card
+    #expect(ui.quickAccess.count == 1)              // the setting off shows a Quick Access card
     #expect(ui.quickAccess.first == frozenSampleWindowCapture())
     #expect(ui.openedImages.isEmpty)                // the card, not the editor, is the surface
 }

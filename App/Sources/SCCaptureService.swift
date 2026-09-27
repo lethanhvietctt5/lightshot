@@ -102,16 +102,22 @@ final class SCCaptureService: CaptureService {
     /// candidates, front-most first.
     private static func snapshot(hidingDesktopIcons: Bool) async throws -> Snapshot {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        let ownProcess = ProcessInfo.processInfo.processIdentifier
-        let floating = NSWindow.Level.floating.rawValue
-        let own = content.windows.filter {
-            $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating
-        }
         return Snapshot(
             displays: content.displays,
-            excluded: own + (hidingDesktopIcons ? desktopIconWindows(in: content.windows) : []),
+            excluded: excludedWindows(in: content.windows, hidingDesktopIcons: hidingDesktopIcons),
             windows: content.windows.filter(isWindowCandidate)
         )
+    }
+
+    /// What every display grab leaves out: Lightshot's own windows above the floating level — an
+    /// overlay still closing, Quick Access cards (spec 0014), the OCR notice, the status menu — and,
+    /// when hiding them, the desktop icons. Pins (floating) and editor windows stay in, as they
+    /// would in a photo of the screen.
+    private static func excludedWindows(in windows: [SCWindow], hidingDesktopIcons: Bool) -> [SCWindow] {
+        let ownProcess = ProcessInfo.processInfo.processIdentifier
+        let floating = NSWindow.Level.floating.rawValue
+        let own = windows.filter { $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating }
+        return own + (hidingDesktopIcons ? desktopIconWindows(in: windows) : [])
     }
 
     /// The window level Finder draws the desktop icons at (spec 0013).
@@ -290,7 +296,7 @@ final class SCCaptureService: CaptureService {
             guard let display = pick(content.displays) ?? content.displays.first else {
                 return .failure(.noDisplayAvailable)
             }
-            let excluded = hideDesktopIcons() ? Self.desktopIconWindows(in: content.windows) : []
+            let excluded = Self.excludedWindows(in: content.windows, hidingDesktopIcons: hideDesktopIcons())
             let fullImage = try await Self.grab(display, excluding: excluded, showsCursor: includeCursor())
             guard let cgImage = transform(fullImage, Self.backingScale(for: display), display.frame) else {
                 return .failure(.systemFailure("The selected region was empty."))
@@ -343,8 +349,8 @@ final class SCCaptureService: CaptureService {
     }
 }
 
-private extension Rect {
-    /// A Core Graphics rect in global top-left points as the domain's `Rect`.
+extension Rect {
+    /// A Core Graphics rect as the domain's `Rect`, whatever its origin convention.
     init(_ rect: CGRect) {
         self.init(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
     }

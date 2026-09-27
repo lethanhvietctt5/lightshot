@@ -36,8 +36,8 @@ struct SettingsView: View {
 }
 
 /// The panes, in sidebar order. Quick Access lives in Screenshots (spec 0014); Lightshot has no
-/// Wallpaper, Annotate or Cloud settings (Cloud is out of scope: local-only), so those CleanShot
-/// panes are not here.
+/// Wallpaper, Annotate or Cloud settings (Cloud is out of scope: local-only), so those
+/// CleanShot panes are not here.
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general, shortcuts, screenshots, recording, advanced, about
 
@@ -247,9 +247,9 @@ private struct GeneralPane: View {
 }
 
 /// CleanShot's action × kind grid. Lightshot takes one action per column: a screenshot opens in
-/// the editor or shows a Quick Access card (`openInEditor`, spec 0014); a recording shows the overlay, saves
-/// silently or opens the video editor (`afterRecording`). A dash marks an action that does not
-/// apply to that kind.
+/// the editor or shows a Quick Access card (`openInEditor`, spec 0014); a recording shows the
+/// overlay, saves silently or opens the video editor (`afterRecording`). A dash marks an action
+/// that does not apply to that kind.
 private struct AfterCaptureTable: View {
     @Bindable var model: SettingsModel
 
@@ -418,10 +418,7 @@ private struct ScreenshotsPane: View {
                     Text("Bottom Right").tag(QuickAccessSide.right)
                 }
                 Picker("Close automatically", selection: $model.quickAccess.autoClose) {
-                    Text("Never").tag(QuickAccessAutoClose.never)
-                    Text("After 10 seconds").tag(QuickAccessAutoClose.after10s)
-                    Text("After 30 seconds").tag(QuickAccessAutoClose.after30s)
-                    Text("After 1 minute").tag(QuickAccessAutoClose.after1min)
+                    ForEach(QuickAccessAutoClose.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 Toggle("Close after dragging", isOn: $model.quickAccess.closeAfterDragging)
             } header: {
