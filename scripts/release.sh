@@ -313,7 +313,8 @@ fi
   --full-release-notes-url "$RELEASE_PAGE" \
   --embed-release-notes \
   --maximum-deltas 0 \
-  "$FEED_DIR" 2>&1 | grep -v 'deprecated' | sed 's/^/    /'
+  "$FEED_DIR" > "$BUILD_DIR/generate_appcast.log" 2>&1 \
+  || { tail -n 20 "$BUILD_DIR/generate_appcast.log"; fail "generate_appcast failed (full log: $BUILD_DIR/generate_appcast.log)"; }
 APPCAST="$BUILD_DIR/appcast.xml"
 mv "$FEED_DIR/appcast.xml" "$APPCAST"
 

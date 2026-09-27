@@ -1,6 +1,6 @@
 # Spec 0015 — Software updates: check, download and install new versions
 
-**Status:** ready to build
+**Status:** implemented (LIG-73). The real update through GitHub before the first public release is still pending; see *Testing Decisions*.
 **Linear:** [LIG-73](https://linear.app/light-shot/issue/LIG-73) (label `ready-for-agent`)
 **Platform:** Native macOS (Swift / AppKit + SwiftUI), macOS 14+
 **Scope:** Lightshot finds out when a newer version is published, shows what's new, then downloads, verifies and installs it and relaunches. Settings let me turn automatic checks and automatic installs on or off. This is the **one deliberate exception to the local-only guardrail**. The only network traffic is fetching the update feed and the update file from GitHub Releases. It sends no account, no analytics and no system profile, and I can turn automatic checks off.
@@ -123,7 +123,7 @@ Settings → General gets an **Updates** section:
   5. the app.
 
   Anything nested and not on the list still fails the build. Hardened Runtime stays off (spec 0002); Sparkle doesn't need it.
-- **Verify.** The designated requirement is checked as before (the app's own requirement is unchanged). After packaging, `sign_update --verify` checks the DMG against the committed public key, and `appcast.xml` must carry the expected version, build number, minimum system version and a signature that verifies.
+- **Verify.** The designated requirement is checked as before (the app's own requirement is unchanged). After packaging, `sign_update --verify` checks the DMG against the keychain key. That key is tied to the committed one because preflight requires it to equal `SUPublicEDKey`, and the verify step requires the built app's `SUPublicEDKey` to equal it too, and `appcast.xml` must carry the expected version, build number, minimum system version and a signature that verifies.
 - **Package** writes `build/release/appcast.xml` next to the DMG. **Publish** uploads both to the draft release. `--dry-run` produces and verifies both and uploads nothing.
 
 ### App side
@@ -143,9 +143,9 @@ Settings → General gets an **Updates** section:
   - `SUScheduledCheckInterval` = 86400 (one day);
   - **no `SUEnableAutomaticChecks` key**, so Sparkle asks on the second launch (stories 2–3; confirmed with the user).
 - **Gentle reminders for a menu-bar app (story 9).** `SoftwareUpdater` is the standard user driver's delegate with `supportsGentleScheduledUpdateReminders = true`.
-  - When a **scheduled** check finds an update and Lightshot isn't in focus, it doesn't show the window. `StatusMenuController` badges the menu-bar icon with a dot and adds **Update Available: Lightshot X.Y.Z…** at the top of the app section.
+  - When a **scheduled** check finds an update outside Sparkle's "immediate focus" (right after launch or activation), it doesn't show the window. `StatusMenuController` badges the menu-bar icon with a dot and adds **Update Available: Lightshot X.Y.Z…** at the top of the app section.
   - Choosing that row calls `checkForUpdates()`, which brings up the found update.
-  - The badge and row clear when the update session ends (installed, skipped or dismissed).
+  - The badge and row clear once the update window has had the user's attention, or when the update session ends (installed, skipped or dismissed), following Sparkle's gentle-reminder pattern.
   - A user-initiated check always shows the window and brings it forward, like other Lightshot windows (`WindowPresenter.activateApp`).
 - **Menu-bar menu:** **Check for Updates…** right below **About Lightshot…**. It's disabled while Sparkle's `canCheckForUpdates` is false, which Sparkle reports through KVO.
 - **Settings → General → Updates** (after Startup):
@@ -184,7 +184,7 @@ Settings → General gets an **Updates** section:
   - With the key absent from the keychain (or `SUPublicEDKey` altered in a scratch branch), preflight fails before building.
   - An unexpected nested Mach-O (not a Sparkle helper) still fails the sign step.
   - `codesign --verify --strict` passes on the app and on each Sparkle helper, and the designated requirement still matches `release-identity.txt`.
-- **App side (manual, `.verify` build).** A DEBUG-only launch argument `-updateFeedURL <url>` points Sparkle at a local feed, served by `python3 -m http.server` from a scratch folder. `-checkForUpdatesInBackground YES` runs a scheduled-style check at launch, for the gentle reminder.
+- **App side (manual, `.verify` build).** A DEBUG-only launch argument `-updateFeedURL <url>` points Sparkle at a local feed, served by `python3 -m http.server` from a scratch folder. `-checkForUpdatesInBackground YES` runs a scheduled-style check at launch, for the gentle reminder. Sparkle refuses a background check while automatic checks are off, so this turns them on in the running build's defaults; use the `.verify` bundle id and reset its `SU*` defaults before re-testing the second-launch question. `-previewUpdateAvailable <version>` shows the menu-bar dot and the **Update Available…** row without a feed.
   1. Build version N with `--dry-run`, install it to a scratch location, and grant Screen Recording.
   2. Build N+1 with `--dry-run` and serve its DMG and appcast locally.
   3. Launch N with the override, choose **Check for Updates…**, and check the update window: versions and Markdown highlights.

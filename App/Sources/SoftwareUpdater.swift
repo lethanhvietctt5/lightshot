@@ -69,17 +69,16 @@ final class SoftwareUpdater: NSObject {
         let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
         self.controller = controller
         let updater = controller.updater
-        observations = [
-            updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] _, _ in
-                Task { @MainActor in self?.refresh() }
-            },
-            updater.observe(\.automaticallyChecksForUpdates, options: [.new]) { [weak self] _, _ in
-                Task { @MainActor in self?.refresh() }
-            },
-            updater.observe(\.automaticallyDownloadsUpdates, options: [.new]) { [weak self] _, _ in
-                Task { @MainActor in self?.refresh() }
-            },
+        // Sparkle's KVO-compliant state: a session starting or ending, and the preferences changing
+        // behind the settings' back (its second-launch question).
+        let keyPaths: [KeyPath<SPUUpdater, Bool>] = [
+            \.canCheckForUpdates, \.automaticallyChecksForUpdates, \.automaticallyDownloadsUpdates,
         ]
+        observations = keyPaths.map { keyPath in
+            updater.observe(keyPath, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refresh() }
+            }
+        }
         refresh()
     }
 
@@ -119,8 +118,6 @@ final class SoftwareUpdater: NSObject {
 
     /// Hold the relaunch until the work in progress is done, checking once a second (story 21).
     private func relaunchWhenIdle(_ relaunch: @escaping () -> Void) {
-        // Sparkle's block is called on the main thread, which is where this task runs.
-        nonisolated(unsafe) let relaunch = relaunch
         postponedRelaunch?.cancel()
         postponedRelaunch = Task { @MainActor [hasWorkInProgress] in
             while hasWorkInProgress() {
@@ -134,6 +131,8 @@ final class SoftwareUpdater: NSObject {
 
 // MARK: - SPUUpdaterDelegate
 
+// Sparkle calls its delegates on the main thread, which is what makes `MainActor.assumeIsolated`
+// and the `nonisolated(unsafe)` hand-offs below sound.
 extension SoftwareUpdater: SPUUpdaterDelegate {
     #if DEBUG
     /// Development aid: `-updateFeedURL <url>` points Sparkle at a local feed, for the manual
