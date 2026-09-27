@@ -16,6 +16,9 @@ final class TextCaptureNoticeController {
     private var pending: Task<Void, Never>?
     /// The shown notice's time on screen, restarted when the pointer leaves it.
     private var duration: Double?
+    /// The Translate window's controller, kept so a later Translate reuses the open window. Typed
+    /// `AnyObject` only because `TranslateWindowController` needs macOS 14.4 and a stored property
+    /// can't carry an availability check.
     private var translateWindow: AnyObject?
 
     func show(_ status: TextCaptureStatus) {
@@ -63,7 +66,7 @@ final class TextCaptureNoticeController {
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.15; panel.animator().alphaValue = 1 }
         self.panel = panel
-        duration = translate == nil ? notice.duration : notice.duration.map { max($0, 4) }
+        duration = notice.duration
         scheduleFadeOut()
     }
 
@@ -113,10 +116,12 @@ private struct Notice {
     var symbol: String
     var title: String
     var detail: String?
-    /// Seconds on screen; an error stays a little longer so it can be read. `nil` stays until the
-    /// next status replaces it.
+    /// Seconds on screen; an error stays a little longer so it can be read, and so does a notice
+    /// offering Translate, so there is time to click it. `nil` stays until the next status
+    /// replaces it.
     var duration: Double?
-    /// The copied text, offered to Translate; `nil` for every other state (a code is never offered).
+    /// The copied text, offered to Translate on macOS 14.4+; `nil` for every other state (a code is
+    /// never offered).
     var translatable: String?
 
     init(_ status: TextCaptureStatus) {
@@ -130,12 +135,22 @@ private struct Notice {
             symbol = "doc.on.clipboard"
             title = "Text copied"
             detail = Self.preview(of: text)
-            duration = 2
-            translatable = text
-        case let .codeCopied(text, kind):
-            symbol = kind == .qrCode ? "qrcode" : "barcode"
-            title = kind == .qrCode ? "QR code copied" : "Barcode copied"
-            detail = Self.preview(of: text)
+            if #available(macOS 14.4, *) {
+                translatable = text
+                duration = 4
+            } else {
+                duration = 2
+            }
+        case let .codeCopied(code):
+            switch code.kind {
+            case .qrCode:
+                symbol = "qrcode"
+                title = "QR code copied"
+            case .barcode:
+                symbol = "barcode"
+                title = "Barcode copied"
+            }
+            detail = Self.preview(of: code.text)
             duration = 2
         case .noText:
             symbol = "text.viewfinder"

@@ -6,14 +6,20 @@ import Translation
 /// popover (`translationPresentation`, macOS 14.4+) open over it. Replace with Translation swaps the
 /// window's text for the translation; Copy puts whatever the window shows on the clipboard, so the
 /// clipboard only changes when the user asks. Translation is the system's, on this Mac — Lightshot
-/// makes no network call. One window at a time: a newer text replaces the old one.
+/// makes no network call. One window at a time: a newer text replaces the text of the open window,
+/// which keeps its place and size, and the popover opens again over it.
 @available(macOS 14.4, *)
 @MainActor
 final class TranslateWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private var model: TranslateModel?
 
     func show(_ text: String) {
-        window?.close()
+        if let window, let model {
+            model.replaceText(text)
+            WindowPresenter.present(window)
+            return
+        }
         let model = TranslateModel(text: text)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 260),
@@ -28,12 +34,16 @@ final class TranslateWindowController: NSObject, NSWindowDelegate {
         window.setContentSize(NSSize(width: 440, height: 260))
         window.center()
         self.window = window
+        self.model = model
         WindowPresenter.present(window)
+        model.presentTranslationSoon()
     }
 
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === window else { return }
+        model?.cancelPendingPresentation()
         window = nil
+        model = nil
     }
 }
 
@@ -41,13 +51,40 @@ final class TranslateWindowController: NSObject, NSWindowDelegate {
 @Observable
 private final class TranslateModel {
     var text: String
+    /// Whether the system translation popover is open over the text.
+    var showsTranslation = false
+    private var pendingPresentation: Task<Void, Never>?
+
     init(text: String) { self.text = text }
+
+    /// A newer text: the popover showing the old one closes, and opens again over the new one.
+    func replaceText(_ newText: String) {
+        showsTranslation = false
+        text = newText
+        presentTranslationSoon()
+    }
+
+    /// Open the popover once the window is on screen: it needs a visible view to anchor to, and
+    /// asking in the same turn the window is ordered front leaves it unshown. A newer request
+    /// replaces a pending one.
+    func presentTranslationSoon() {
+        pendingPresentation?.cancel()
+        pendingPresentation = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            self?.showsTranslation = true
+        }
+    }
+
+    func cancelPendingPresentation() {
+        pendingPresentation?.cancel()
+        pendingPresentation = nil
+    }
 }
 
 @available(macOS 14.4, *)
 private struct TranslateView: View {
     @Bindable var model: TranslateModel
-    @State private var showsTranslation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -59,12 +96,12 @@ private struct TranslateView: View {
             }
             .background(.background, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
-            .translationPresentation(isPresented: $showsTranslation, text: model.text) { translated in
+            .translationPresentation(isPresented: $model.showsTranslation, text: model.text) { translated in
                 model.text = translated
             }
             HStack {
                 Spacer()
-                Button("Translate") { showsTranslation = true }
+                Button("Translate") { model.showsTranslation = true }
                 Button("Copy") {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
@@ -75,10 +112,5 @@ private struct TranslateView: View {
         }
         .padding(16)
         .frame(minWidth: 360, minHeight: 200)
-        .task {
-            // The popover needs the window on screen to anchor to.
-            try? await Task.sleep(for: .milliseconds(150))
-            showsTranslation = true
-        }
     }
 }

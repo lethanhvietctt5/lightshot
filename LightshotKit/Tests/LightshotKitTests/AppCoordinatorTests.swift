@@ -1400,6 +1400,16 @@ private struct TextCaptureHarness {
     }
 }
 
+/// A text capture puts text on the clipboard and nothing else: no image, no editor, no toolbar.
+/// (The harness has no history store, so nothing can be filed there.)
+@MainActor
+private func expectOnlyTextCopied(_ h: TextCaptureHarness, sourceLocation: SourceLocation = #_sourceLocation) {
+    #expect(h.sink.copied.isEmpty, sourceLocation: sourceLocation)
+    #expect(h.sink.written.isEmpty, sourceLocation: sourceLocation)
+    #expect(h.ui.openedImages.isEmpty, sourceLocation: sourceLocation)
+    #expect(h.ui.toolbars.isEmpty, sourceLocation: sourceLocation)
+}
+
 @MainActor
 @Test func captureTextCopiesTheRecognisedTextOfTheSelectedArea() async {
     let h = TextCaptureHarness(recognition: .success([
@@ -1414,9 +1424,7 @@ private struct TextCaptureHarness {
     #expect(h.recognizer.recognized == [sampleFrozenScreen().image(of: sampleRegion())!])   // …cut to the selection
     #expect(h.sink.copiedText == ["first line\nsecond line"])
     #expect(h.ui.textResults == [.reading, .copied("first line\nsecond line")])
-    #expect(h.ui.openedImages.isEmpty)                         // no editor
-    #expect(h.ui.toolbars.isEmpty)                             // no post-capture toolbar
-    #expect(h.sink.copied.isEmpty)                             // no image on the clipboard
+    expectOnlyTextCopied(h)
 }
 
 // MARK: - OCR Text extras (spec 0012)
@@ -1424,6 +1432,7 @@ private struct TextCaptureHarness {
 private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qrCode, y: Double = 0) -> RecognizedCode {
     RecognizedCode(payload: payload, kind: kind, box: Rect(x: 0, y: y, width: 100, height: 100))
 }
+
 
 @MainActor
 @Test func captureTextCopiesACodeInsteadOfTheTextAroundIt() async {
@@ -1435,7 +1444,22 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
     await h.coordinator.captureText()
 
     #expect(h.sink.copiedText == ["https://example.com/a\nhttps://example.com/b"])
-    #expect(h.ui.textResults == [.reading, .codeCopied("https://example.com/a\nhttps://example.com/b", .qrCode)])
+    #expect(h.ui.textResults == [.reading, .codeCopied(CodeCapture(text: "https://example.com/a\nhttps://example.com/b", kind: .qrCode))])
+    expectOnlyTextCopied(h)
+}
+
+@MainActor
+@Test func captureTextNamesMixedCodesByTheFirstInReadingOrder() async {
+    let h = TextCaptureHarness(codes: [
+        recognizedCode("https://example.com", .qrCode, y: 300),
+        recognizedCode("4006381333931", .barcode, y: 0),
+    ])
+
+    await h.coordinator.captureText()
+
+    #expect(h.sink.copiedText == ["4006381333931\nhttps://example.com"])
+    #expect(h.ui.textResults == [.reading, .codeCopied(CodeCapture(text: "4006381333931\nhttps://example.com", kind: .barcode))])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1444,7 +1468,9 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
 
     await h.coordinator.captureText()
 
-    #expect(h.ui.textResults == [.reading, .codeCopied("4006381333931", .barcode)])
+    #expect(h.sink.copiedText == ["4006381333931"])
+    #expect(h.ui.textResults == [.reading, .codeCopied(CodeCapture(text: "4006381333931", kind: .barcode))])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1458,6 +1484,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
 
     #expect(h.sink.copiedText == ["caption"])
     #expect(h.ui.textResults == [.reading, .copied("caption")])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1472,6 +1499,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
 
     #expect(h.sink.copiedText == ["First half, second half."])
     #expect(h.ui.textResults == [.reading, .copied("First half, second half.")])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1482,6 +1510,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
     await h.coordinator.captureText()
 
     #expect(h.sink.copiedText == ["line one\nline two"])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor

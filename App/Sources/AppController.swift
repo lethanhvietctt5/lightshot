@@ -777,8 +777,14 @@ final class AppController: NSObject, CaptureUI {
         case "reading": presentTextCaptureStatus(.reading)
         case "none": presentTextCaptureStatus(.noText)
         case "failed": presentTextCaptureStatus(.failed("Text recognition failed: the request was cancelled."))
-        case "qr": presentTextCaptureStatus(.codeCopied("https://example.com/wifi-setup", .qrCode))
-        case "barcode": presentTextCaptureStatus(.codeCopied("4006381333931", .barcode))
+        case "qr": presentTextCaptureStatus(.codeCopied(CodeCapture(text: "https://example.com/wifi-setup", kind: .qrCode)))
+        case "barcode": presentTextCaptureStatus(.codeCopied(CodeCapture(text: "4006381333931", kind: .barcode)))
+        case "copiedTwice":
+            // A second "Text copied" 6 s later, so Translate can be exercised on an open window.
+            presentTextCaptureStatus(.copied("Good morning, how are you today?"))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                self?.presentTextCaptureStatus(.copied("The train leaves at eight."))
+            }
         default: presentTextCaptureStatus(.copied("The quick brown fox jumps over the lazy dog and keeps running past the fence\nsecond line"))
         }
     }

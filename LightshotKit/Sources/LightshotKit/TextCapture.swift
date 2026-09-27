@@ -47,6 +47,18 @@ public struct RecognizedCode: Equatable, Sendable {
     }
 }
 
+/// What a code capture copies (spec 0012): the content of the area's QR codes and barcodes, one
+/// per line, and the kind of the first of them, for the notice's wording.
+public struct CodeCapture: Equatable, Sendable {
+    public var text: String
+    public var kind: RecognizedCode.Kind
+
+    public init(text: String, kind: RecognizedCode.Kind) {
+        self.text = text
+        self.kind = kind
+    }
+}
+
 /// Recognition itself failed — distinct from an area with nothing readable in it.
 public struct TextRecognitionError: Error, Equatable, Sendable {
     /// User-facing, already localised.
@@ -64,9 +76,8 @@ public enum TextCaptureStatus: Equatable, Sendable {
     case reading
     /// This text is now on the clipboard.
     case copied(String)
-    /// The content of the area's QR codes or barcodes is now on the clipboard (spec 0012); the kind
-    /// is the first code's, in reading order.
-    case codeCopied(String, RecognizedCode.Kind)
+    /// The content of the area's QR codes or barcodes is now on the clipboard (spec 0012).
+    case codeCopied(CodeCapture)
     /// Nothing readable was found; the clipboard was left alone.
     case noText
     /// Recognition failed with this message; the clipboard was left alone.
@@ -89,26 +100,18 @@ public enum TextCapture {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// The content of the area's codes (spec 0012), one per line in the same reading order as text.
-    /// Blank payloads and exact repeats of an earlier one are dropped; the rest are copied as
-    /// decoded, untrimmed, so a multi-line payload keeps its lines. `""` when nothing is left.
-    public static func codeText(from codes: [RecognizedCode]) -> String {
+    /// What a code capture copies (spec 0012), or `nil` when the area holds no code with text in it
+    /// — then the area's text is copied instead. The payloads come one per line in the same reading
+    /// order as text; blank ones and exact repeats of an earlier one are dropped, and the rest are
+    /// kept as decoded, untrimmed, so a multi-line payload keeps its lines. The kind is the first
+    /// copied code's.
+    public static func codeCapture(from codes: [RecognizedCode]) -> CodeCapture? {
+        let readable = codes.filter { !$0.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let ordered = readingOrder(readable, box: \.box).flatMap { $0 }
+        guard let first = ordered.first else { return nil }
         var seen = Set<String>()
-        return readable(codes)
-            .filter { seen.insert($0.payload).inserted }
-            .map(\.payload)
-            .joined(separator: "\n")
-    }
-
-    /// The kind of the first code `codeText` copies, for the notice's wording; `nil` when it copies
-    /// nothing.
-    public static func firstCodeKind(in codes: [RecognizedCode]) -> RecognizedCode.Kind? {
-        readable(codes).first?.kind
-    }
-
-    private static func readable(_ codes: [RecognizedCode]) -> [RecognizedCode] {
-        readingOrder(codes.filter { !$0.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }, box: \.box)
-            .flatMap { $0 }
+        let text = ordered.map(\.payload).filter { seen.insert($0).inserted }.joined(separator: "\n")
+        return CodeCapture(text: text, kind: first.kind)
     }
 
     /// Items grouped into rows top to bottom, each row left to right. Each row is anchored on its
