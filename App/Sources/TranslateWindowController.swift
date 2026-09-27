@@ -16,10 +16,8 @@ final class TranslateWindowController: NSObject, NSWindowDelegate {
 
     func show(_ text: String) {
         if let window, let model {
-            model.text = text
-            model.showsTranslation = false
+            model.replaceText(text)
             WindowPresenter.present(window)
-            model.showsTranslationSoon()
             return
         }
         let model = TranslateModel(text: text)
@@ -38,11 +36,12 @@ final class TranslateWindowController: NSObject, NSWindowDelegate {
         self.window = window
         self.model = model
         WindowPresenter.present(window)
-        model.showsTranslationSoon()
+        model.presentTranslationSoon()
     }
 
     func windowWillClose(_ notification: Notification) {
         guard (notification.object as? NSWindow) === window else { return }
+        model?.cancelPendingPresentation()
         window = nil
         model = nil
     }
@@ -54,16 +53,32 @@ private final class TranslateModel {
     var text: String
     /// Whether the system translation popover is open over the text.
     var showsTranslation = false
+    private var pendingPresentation: Task<Void, Never>?
 
     init(text: String) { self.text = text }
 
+    /// A newer text: the popover showing the old one closes, and opens again over the new one.
+    func replaceText(_ newText: String) {
+        showsTranslation = false
+        text = newText
+        presentTranslationSoon()
+    }
+
     /// Open the popover once the window is on screen: it needs a visible view to anchor to, and
-    /// asking in the same turn the window is ordered front leaves it unshown.
-    func showsTranslationSoon() {
-        Task { @MainActor in
+    /// asking in the same turn the window is ordered front leaves it unshown. A newer request
+    /// replaces a pending one.
+    func presentTranslationSoon() {
+        pendingPresentation?.cancel()
+        pendingPresentation = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
-            showsTranslation = true
+            guard !Task.isCancelled else { return }
+            self?.showsTranslation = true
         }
+    }
+
+    func cancelPendingPresentation() {
+        pendingPresentation?.cancel()
+        pendingPresentation = nil
     }
 }
 

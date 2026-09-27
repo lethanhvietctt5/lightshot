@@ -141,8 +141,8 @@ private struct Notice {
             } else {
                 duration = 2
             }
-        case let .codeCopied(text, kind):
-            switch kind {
+        case let .codeCopied(code):
+            switch code.kind {
             case .qrCode:
                 symbol = "qrcode"
                 title = "QR code copied"
@@ -150,7 +150,7 @@ private struct Notice {
                 symbol = "barcode"
                 title = "Barcode copied"
             }
-            detail = Self.preview(of: text)
+            detail = Self.preview(of: code.text)
             duration = 2
         case .noText:
             symbol = "text.viewfinder"

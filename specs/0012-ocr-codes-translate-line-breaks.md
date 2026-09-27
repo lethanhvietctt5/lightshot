@@ -64,10 +64,10 @@ When text was copied, the notice shows a **Translate** button (macOS 14.4 and la
 - **`TextRecognizer` returns a `TextRecognition` (domain core).** `recognizeText(in:)` now returns `Result<TextRecognition, TextRecognitionError>`. `TextRecognition` holds `lines: [RecognizedLine]` and `codes: [RecognizedCode]`. `RecognizedCode` is a new value type: `payload: String`, `kind: .qrCode | .barcode`, `box: Rect` in image pixels, top-left origin. One recogniser call covers both, so the image is decoded once.
 - **Pure assembly, `TextCapture` (domain core):**
   - `plainText(from:keepingLineBreaks:)`: rows as today, joined with `"\n"` when keeping line breaks and `" "` otherwise. The default argument keeps line breaks.
-  - `codeCapture(from:) -> (text, kind)?`: the payloads that aren't empty after trimming, in reading order (the same row rule as lines: sorted by top, a code overlapping the row's anchor by half its height shares the row, left to right within a row), exact duplicates dropped after the first, joined with `"\n"`, plus the first of them's kind. Payloads aren't trimmed or altered otherwise. `nil` when no payload is left, so the code-wins rule lives in one place.
-- **`TextCaptureStatus.codeCopied(String, RecognizedCode.Kind)` (new case).** The text and kind are `codeCapture`'s.
+  - `codeCapture(from:) -> CodeCapture?` (a new value type: `text`, `kind`): the payloads that aren't empty after trimming, in reading order (the same row rule as lines: sorted by top, a code overlapping the row's anchor by half its height shares the row, left to right within a row), exact duplicates dropped after the first, joined with `"\n"`, plus the first of them's kind. Payloads aren't trimmed or altered otherwise. `nil` when no payload is left, so the code-wins rule lives in one place.
+- **`TextCaptureStatus.codeCopied(CodeCapture)` (new case),** carrying what `codeCapture` returned.
 - **`AppCoordinator.captureText()` routing, after recognition:**
-  - `codeCapture` returns a capture → `copyText` once with its text, then `.codeCopied(text, kind)`.
+  - `codeCapture` returns a capture → `copyText` once with its text, then `.codeCopied(capture)`.
   - Otherwise, as spec 0010, with `plainText(from:keepingLineBreaks: settings.ocrKeepsLineBreaks)`.
 - **`SettingsStore.ocrKeepsLineBreaks: Bool` (new).** Stored under `ocr.keepLineBreaks`, missing means `true`.
 - **Vision recogniser (App).** The same `VNImageRequestHandler` performs the text request (unchanged settings) and a `VNDetectBarcodesRequest` with all supported symbologies. An observation with a `payloadStringValue` becomes a `RecognizedCode`; `.qr` and `.microQR` are `.qrCode` and everything else is `.barcode`. A barcode request failure alone doesn't fail recognition (text still counts).
@@ -129,5 +129,6 @@ When text was copied, the notice shows a **Translate** button (macOS 14.4 and la
 - **Binary payloads (story 8):** Vision returned `payloadStringValue == nil` for a QR code holding 10 non-UTF-8 bytes (and `"hello"` for a text one), so the recogniser drops it before the core sees it.
 - **Review follow-up:**
   - The Translate window is reused: a second Translate keeps the window where the user moved it and swaps in the new text. That was checked with DEBUG `-previewTextNotice copiedTwice`, which shows two "Text copied" notices 6 s apart.
-  - The popover opens 150 ms after the window is ordered front. Asked for in the same turn, it has no on-screen view to anchor to and doesn't show.
+  - The popover opens 150 ms after the window is ordered front. Asked for in the same turn, it has no on-screen view to anchor to and doesn't show. The delayed request is stored: a newer one or closing the window cancels it.
+  - A second Translate while the first popover is still open closes it and opens a new one over the new text. That was checked in the `.verify` build.
 - **Not verified live:** a real drag over an on-screen QR code, because the verify build has no Screen Recording grant of its own.

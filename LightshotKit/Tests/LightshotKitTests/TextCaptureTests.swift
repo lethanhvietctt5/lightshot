@@ -118,6 +118,6 @@ private func code(_ payload: String, _ kind: RecognizedCode.Kind = .qrCode, x: D
 }
 
 @Test func theFirstCodeInReadingOrderNamesTheKind() {
-    #expect(TextCapture.codeCapture(from: [code("123", .barcode, y: 0), code("qr", .qrCode, y: 300)])?.kind == .barcode)
+    #expect(TextCapture.codeCapture(from: [code("123", .barcode, y: 0), code("qr", .qrCode, y: 300)]) == CodeCapture(text: "123\nqr", kind: .barcode))
     #expect(TextCapture.codeCapture(from: [code(" ", .barcode, y: 0), code("qr", .qrCode, y: 300)])?.kind == .qrCode)
 }

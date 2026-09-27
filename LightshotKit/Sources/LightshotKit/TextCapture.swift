@@ -47,6 +47,18 @@ public struct RecognizedCode: Equatable, Sendable {
     }
 }
 
+/// What a code capture copies (spec 0012): the content of the area's QR codes and barcodes, one
+/// per line, and the kind of the first of them, for the notice's wording.
+public struct CodeCapture: Equatable, Sendable {
+    public var text: String
+    public var kind: RecognizedCode.Kind
+
+    public init(text: String, kind: RecognizedCode.Kind) {
+        self.text = text
+        self.kind = kind
+    }
+}
+
 /// Recognition itself failed — distinct from an area with nothing readable in it.
 public struct TextRecognitionError: Error, Equatable, Sendable {
     /// User-facing, already localised.
@@ -64,9 +76,8 @@ public enum TextCaptureStatus: Equatable, Sendable {
     case reading
     /// This text is now on the clipboard.
     case copied(String)
-    /// The content of the area's QR codes or barcodes is now on the clipboard (spec 0012); the kind
-    /// is the first code's, in reading order.
-    case codeCopied(String, RecognizedCode.Kind)
+    /// The content of the area's QR codes or barcodes is now on the clipboard (spec 0012).
+    case codeCopied(CodeCapture)
     /// Nothing readable was found; the clipboard was left alone.
     case noText
     /// Recognition failed with this message; the clipboard was left alone.
@@ -93,14 +104,14 @@ public enum TextCapture {
     /// — then the area's text is copied instead. The payloads come one per line in the same reading
     /// order as text; blank ones and exact repeats of an earlier one are dropped, and the rest are
     /// kept as decoded, untrimmed, so a multi-line payload keeps its lines. The kind is the first
-    /// copied code's, for the notice's wording.
-    public static func codeCapture(from codes: [RecognizedCode]) -> (text: String, kind: RecognizedCode.Kind)? {
+    /// copied code's.
+    public static func codeCapture(from codes: [RecognizedCode]) -> CodeCapture? {
         let readable = codes.filter { !$0.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let ordered = readingOrder(readable, box: \.box).flatMap { $0 }
         guard let first = ordered.first else { return nil }
         var seen = Set<String>()
         let text = ordered.map(\.payload).filter { seen.insert($0).inserted }.joined(separator: "\n")
-        return (text, first.kind)
+        return CodeCapture(text: text, kind: first.kind)
     }
 
     /// Items grouped into rows top to bottom, each row left to right. Each row is anchored on its

@@ -372,9 +372,9 @@ public final class AppCoordinator {
     /// and the text in the selection cut from it is recognised on-device and put on the clipboard
     /// as plain text — or, when the selection holds QR codes or barcodes, their content (spec 0012).
     /// No editor, no history item, no self-timer, and Repeat Last Capture keeps pointing at the
-    /// last screenshot. Nothing readable (or a recognition failure) leaves the
-    /// clipboard alone and says so. Freeze failures route exactly as area capture's do. Ignored
-    /// while a take is active, so the overlay never lands in the recording.
+    /// last screenshot. Nothing readable (or a recognition failure) leaves the clipboard alone and
+    /// says so. Freeze failures route exactly as area capture's do. Ignored while a take is active,
+    /// so the overlay never lands in the recording.
     public func captureText() async {
         guard let textRecognizer, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
@@ -386,7 +386,7 @@ public final class AppCoordinator {
             // text around it.
             if let code = TextCapture.codeCapture(from: recognition.codes) {
                 imageSink.copyText(code.text)
-                ui.presentTextCaptureStatus(.codeCopied(code.text, code.kind))
+                ui.presentTextCaptureStatus(.codeCopied(code))
                 return
             }
             let text = TextCapture.plainText(from: recognition.lines, keepingLineBreaks: settings.ocrKeepsLineBreaks)

@@ -80,7 +80,7 @@ This project is spec-driven and issue-tracked. Follow the loop:
 3. **Branch per issue**, using Linear's suggested name (e.g. `…/lig-5-core-capture-annotate-v1`). Branch off `main`.
 4. **PR targets `main`.** Title it **`<type>(LIG-<n>): <title>`** — Conventional-Commits type with the Linear issue as the scope, e.g. `feat(LIG-100): add scrolling capture`. Use `feat` for a story/feature, `fix` for a bug, `chore`/`docs`/`refactor`/`test` otherwise. Keep the PR description linked to the Linear issue.
 5. **Verify.** Run `swift test` (and the app build/tests for app-side work) and confirm the behavior. Mirror any spec change into the Linear issue so all three (file, issue, PR) stay consistent.
-6. **Self-review, then merge.** Review the branch against `main` on two axes, kept separate: **Standards** (this file, `CONTEXT.md`, `docs/adr/`) and **Spec** (the spec file and its Linear issue). In Claude Code this is the `/mattpocock-skills:code-review` skill with `main` as the fixed point. Fix what it finds and re-verify; list any finding you deliberately leave, with the reason, in the PR description. Then merge — there is no separate review bot.
+6. **Self-review, then merge.** Review the branch against `main` on two axes, kept separate: **Standards** (this file, `CONTEXT.md`, `docs/adr/`) and **Spec** (the spec file and its Linear issue). In Claude Code this is the `/mattpocock-skills:code-review` skill with `main` as the fixed point. Fix what it finds, re-verify, and keep spec, issue and PR in sync with the fixes; list any finding you deliberately leave, with the reason, in the PR description. Then merge — there is no separate review bot.
 7. Only `main` and the feature branches are long-lived.
 
 ## Working principles
