@@ -103,9 +103,17 @@ final class SoftwareUpdater: NSObject {
     }
 
     #if DEBUG
-    /// Development aid: a scheduled-style check now, to see the gentle reminder (story 9).
+    /// Development aid: a scheduled-style check now, to see the gentle reminder (story 9). Sparkle
+    /// refuses a background check until automatic checks are on, so this turns them on (persisted in
+    /// the running build's defaults — use the `.verify` bundle id).
     func debugCheckInBackground() {
+        automaticallyChecks = true
         updater?.checkForUpdatesInBackground()
+    }
+
+    /// Development aid: show the menu-bar reminder for `version` without a feed.
+    func debugShowPendingUpdate(_ version: String) {
+        pendingUpdateVersion = version
     }
     #endif
 

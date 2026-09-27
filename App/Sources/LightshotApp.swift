@@ -55,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Development aid (spec 0015): `-checkForUpdatesInBackground YES` runs a scheduled-style
         // update check now (pair it with `-updateFeedURL <url>`), to see the menu-bar reminder.
         if UserDefaults.standard.bool(forKey: "checkForUpdatesInBackground") { controller.softwareUpdater.debugCheckInBackground() }
+        // `-previewUpdateAvailable <version>` shows the menu-bar dot and the Update Available row.
+        if let version = UserDefaults.standard.string(forKey: "previewUpdateAvailable") {
+            controller.softwareUpdater.debugShowPendingUpdate(version)
+        }
         // Development aid: `-previewRecordingControls YES` shows the controls pill as during a take.
         if UserDefaults.standard.bool(forKey: "previewRecordingControls") { controller.debugShowRecordingControls() }
         if let frame = UserDefaults.standard.string(forKey: "previewRecordingFrame") {
