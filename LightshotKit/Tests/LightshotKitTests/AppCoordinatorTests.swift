@@ -145,6 +145,7 @@ private final class StubSettings: SettingsStore {
     var lastRecordingRegion: CaptureRegion?
     var appearance = AppearancePreference.system
     var ocrKeepsLineBreaks = true
+    var hideDesktopIcons = false
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the

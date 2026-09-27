@@ -192,6 +192,14 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Toggle("Hide desktop icons in screenshots and recordings", isOn: $model.hideDesktopIcons)
+            } header: {
+                Text("Desktop")
+            } footer: {
+                Text("Screenshots and recordings show your wallpaper instead of desktop icons. While recording, the icons are hidden on your screen too, until the recording ends.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 LabeledContent("Export location") {
                     HStack(spacing: 8) {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: model.saveLocation.path))

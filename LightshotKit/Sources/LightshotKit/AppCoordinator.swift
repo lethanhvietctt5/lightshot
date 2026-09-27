@@ -500,7 +500,8 @@ public final class AppCoordinator {
         dismissPendingRecording()
 
         let options = RecordingOptions.resolve(
-            region: region, output: output, defaults: settings.recordingDefaults, overrides: overrides
+            region: region, output: output, defaults: settings.recordingDefaults, overrides: overrides,
+            hideDesktopIcons: settings.hideDesktopIcons
         )
         let url = scratchURL()
         guard (try? recordingSession.start(options, writingTo: url, at: clock())) != nil else { return }

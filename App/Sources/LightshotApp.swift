@@ -57,6 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.debugShowRecordingFrame(frame, paused: defaults.bool(forKey: "previewPaused"), dims: defaults.bool(forKey: "previewDim"))
         }
         if UserDefaults.standard.string(forKey: "previewDevicePicker") != nil { controller.toggleRecording() }
+        // Development aid (spec 0013): `-previewDesktopCover <seconds>` puts the desktop cover up.
+        let coverSeconds = UserDefaults.standard.double(forKey: "previewDesktopCover")
+        if coverSeconds > 0 { controller.debugShowDesktopCover(for: coverSeconds) }
         // Development aid (specs 0010, 0012): `-previewTextNotice
         // reading|copied|copiedTwice|none|failed|qr|barcode` shows the OCR Text notice without
         // capturing.

@@ -9,7 +9,7 @@ Everything happens on your machine. No cloud, no accounts, no network — even c
 **Screenshots**
 
 - **Capture** an area (drag-to-select with live pixel dimensions and adjustable edges), a window (with hover highlight), or a full display — all via rebindable global hotkeys and a CleanShot-style menu-bar menu.
-- **Capture options** — self-timer, cursor inclusion, repeat last capture, and multi-display selection.
+- **Capture options** — self-timer, cursor inclusion, repeat last capture, multi-display selection, and hiding desktop icons (your wallpaper shows instead, in screenshots and recordings).
 - **Annotation editor** in one compact toolbar row — arrows, lines, rectangles, ellipses, freehand, text boxes, highlights, auto-numbered step markers, a **Focus** tool that dims everything outside chosen areas, and an adjustable, reversible crop. Full undo/redo.
 - **Redaction** — `blackout` (secure, erases pixels), plus `blur` / `pixelate` (obscure only — **not** safe for secrets).
 - **Auto Redact** (⇧⌘R) — on-device text recognition finds keys, passwords, cards, IBANs, emails, phone numbers, IPs and QR codes and redacts them in the current style. It can miss things; check before sharing.
@@ -20,7 +20,7 @@ Everything happens on your machine. No cloud, no accounts, no network — even c
 **Screen recording**
 
 - **Record** an area, a window's area, or a display as a **video** or a **GIF**, with an aspect-ratio lock or an exact size.
-- Toggles for **microphone**, **computer audio**, **camera** (a draggable bubble), **click highlighting**, and **keystrokes** (never shown while a password field has focus).
+- Toggles for **microphone**, **computer audio**, **camera** (a draggable bubble), **click highlighting**, and **keystrokes** (never shown while a password field has focus). **Hide notifications** keeps banners out of the take without touching your Focus settings.
 - Pause / resume, stop, restart, and discard from a controls pill or the menu-bar timer; optional countdown, sounds, dimming outside the recorded area, and crash recovery.
 - A post-recording overlay to copy, save, rename, drag out, Quick Look, or delete the take.
 

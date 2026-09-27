@@ -53,6 +53,10 @@ public protocol SettingsStore: AnyObject {
     /// OCR Text keeps one line per row (`true`, the default) or joins the rows into one paragraph
     /// (spec 0012). Read live by `AppCoordinator.captureText()`.
     var ocrKeepsLineBreaks: Bool { get set }
+
+    /// Leave the desktop icons out of screenshots and recordings (spec 0013). Screenshots read it
+    /// live in the capture service; a take reads it once, when it's configured.
+    var hideDesktopIcons: Bool { get set }
 }
 
 public extension SettingsStore {
