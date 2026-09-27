@@ -4,11 +4,11 @@ Canonical working agreement for any AI agent (Claude Code, Copilot, Codex, …) 
 
 ## What this is
 
-**Lightshot** — a native **macOS (Swift / SwiftUI, macOS 14+)** screenshot and screen-recording app, a local-only alternative to CleanShot X: capture → annotate → copy / save / pin, and record → edit in the Studio → export. No cloud, no accounts, no network — captions are transcribed on-device.
+**Lightshot** — a native **macOS (Swift / SwiftUI, macOS 14+)** screenshot and screen-recording app, a local-only alternative to CleanShot X: capture → annotate → copy / save / pin, and record → edit in the Studio → export. No cloud, no accounts — captions are transcribed on-device. The only network access is the in-app update check ([ADR 0002](docs/adr/0002-in-app-update-checks.md)).
 
 ## Current state — read first
 
-The app is shipping (see [`docs/releases/`](docs/releases) for per-version highlights). Specs [`0001`](specs)–`0014` are implemented: screenshot capture and annotation, release and distribution, the editor passes, the menu-bar menu, screen recording, the Studio video editor, light/dark appearance, auto redact, OCR Text, Freeze Screen, the OCR Text extras (QR codes and barcodes, Translate, line breaks), hiding desktop icons and notifications, and the Quick Access Overlay for screenshots.
+The app is shipping (see [`docs/releases/`](docs/releases) for per-version highlights). Specs [`0001`](specs)–`0015` are implemented: screenshot capture and annotation, release and distribution, the editor passes, the menu-bar menu, screen recording, the Studio video editor, light/dark appearance, auto redact, OCR Text, Freeze Screen, the OCR Text extras (QR codes and barcodes, Translate, line breaks), hiding desktop icons and notifications, the Quick Access Overlay for screenshots, and in-app software updates (Sparkle).
 
 - [`LightshotKit/`](LightshotKit) — the SwiftPM domain-core package. Pure Swift, **no AppKit / ScreenCaptureKit imports**, with a Swift Testing suite per module.
 - [`App/`](App) — the menu-bar app (`LSUIElement`) and the concrete ScreenCaptureKit / AVFoundation / AppKit services.
@@ -25,7 +25,7 @@ Guidance:
 The spec's testing strategy dictates the structure:
 
 - **A SwiftPM package for the domain core** (`LightshotKit/`) — `AnnotationDocument`, the pure `render` function, `StudioDocument` and its pure models (`StudioTimeline`, `ZoomCamera`, `CursorPath`, `CanvasLayout`, `StudioCaptions`), `RecordingSession`, `HistoryStore`, `AppCoordinator`, `ThemePalette`, `SensitiveDataScanner` (auto redact), `TextCapture` (OCR Text), `FrozenScreen` (Freeze Screen), `QuickAccessStack` / `QuickAccessLayout` (Quick Access cards), and the service *protocols* (`CaptureService`, `RecordingService`, `TextRecognizer`, `ImageSource`, `ImageSink`, `MediaSink`, `HotkeyService`, `AudioInputService`, `CameraService`, `InputEventSource`, `SettingsStore`, …). Pure Swift, **no AppKit / ScreenCaptureKit imports**. This is what makes `swift test` fast and screen-free.
-- **An Xcode app target for the OS shell** (`App/`, built via the generated `Lightshot.xcodeproj`) — the menu-bar app plus the concrete ScreenCaptureKit / AVFoundation / AppKit implementations of those protocols (capture, recording, overlays, pin board, hotkeys, sinks, the Studio compositor and exporter).
+- **An Xcode app target for the OS shell** (`App/`, built via the generated `Lightshot.xcodeproj`) — the menu-bar app plus the concrete ScreenCaptureKit / AVFoundation / AppKit implementations of those protocols (capture, recording, overlays, pin board, hotkeys, sinks, the Studio compositor and exporter), and `SoftwareUpdater`, which owns Sparkle — the app's only Swift package dependency besides `LightshotKit` (spec 0015).
 
 The seam between the two is the point: the app depends on the package, never the reverse.
 
@@ -57,7 +57,7 @@ scripts/release.sh 0.1.0 --dry-run   # test → build universal Release → sign
 scripts/release.sh 0.1.0             # same, then pushes tag v0.1.0 and creates a DRAFT GitHub Release (publish is a manual click)
 ```
 
-The app is signed with one fixed self-signed certificate (`Lightshot Release Signing`) so users' permissions survive updates; the expected designated requirement is pinned in `scripts/release-identity.txt` and the script refuses to ship a build that does not match it. Never change the bundle identifier `dev.lightshot.app` or that certificate without a deliberate, announced permission reset. Optional per-version highlights go in `docs/releases/<version>.md`.
+The app is signed with one fixed self-signed certificate (`Lightshot Release Signing`) so users' permissions survive updates; the expected designated requirement is pinned in `scripts/release-identity.txt` and the script refuses to ship a build that does not match it. Each release also uploads an `appcast.xml` (the update feed, spec 0015) whose DMG signature comes from the **update signing key**, Sparkle's EdDSA key in the maintainer's keychain; the script refuses to run if that key is missing or doesn't match `SUPublicEDKey` in `Info.plist`. Never change the bundle identifier `dev.lightshot.app`, that certificate, or `SUPublicEDKey` without a deliberate, announced break. Optional per-version highlights go in `docs/releases/<version>.md`; they are also the update window's release notes.
 
 ## Architecture — the big picture
 
@@ -94,6 +94,6 @@ Mirror the discipline these encode; they override speed.
 
 ## Guardrails
 
-- **Local-only.** Do not add networking, accounts, analytics, or cloud upload — they are explicitly out of scope (a later spec). If a task seems to need them, stop and confirm.
+- **Local-only.** Do not add networking, accounts, analytics, or cloud upload — they are explicitly out of scope (a later spec). The one exception is the in-app update check ([ADR 0002](docs/adr/0002-in-app-update-checks.md)); it doesn't cover anything else. If a task seems to need the network, stop and confirm.
 - **Never present blur/pixelate as secure redaction.** Only `blackout` is safe for secrets.
 - **macOS 14+ / ScreenCaptureKit only.** Do not reach for deprecated `CGWindowListCreateImage`.

@@ -26,6 +26,9 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     /// When set, `cancel` suspends here until the test resumes it — for the restart race.
     var cancelGate: CheckedContinuation<Void, Never>?
     var holdCancel = false
+    /// When set, `stop` suspends here until the test resumes it — to look at the stopping state.
+    var stopGate: CheckedContinuation<Void, Never>?
+    var holdStop = false
     private(set) var stopCount = 0
     private(set) var cancelCount = 0
     private(set) var pauseCount = 0
@@ -56,7 +59,11 @@ private final class FakeRecordingService: RecordingService, @unchecked Sendable 
     }
     func pause() async { pauseCount += 1 }
     func resume() async { resumeCount += 1 }
-    func stop() async -> Result<URL, RecordingError> { stopCount += 1; return stopResult }
+    func stop() async -> Result<URL, RecordingError> {
+        stopCount += 1
+        if holdStop { await withCheckedContinuation { stopGate = $0 } }
+        return stopResult
+    }
     func cancel() async {
         cancelCount += 1
         if holdCancel { await withCheckedContinuation { cancelGate = $0 } }
@@ -92,6 +99,21 @@ private final class SpyMediaSink: MediaSink {
 private struct FakeMetadata: MediaMetadataSource {
     var result: VideoMetadata? = VideoMetadata(pixelWidth: 1280, pixelHeight: 720, duration: 30, thumbnailPNG: Data([1, 2, 3]))
     func videoMetadata(for url: URL) async -> VideoMetadata? { result }
+}
+
+/// Metadata that arrives only when the test says so — to look at a take mid-archive.
+@MainActor
+private final class HeldMetadata: MediaMetadataSource {
+    private(set) var gate: CheckedContinuation<Void, Never>?
+    nonisolated func videoMetadata(for url: URL) async -> VideoMetadata? {
+        await hold()
+        return FakeMetadata().result
+    }
+    private func hold() async { await withCheckedContinuation { gate = $0 } }
+    func release() {
+        gate?.resume()
+        gate = nil
+    }
 }
 
 /// A GIF encoder the test steers: it can wait at a gate (to be cancelled mid-way), report
@@ -182,7 +204,14 @@ private final class SpyUI: CaptureUI {
     func presentGIFConversion(cancel: @escaping () -> Void) { gifPopups += 1; gifCancel = cancel }
     func updateGIFConversion(progress: Double) { gifProgress.append(progress) }
     func dismissGIFConversion() { gifDismissals += 1 }
-    func resolveCancelledGIFConversion() async -> Bool { cancelResolutions += 1; return keepVideoOnCancel }
+    /// When set, the keep-the-video question waits here until the test answers it.
+    var holdCancelResolution = false
+    var cancelResolutionGate: CheckedContinuation<Void, Never>?
+    func resolveCancelledGIFConversion() async -> Bool {
+        cancelResolutions += 1
+        if holdCancelResolution { await withCheckedContinuation { cancelResolutionGate = $0 } }
+        return keepVideoOnCancel
+    }
     func presentRecordingFailure(_ error: RecordingError) { recordingFailures.append(error) }
     func presentTextCaptureStatus(_ status: TextCaptureStatus) {}
 }
@@ -309,7 +338,10 @@ private final class Harness {
     let flattener = FakeFlattener()
 
     /// `studio: false` wires no project store: the plain (pre-S8) path, for tests of that path alone.
-    init(service: FakeRecordingService = FakeRecordingService(), withHistory: Bool = false, metadata: VideoMetadata? = FakeMetadata().result, studio: Bool = true) {
+    init(
+        service: FakeRecordingService = FakeRecordingService(), withHistory: Bool = false,
+        metadata: VideoMetadata? = FakeMetadata().result, metadataSource: MediaMetadataSource? = nil, studio: Bool = true
+    ) {
         self.service = service
         let clock = self.clock
         history = withHistory ? HistoryStore(directory: historyDirectory) : nil
@@ -323,7 +355,7 @@ private final class Harness {
             recordingService: service,
             mediaSink: sink,
             gifEncoder: gif,
-            mediaMetadata: withHistory ? FakeMetadata(result: metadata) : nil,
+            mediaMetadata: metadataSource ?? (withHistory ? FakeMetadata(result: metadata) : nil),
             scratchDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
             studioProjects: studio ? StudioProjectStore(directory: studioDirectory) : nil,
             studioFlattener: flattener,
@@ -1346,4 +1378,87 @@ private func plainTakeWithInput() throws -> URL {
     await h.coordinator.stopRecording()
     #expect(h.ui.finished.count == 1 && h.sink.saves.count == 1)
     #expect(try Data(contentsOf: h.sink.saves[0].from) == Data("rendered".utf8))
+}
+
+
+// MARK: - Work in progress (spec 0015, story 21)
+
+// An update's relaunch waits while `hasWorkInProgress` is true: from the moment a take starts
+// until its result has been routed, and while a finished take is being filed into history.
+
+@Test @MainActor func nothingIsInProgressWhenIdle() {
+    #expect(!Harness().coordinator.hasWorkInProgress)
+}
+
+@Test @MainActor func aTakeIsWorkFromStartThroughPauseUntilItsResultIsRouted() async {
+    let h = Harness()
+    h.service.holdStart = true
+    let starting = Task { await h.coordinator.startRecording(region: display) }
+    while h.service.startGate == nil { await Task.yield() }
+    #expect(h.coordinator.hasWorkInProgress)                     // the stream is being started
+    h.service.startGate?.resume()
+    await starting.value
+    #expect(h.coordinator.hasWorkInProgress)                     // recording
+    await h.coordinator.pauseResumeRecording()
+    #expect(h.coordinator.recordingSession.state == .paused)
+    #expect(h.coordinator.hasWorkInProgress)                     // paused
+
+    h.service.holdStop = true
+    let stopping = Task { await h.coordinator.stopRecording() }
+    while h.service.stopGate == nil { await Task.yield() }
+    #expect(h.coordinator.hasWorkInProgress)                     // the file is being finalised
+    h.service.stopGate?.resume()
+    await stopping.value
+    #expect(h.ui.finished.count == 1)
+    #expect(!h.coordinator.hasWorkInProgress)                    // saved and routed
+}
+
+@Test @MainActor func aCountdownIsWorkAndEscapingItEndsIt() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: true, countdownSeconds: 3)
+    h.ui.holdCountdown = true
+    h.ui.countdownResult = false                                  // Escape
+    let starting = Task { await h.coordinator.startRecording(region: display) }
+    while h.ui.countdownGate == nil { await Task.yield() }
+    #expect(h.coordinator.hasWorkInProgress)
+    h.ui.countdownGate?.resume()
+    await starting.value
+    #expect(!h.coordinator.hasWorkInProgress)
+}
+
+@Test @MainActor func aDiscardedTakeEndsTheWork() async {
+    let h = Harness()
+    h.settings.recordingDefaults = RecordingDefaults(countdownEnabled: false, confirmBeforeDiscard: false)
+    await h.coordinator.startRecording(region: display)
+    await h.coordinator.discardRecording()
+    #expect(!h.coordinator.hasWorkInProgress)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor func aGIFConversionAndTheKeepTheVideoQuestionAreWork() async {
+    let h = Harness()
+    h.gif.holds = true
+    h.ui.holdCancelResolution = true
+    let finishing = Task { await finishedGIFTake(h) }
+    while h.ui.gifCancel == nil { await Task.yield() }
+    #expect(h.coordinator.hasWorkInProgress)                     // converting
+    h.ui.gifCancel?()
+    while h.ui.cancelResolutionGate == nil { await Task.yield() }
+    #expect(h.coordinator.hasWorkInProgress)                     // the take waits on the user's answer
+    h.ui.cancelResolutionGate?.resume()
+    await finishing.value
+    #expect(h.ui.overlays.last?.kind == .video)
+    #expect(!h.coordinator.hasWorkInProgress)
+}
+
+@Test @MainActor func filingAStudioExportIntoHistoryIsWork() async throws {
+    let metadata = HeldMetadata()
+    let h = Harness(withHistory: true, metadataSource: metadata)
+    let export = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString).mp4")
+    try Data("movie".utf8).write(to: export)
+    let filing = Task { await h.coordinator.fileStudioExport(at: export, named: nil) }
+    while metadata.gate == nil { await Task.yield() }
+    #expect(h.coordinator.hasWorkInProgress)
+    metadata.release()
+    _ = await filing.value
+    #expect(!h.coordinator.hasWorkInProgress)
 }

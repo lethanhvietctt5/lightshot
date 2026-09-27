@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.applyStoredAppearance()
+        // Before the status item, so the menu can show an update a scheduled check finds (spec 0015).
+        controller.softwareUpdater.start()
         statusMenu = StatusMenuController(controller: controller)
         // Claim the persisted global hotkeys up front so shortcuts fire before the settings window
         // is ever opened (story 56).
@@ -50,6 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.debugPreviewSurface(surface, file: file)
         }
         if UserDefaults.standard.bool(forKey: "previewRecordingStatusItem") { statusMenu?.debugShowRecordingItem() }
+        // Development aid (spec 0015): `-checkForUpdatesInBackground YES` runs a scheduled-style
+        // update check now (pair it with `-updateFeedURL <url>`), to see the menu-bar reminder.
+        if UserDefaults.standard.bool(forKey: "checkForUpdatesInBackground") { controller.softwareUpdater.debugCheckInBackground() }
+        // `-previewUpdateAvailable <version>` shows the menu-bar dot and the Update Available row.
+        if let version = UserDefaults.standard.string(forKey: "previewUpdateAvailable") {
+            controller.softwareUpdater.debugShowPendingUpdate(version)
+        }
         // Development aid: `-previewRecordingControls YES` shows the controls pill as during a take.
         if UserDefaults.standard.bool(forKey: "previewRecordingControls") { controller.debugShowRecordingControls() }
         if let frame = UserDefaults.standard.string(forKey: "previewRecordingFrame") {

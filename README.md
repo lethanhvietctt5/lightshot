@@ -2,7 +2,7 @@
 
 A native **macOS (Swift / SwiftUI, macOS 14+)** screenshot and screen-recording app — a local-only alternative to CleanShot X: **capture → annotate → copy / save / pin**, and **record → edit in the Studio → export**.
 
-Everything happens on your machine. No cloud, no accounts, no network — even captions are transcribed on your Mac.
+Everything happens on your machine. No cloud, no accounts, no network except checking for updates, which you can turn off — even captions are transcribed on your Mac.
 
 ## Features
 
@@ -112,9 +112,11 @@ Other permissions are optional and requested only when you first use the feature
 
 ### Updating
 
-Lightshot never connects to the network, so it does not update itself. Choose **Quit Lightshot** from its menu-bar menu, then:
+Lightshot updates itself. On its second launch it asks whether to check for updates automatically (about once a day); you can also choose **Check for Updates…** from its menu-bar menu at any time, and change either in **Settings → General → Updates**. An update downloads, is checked against the maintainer's signature, replaces the app in place and relaunches it, keeping your permissions and without the first-launch warning. The check is Lightshot's only network access: it fetches the release feed from GitHub and nothing about you or your captures ([ADR 0002](docs/adr/0002-in-app-update-checks.md)).
 
-- **Release download:** download the new DMG and drag Lightshot into Applications again, choosing **Replace**. The first-launch warning appears once more for each new download.
+To update by hand, choose **Quit Lightshot** from its menu-bar menu, then:
+
+- **Release download:** download the new DMG and drag Lightshot into Applications again, choosing **Replace**. The first-launch warning appears once more for each new download. Versions 0.6.0 and earlier have no updater, so they update this way once.
 - **Source build:** `git pull`, repeat the `xcodegen generate` and `xcodebuild` commands above, then replace the installed copy:
 
   ```bash
@@ -222,6 +224,6 @@ This project is spec-driven and issue-tracked. Read [`AGENTS.md`](AGENTS.md) fir
 
 ### Guardrails
 
-- **Local-only** — no networking, accounts, analytics, or cloud upload.
+- **Local-only** — no networking, accounts, analytics, or cloud upload. The only exception is the in-app update check ([ADR 0002](docs/adr/0002-in-app-update-checks.md)).
 - **Never present blur/pixelate as secure redaction** — only `blackout` is safe for secrets.
 - **macOS 14+ / ScreenCaptureKit only** — no deprecated `CGWindowListCreateImage`.

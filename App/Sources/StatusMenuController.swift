@@ -33,6 +33,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         controller.recordingStateObserver = { [weak self] session in
             self?.recordingStateDidChange(session)
         }
+        // A scheduled update check that found a new version marks the icon (spec 0015, story 9).
+        controller.softwareUpdater.onPendingUpdateChange = { [weak self] in
+            guard let self, self.recordingTimer == nil else { return }
+            self.showIdleStatusItem()
+        }
     }
 
     // MARK: - Recording indicator (spec 0006, story 11)
@@ -49,11 +54,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         recordingTimer?.invalidate()
         recordingTimer = nil
         statusItem.length = NSStatusItem.squareLength
+        let updateVersion = controller.softwareUpdater.pendingUpdateVersion
         let icon = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Lightshot")
         icon?.isTemplate = true
-        statusItem.button?.image = icon
+        statusItem.button?.image = updateVersion == nil ? icon : icon.map(Self.withUpdateDot)
         statusItem.button?.title = ""
-        statusItem.button?.toolTip = "Lightshot"
+        statusItem.button?.toolTip = updateVersion.map { "Lightshot — version \($0) is available" } ?? "Lightshot"
         statusItem.button?.contentTintColor = nil
         statusItem.button?.target = nil
         statusItem.button?.action = nil
@@ -150,9 +156,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         // App section — plain text rows, like CleanShot's About / Preferences.
+        let updater = controller.softwareUpdater
+        // An update a scheduled check found waits here, not in a window (spec 0015, story 9).
+        if let version = updater.pendingUpdateVersion {
+            menu.addItem(item("Update Available: Lightshot \(version)…") { updater.checkForUpdates() })
+        }
         menu.addItem(item("About Lightshot…") { [controller] in
             controller.showAbout()
         })
+        let checkItem = item("Check for Updates…") { updater.checkForUpdates() }
+        // An update session is already running (its window is up, or it's downloading).
+        if !updater.canCheckForUpdates { checkItem.action = nil }
+        menu.addItem(checkItem)
         // ⌘, keeps working from the menu (spec 0002, story 34).
         menu.addItem(item("Settings…", key: ",", modifiers: .command) { [controller] in
             controller.showSettings()
@@ -250,6 +265,27 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
         }
         return item
+    }
+
+    /// The status icon with a small dot at its top-right corner, cut out of the glyph so it reads
+    /// on its own: the menu bar's sign that an update is waiting (spec 0015, story 9). Still a
+    /// template, so it follows the menu bar's colour like the plain icon.
+    private static func withUpdateDot(_ base: NSImage) -> NSImage {
+        let image = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect)
+            let diameter = (rect.width * 0.36).rounded()
+            let dot = NSRect(x: rect.maxX - diameter, y: rect.maxY - diameter, width: diameter, height: diameter)
+            NSGraphicsContext.current?.compositingOperation = .copy
+            NSColor.clear.setFill()
+            NSBezierPath(ovalIn: dot.insetBy(dx: -1.5, dy: -1.5)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: dot).fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "Lightshot, update available"
+        return image
     }
 
     @objc private func runMenuAction(_ sender: NSMenuItem) {

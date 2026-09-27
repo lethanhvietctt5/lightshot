@@ -143,3 +143,17 @@ The Quick Access cards on screen, newest at the bottom.
 **Desktop cover**:
 Pictures of each display's wallpaper that Lightshot lays over the desktop icons for the length of a recording when hiding desktop icons (spec 0013). The take shows them in place of the icons.
 _Avoid_: overlay (the selection and recording overlays already use that word)
+
+### Updates
+
+**Update check**:
+Asking the update feed whether a newer version exists (spec 0015). Scheduled (about daily, only once the user agreed) or manual (Check for Updates…). Lightshot's only network access.
+_Avoid_: ping, phone home, version poll
+
+**Update feed**:
+The `appcast.xml` published with each GitHub Release, describing that version, its DMG, the DMG's signature and its highlights. Installed copies read the newest published one.
+_Avoid_: RSS, manifest
+
+**Update signing key**:
+The EdDSA key pair that signs each DMG for in-app updates; the app refuses a download that doesn't verify against its public half (`SUPublicEDKey`). Separate from the code-signing certificate, which is what keeps permissions across updates.
+_Avoid_: Sparkle key, private key (ambiguous with the certificate)

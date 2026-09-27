@@ -139,7 +139,7 @@ Added to `README.md` as a new **Install** section above *Getting started*, and a
 ## Out of Scope
 
 - **Developer ID signing, Hardened Runtime, and notarization** — the real fix for the Gatekeeper warning; a later spec once there is a paid Apple Developer membership. The pinned-identity check is designed so that migration is a one-line change plus a one-time, announced permission reset.
-- **Auto-update / in-app update checks (e.g. Sparkle).** They need networking inside the app, which the local-only v1 guardrail forbids. Users update by downloading the new DMG.
+- **Auto-update / in-app update checks (e.g. Sparkle).** They need networking inside the app, which the local-only v1 guardrail forbids. Users update by downloading the new DMG. _Superseded by [spec 0015](0015-software-updates.md) and ADR 0002._
 - **CI-built releases (GitHub Actions).** v1 is a local script; moving the `.p12` into CI secrets is a follow-up once the local flow is proven.
 - **Homebrew cask.** Homebrew has been tightening its rules on casks that fail Gatekeeper; check the current policy before investing in this.
 - **Mac App Store distribution** (requires App Sandbox and review).

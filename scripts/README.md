@@ -1,13 +1,13 @@
 # Releasing Lightshot
 
-`scripts/release.sh <X.Y.Z>` turns a clean, up-to-date `main` into a **draft** GitHub Release: it tests, builds a universal Release app, signs it with one fixed self-signed certificate, verifies the signature against the requirement pinned in `release-identity.txt`, packages a drag-to-Applications DMG, tags `vX.Y.Z`, and uploads the DMG with its SHA-256. Publishing the draft is a manual click. The full contract is [spec 0002](../specs/0002-release-and-distribution.md).
+`scripts/release.sh <X.Y.Z>` turns a clean, up-to-date `main` into a **draft** GitHub Release: it tests, builds a universal Release app, signs it with one fixed self-signed certificate, verifies the signature against the requirement pinned in `release-identity.txt`, packages a drag-to-Applications DMG, writes the update feed (`appcast.xml`, signed with the update signing key), tags `vX.Y.Z`, and uploads the DMG and the feed. Publishing the draft is a manual click, and it is also what ships the update: installed copies read the feed of the latest *published* release. The full contract is [spec 0002](../specs/0002-release-and-distribution.md), plus [spec 0015](../specs/0015-software-updates.md) for the feed.
 
 ```bash
 scripts/release.sh 0.1.0 --dry-run   # steps 1–6 only: nothing tagged or uploaded; works on any branch
 scripts/release.sh 0.1.0             # the real thing: must be on main == origin/main
 ```
 
-Everything lands in `build/release/` (gitignored): the app, `Lightshot-<version>.dmg`, `release-notes.md`, and `xcodebuild.log`. If `docs/releases/<version>.md` exists, its contents are placed at the top of the release notes, ahead of the install instructions and checksum.
+Everything lands in `build/release/` (gitignored): the app, `Lightshot-<version>.dmg`, `appcast.xml`, `release-notes.md`, and `xcodebuild.log`. Swift packages (Sparkle and its release tools) resolve into `build/spm/`. If `docs/releases/<version>.md` exists, its contents are placed at the top of the release notes, ahead of the install instructions and checksum, and embedded in the feed as the update window's release notes.
 
 ## Why the identity is pinned
 
@@ -73,13 +73,33 @@ codesign -d -r- build/release/Build/Products/Release/Lightshot.app 2>/dev/null |
 
 The `H"…"` value is the certificate's SHA-1 fingerprint (`security find-identity -p codesigning` shows it next to the name). Commit the file; the script compares against it on every run.
 
+## One-time setup: the update signing key
+
+In-app updates (spec 0015) trust a DMG only if it is signed with the **update signing key**, an EdDSA key pair made by Sparkle's `generate_keys`. The private half lives in the maintainer's login keychain; the public half is `SUPublicEDKey` in `App/Resources/Info.plist`. `release.sh` refuses to run if the keychain has no key or if its public half doesn't match the plist.
+
+The key was created on 2026-09-27; its public half is committed. On a new Mac, restore it instead of creating a new one:
+
+```bash
+xcodebuild -resolvePackageDependencies -project Lightshot.xcodeproj -scheme Lightshot -clonedSourcePackagesDirPath build/spm
+build/spm/artifacts/sparkle/Sparkle/bin/generate_keys -f lightshot-update-key.txt   # import the backup
+build/spm/artifacts/sparkle/Sparkle/bin/generate_keys -p                            # must print SUPublicEDKey
+```
+
+### Back it up
+
+```bash
+build/spm/artifacts/sparkle/Sparkle/bin/generate_keys -x lightshot-update-key.txt   # export the private key
+```
+
+Store the file in a password manager next to the certificate's `.p12`, then delete it; never commit it. Losing the key strands users: every installed copy rejects updates signed with a new key, so each user would have to download the next version by hand once, and `SUPublicEDKey` would change in a reviewed, announced commit.
+
 ## Cutting a release
 
 1. Make sure `main` is green, merged, and pushed; `git checkout main && git pull`.
 2. Optionally write `docs/releases/<version>.md` with a `## Highlights` section (commit it first — the tree must be clean).
 3. `scripts/release.sh <version> --dry-run` and look at `build/release/release-notes.md`; open the DMG.
 4. `scripts/release.sh <version>` — creates and pushes tag `v<version>` and a draft release, then prints its URL.
-5. Review the draft on GitHub and click **Publish release**.
+5. Review the draft on GitHub and click **Publish release**. This is what ships the update: from then on, every installed copy that checks is offered this version.
 
 ## Before the first public release
 
