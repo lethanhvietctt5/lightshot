@@ -189,7 +189,7 @@ private final class SpyUI: CaptureUI {
 
 /// OCR Text is wired so the recording-guard test proves the guard, not a missing recogniser.
 private struct IdleTextRecognizer: TextRecognizer {
-    func recognizeText(in image: CapturedImage) async -> Result<[RecognizedLine], TextRecognitionError> { .success([]) }
+    func recognizeText(in image: CapturedImage) async -> Result<TextRecognition, TextRecognitionError> { .success(TextRecognition()) }
 }
 
 // The capture-side seams are irrelevant here; minimal stubs keep the coordinator constructible.
@@ -247,6 +247,7 @@ private final class StubSettings: SettingsStore {
     var rememberLastRecordingArea = false
     var lastRecordingRegion: CaptureRegion?
     var appearance = AppearancePreference.system
+    var ocrKeepsLineBreaks = true
 }
 
 /// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.

@@ -13,6 +13,7 @@ Everything happens on your machine. No cloud, no accounts, no network — even c
 - **Annotation editor** in one compact toolbar row — arrows, lines, rectangles, ellipses, freehand, text boxes, highlights, auto-numbered step markers, a **Focus** tool that dims everything outside chosen areas, and an adjustable, reversible crop. Full undo/redo.
 - **Redaction** — `blackout` (secure, erases pixels), plus `blur` / `pixelate` (obscure only — **not** safe for secrets).
 - **Auto Redact** (⇧⌘R) — on-device text recognition finds keys, passwords, cards, IBANs, emails, phone numbers, IPs and QR codes and redacts them in the current style. It can miss things; check before sharing.
+- **OCR Text** — drag over any part of the screen to copy its text, recognised on your Mac. A QR code or barcode in the area is decoded and its content copied instead. Choose whether line breaks are kept, and translate the text with macOS's built-in translation (macOS 14.4+).
 - **Finish** — copy to the clipboard, save as PNG/JPEG, drag out, or **pin** the shot so it floats on top while you work.
 - **Open existing images** in the editor.
 

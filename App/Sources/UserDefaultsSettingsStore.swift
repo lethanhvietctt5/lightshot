@@ -29,6 +29,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let rememberLastRecordingArea = "recording.rememberLastArea"
         static let lastRecordingRegion = "recording.lastRegion"   // JSON: CaptureRegion
         static let appearance = "app.appearance"   // "system" | "light" | "dark"
+        static let ocrKeepsLineBreaks = "ocr.keepLineBreaks"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -156,6 +157,12 @@ final class UserDefaultsSettingsStore: SettingsStore {
     var appearance: AppearancePreference {
         get { AppearancePreference(storedValue: defaults.string(forKey: Key.appearance)) }
         set { defaults.set(newValue.rawValue, forKey: Key.appearance) }
+    }
+
+    /// Spec 0012: missing means keep line breaks, as OCR Text always did.
+    var ocrKeepsLineBreaks: Bool {
+        get { defaults.object(forKey: Key.ocrKeepsLineBreaks) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.ocrKeepsLineBreaks) }
     }
 
     /// Backed by the real login-item registration, not a stored flag, so the toggle can't drift from

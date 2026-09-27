@@ -34,6 +34,7 @@ final class SettingsModel {
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
     var captureDelay: TimeInterval { didSet { store.captureDelay = captureDelay } }
     var rememberLastRecordingArea: Bool { didSet { store.rememberLastRecordingArea = rememberLastRecordingArea } }
+    var ocrKeepsLineBreaks: Bool { didSet { store.ocrKeepsLineBreaks = ocrKeepsLineBreaks } }
     /// Applied app-wide the moment it changes (spec 0008, story 14).
     var appearance: AppearancePreference {
         didSet {
@@ -102,6 +103,7 @@ final class SettingsModel {
         self.includeCursor = store.includeCursor
         self.captureDelay = store.captureDelay
         self.rememberLastRecordingArea = store.rememberLastRecordingArea
+        self.ocrKeepsLineBreaks = store.ocrKeepsLineBreaks
         self.appearance = store.appearance
         self.recordingDefaults = store.recordingDefaults
         self.historyRetention = store.historyRetention

@@ -370,7 +370,7 @@ public final class AppCoordinator {
 
     /// OCR Text (spec 0010): the screen freezes (spec 0011), the area overlay runs over the still,
     /// and the text in the selection cut from it is recognised on-device and put on the clipboard
-    /// as plain text. No editor, no history item, no self-timer, and Repeat Last Capture keeps
+    /// as plain text — or, when the selection holds QR codes or barcodes, their content (spec 0012). No editor, no history item, no self-timer, and Repeat Last Capture keeps
     /// pointing at the last screenshot. Nothing readable (or a recognition failure) leaves the
     /// clipboard alone and says so. Freeze failures route exactly as area capture's do. Ignored
     /// while a take is active, so the overlay never lands in the recording.
@@ -380,8 +380,16 @@ public final class AppCoordinator {
         guard let (_, image) = await selectFrozenArea() else { return }
         ui.presentTextCaptureStatus(.reading)
         switch await textRecognizer.recognizeText(in: image) {
-        case let .success(lines):
-            let text = TextCapture.plainText(from: lines)
+        case let .success(recognition):
+            // A code in the area is what the user aimed at (spec 0012): its content wins over the
+            // text around it.
+            let code = TextCapture.codeText(from: recognition.codes)
+            if let kind = TextCapture.firstCodeKind(in: recognition.codes), !code.isEmpty {
+                imageSink.copyText(code)
+                ui.presentTextCaptureStatus(.codeCopied(code, kind))
+                return
+            }
+            let text = TextCapture.plainText(from: recognition.lines, keepingLineBreaks: settings.ocrKeepsLineBreaks)
             if text.isEmpty {
                 ui.presentTextCaptureStatus(.noText)
             } else {
