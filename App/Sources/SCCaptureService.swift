@@ -114,11 +114,13 @@ final class SCCaptureService: CaptureService {
         )
     }
 
+    /// The window level Finder draws the desktop icons at (spec 0013).
+    static var desktopIconLevel: Int { Int(CGWindowLevelForKey(.desktopIconWindow)) }
+
     /// Finder's desktop-icon windows (spec 0013): leaving them out of a display grab shows the
     /// wallpaper beneath. Finder draws the icons in one window per display at this level.
-    static func desktopIconWindows(in windows: [SCWindow]) -> [SCWindow] {
-        let iconLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
-        return windows.filter { $0.windowLayer == iconLevel && $0.owningApplication?.bundleIdentifier == "com.apple.finder" }
+    private static func desktopIconWindows(in windows: [SCWindow]) -> [SCWindow] {
+        windows.filter { $0.windowLayer == desktopIconLevel && $0.owningApplication?.bundleIdentifier == "com.apple.finder" }
     }
 
     /// Whether `window` is a window-capture candidate: on screen, a normal app window (not the menu
@@ -251,15 +253,21 @@ final class SCCaptureService: CaptureService {
     /// by *this* display's backing scale — not the main screen's, which may differ on a
     /// multi-monitor setup or when the captured display isn't the primary one.
     private static func grab(_ display: SCDisplay, excluding: [SCWindow], showsCursor: Bool) async throws -> CGImage {
+        try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(display: display, excludingWindows: excluding),
+            configuration: configuration(for: display, showsCursor: showsCursor)
+        )
+    }
+
+    /// A whole-display grab's configuration at native resolution — shared with the desktop
+    /// cover's wallpaper grab (spec 0013).
+    static func configuration(for display: SCDisplay, showsCursor: Bool) -> SCStreamConfiguration {
         let scale = backingScale(for: display)
         let config = SCStreamConfiguration()
         config.width = Int((CGFloat(display.width) * scale).rounded())
         config.height = Int((CGFloat(display.height) * scale).rounded())
         config.showsCursor = showsCursor
-        return try await SCScreenshotManager.captureImage(
-            contentFilter: SCContentFilter(display: display, excludingWindows: excluding),
-            configuration: config
-        )
+        return config
     }
 
     /// Captures a display's full image, hands it (with the display's backing scale and global

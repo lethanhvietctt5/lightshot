@@ -30,7 +30,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let lastRecordingRegion = "recording.lastRegion"   // JSON: CaptureRegion
         static let appearance = "app.appearance"   // "system" | "light" | "dark"
         static let ocrKeepsLineBreaks = "ocr.keepLineBreaks"
-        static let hideDesktopIcons = "capture.hideDesktopIcons"
+        static let hideDesktopIcons = "app.hideDesktopIcons"   // screenshots and recordings
     }
 
     init(defaults: UserDefaults = .standard) {

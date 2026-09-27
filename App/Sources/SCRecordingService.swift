@@ -53,6 +53,8 @@ actor SCRecordingService: RecordingService {
     private var sleepAssertion: IOPMAssertionID = 0
 
     /// Hides the desktop icons on screen for the length of a take that asks for it (spec 0013).
+    /// Every way a take ends — `stop`, `cancel`, a stream failure, a failed start — awaits its
+    /// `hide()`.
     private let desktopCover: DesktopCover
 
     init(
@@ -284,6 +286,9 @@ actor SCRecordingService: RecordingService {
             // file itself is unusable.
             log.error("stopCapture failed: \(error.localizedDescription, privacy: .public)")
         }
+        // The stream is down: the icons can come back (spec 0013). Awaited, so a take started
+        // straight after can't have its cover taken down by this one.
+        await desktopCover.hide()
         let takeData = self.takeData
         do {
             let movie = try await writer.finish(at: stopTime, on: queue)
@@ -323,6 +328,7 @@ actor SCRecordingService: RecordingService {
         microphone?.stop()
         takeData?.cancel()
         try? await stream?.stopCapture()
+        await desktopCover.hide()
         guard let writer else { return }
         queue.sync { writer.cancel() }
     }
@@ -339,11 +345,12 @@ actor SCRecordingService: RecordingService {
 
     /// The stream reported its own death: drop it and the writer (deleting the partial file) so
     /// the coordinator's follow-up `cancel`/`stop` finds nothing running.
-    private func streamDidFail() {
+    private func streamDidFail() async {
         guard let writer else { return }
         takeData?.cancel()
         queue.sync { writer.cancel() }
         tearDown()
+        await desktopCover.hide()
     }
 
     private func tearDown() {
@@ -360,8 +367,6 @@ actor SCRecordingService: RecordingService {
         writer = nil
         finalURL = nil
         releaseDisplayAwake()
-        // Every way a take ends comes through here, so the icons always come back.
-        Task { @MainActor [desktopCover] in desktopCover.hide() }
     }
 
     // MARK: - Target resolution

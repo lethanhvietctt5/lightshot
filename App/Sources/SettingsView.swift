@@ -192,7 +192,7 @@ private struct GeneralPane: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                Toggle("Hide desktop icons while capturing", isOn: $model.hideDesktopIcons)
+                Toggle("Hide desktop icons in screenshots and recordings", isOn: $model.hideDesktopIcons)
             } header: {
                 Text("Desktop")
             } footer: {

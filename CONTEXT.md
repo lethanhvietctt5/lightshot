@@ -128,5 +128,5 @@ _Avoid_: pause, lock
 ### Hiding clutter
 
 **Desktop cover**:
-Pictures of each display's wallpaper that Lightshot lays over the desktop icons for the length of a recording when Hide desktop icons is on (spec 0013). The take shows them in place of the icons.
+Pictures of each display's wallpaper that Lightshot lays over the desktop icons for the length of a recording when hiding desktop icons (spec 0013). The take shows them in place of the icons.
 _Avoid_: overlay (the selection and recording overlays already use that word)

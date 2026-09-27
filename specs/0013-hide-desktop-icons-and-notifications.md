@@ -1,10 +1,10 @@
-# Spec 0013 — Hide desktop icons while capturing, hide notifications while recording
+# Spec 0013 — Hide desktop icons in screenshots and recordings, hide notifications while recording
 
 **Status:** implemented — see *As built* at the end
 **Linear:** [LIG-71](https://linear.app/light-shot/issue/LIG-71) (label `ready-for-agent`)
 **Platform:** Native macOS (Swift / AppKit + SwiftUI), macOS 14+
 **Scope:** Local-only. Two settings that keep clutter out of captures:
-- **Hide desktop icons while capturing** (General, off by default) leaves the desktop's icons out of screenshots and recordings. During a recording the icons are also hidden on screen, behind a picture of the wallpaper, until the take ends.
+- **Hide desktop icons in screenshots and recordings** (General, off by default) leaves the desktop's icons out of screenshots and recordings. During a recording the icons are also hidden on screen, behind a picture of the wallpaper, until the take ends.
 - **Hide notifications** (Screen Recording → While Recording, off by default) leaves notification banners out of recordings.
 
 Neither changes the user's Finder or Focus settings.
@@ -21,7 +21,7 @@ My desktop is covered in files: downloads, screenshots, half-finished work. Ever
 
 ## Solution
 
-**Settings → General → Desktop** gets **Hide desktop icons while capturing**. With it on:
+**Settings → General → Desktop** gets **Hide desktop icons in screenshots and recordings**. With it on:
 - Screenshots of any kind (Capture Area, Window picks with the frozen screen behind them, Fullscreen, OCR Text) show the wallpaper where the icons are. The frozen screen I select over already shows the wallpaper, so what I see is what I get.
 - A recording hides the icons on screen as soon as it starts: every display shows a picture of its wallpaper where the icons were. The take shows the same wallpaper. The icons come back when the recording stops, is discarded, or fails.
 
@@ -57,7 +57,7 @@ My desktop is covered in files: downloads, screenshots, half-finished work. Ever
 
 ### Modules
 
-- **`SettingsStore.hideDesktopIcons: Bool` (domain core, new).** Stored under `capture.hideDesktopIcons`, missing means `false`. It covers screenshots and recordings.
+- **`SettingsStore.hideDesktopIcons: Bool` (domain core, new).** Stored under `app.hideDesktopIcons`, missing means `false`. It covers screenshots and recordings.
 - **`RecordingDefaults.hideNotifications: Bool` (domain core, new field).** Decoded with `decodeIfPresent`, missing means `false`, so older settings blobs still load.
 - **`RecordingOptions` gains `hideDesktopIcons` and `hideNotifications`.**
   - `resolve(region:output:defaults:overrides:hideDesktopIcons:)` copies `hideNotifications` from the defaults and takes `hideDesktopIcons` as a parameter (default `false`), because it's a general setting and not a recording default.
@@ -67,13 +67,13 @@ My desktop is covered in files: downloads, screenshots, half-finished work. Ever
   - When it's on, every display grab (the freeze stills, fullscreen, and the self-timer area path) also excludes the **desktop icon windows**: `SCWindow`s owned by Finder (`com.apple.finder`) at the desktop-icon window level (`CGWindowLevelForKey(.desktopIconWindow)`). The wallpaper beneath is captured instead.
   - Window grabs are unchanged, because the icon window is never a picker candidate.
 - **Recordings (App, `SCRecordingService`).** The stream filter already excludes Lightshot's own app, so Lightshot windows opened mid-take stay out. A window exclusion can't keep new Finder windows in, so icons are hidden by covering them.
-  - **`DesktopCover` (App, new, main actor).** `show()` grabs each display's wallpaper: the windows below the desktop-icon level, via `SCScreenshotManager` with an including-windows filter. It then puts one borderless, non-activating panel per display at desktop-icon level + 1. Each panel draws that picture, sits above the icons and below every app window, and joins all Spaces. `show()` returns the panels' window IDs. `hide()` removes the panels.
-  - With `hideDesktopIcons` on, `start` shows the cover first. It then builds the display filter excluding Lightshot's own app while **excepting the cover panels**, so the take shows the wallpaper. Every path that ends the stream (`stop`, `cancel`, a stream failure, a failed start) hides the cover.
+  - **`DesktopCover` (App, new, main actor).** Clicks pass through it to the desktop, so desktop menus and widgets keep working; only the icons are hidden. `show()` grabs each display's wallpaper: the windows below the desktop-icon level, via `SCScreenshotManager` with an including-windows filter. It then puts one borderless, non-activating panel per display at desktop-icon level + 1. Each panel draws that picture, sits above the icons and below every app window, and joins all Spaces. `show()` returns the panels' window IDs. `hide()` removes the panels, and wins over a `show()` still in flight. A display whose wallpaper can't be grabbed stays uncovered and is logged; the take goes ahead.
+  - With `hideDesktopIcons` on, `start` shows the cover first. It then builds the display filter excluding Lightshot's own app while **excepting the cover panels**, so the take shows the wallpaper. Every path that ends the stream (`stop`, `cancel`, a stream failure, a failed start) **awaits** the cover's `hide()` once the stream is down, so a take started straight after (Restart) can't lose its own cover to the previous take's teardown.
   - With `hideNotifications` on, the Notification Center app (`com.apple.notificationcenterui`) is added to the excluded applications.
 
 ### Settings
 
-- **General:** a new **Desktop** section with the toggle **Hide desktop icons while capturing**. Footer: "Screenshots and recordings show your wallpaper instead of desktop icons. While recording, the icons are hidden on your screen too, until the recording ends."
+- **General:** a new **Desktop** section with the toggle **Hide desktop icons in screenshots and recordings**. Footer: "Screenshots and recordings show your wallpaper instead of desktop icons. While recording, the icons are hidden on your screen too, until the recording ends."
 - **Screen Recording → While Recording:** the toggle **Hide notifications**, with help text "Notification banners are left out of the recording. They still appear on your screen."
 
 ## Testing Decisions
@@ -116,5 +116,10 @@ My desktop is covered in files: downloads, screenshots, half-finished work. Ever
   - The test file was removed afterwards.
 - **Couldn't be seen end to end on this Mac:** app windows filled the screen, so the desktop wasn't visible in a live frame. The layer composites above stand in for it.
 - **Notification exclusion** was checked as far as the filter: `com.apple.notificationcenterui` is a shareable application here, and it is added to the excluded apps. No banner was posted into a live take.
-- **The cover takes desktop clicks** without activating Lightshot, so a hidden icon can't be dragged by accident while recording.
+- **Self-review fixes:**
+  - The cover now awaits its teardown on every end path. A fire-and-forget hide could have removed a Restart's new cover.
+  - The cover lets clicks through, where the first build swallowed them and blocked desktop menus and widgets.
+  - Displays left uncovered are logged.
+  - The key and label say "screenshots and recordings", because the glossary keeps "capture" for screenshots.
+  - `UserDefaultsSettingsStore` persistence isn't unit-tested: `App/` has no test target (AGENTS.md). The key is read in exactly two places, the store and the capture service's `storedHideDesktopIcons`.
 - **DEBUG:** `-previewDesktopCover <seconds>` puts the cover up without recording.
