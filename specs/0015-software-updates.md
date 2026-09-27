@@ -123,7 +123,7 @@ Settings → General gets an **Updates** section:
   5. the app.
 
   Anything nested and not on the list still fails the build. Hardened Runtime stays off (spec 0002); Sparkle doesn't need it.
-- **Verify.** The designated requirement is checked as before (the app's own requirement is unchanged). After packaging, `sign_update --verify` checks the DMG against the keychain key. That key is tied to the committed one because preflight requires it to equal `SUPublicEDKey`, and the verify step requires the built app's `SUPublicEDKey` to equal it too, and `appcast.xml` must carry the expected version, build number, minimum system version and a signature that verifies.
+- **Verify.** The designated requirement is checked as before (the app's own requirement is unchanged). After packaging, `sign_update --verify` checks the DMG against the keychain key, which preflight and verify tie to the committed key (both require it to equal `SUPublicEDKey`, in the source and in the built app). `appcast.xml` must carry the expected version, build number, minimum system version and a signature that verifies.
 - **Package** writes `build/release/appcast.xml` next to the DMG. **Publish** uploads both to the draft release. `--dry-run` produces and verifies both and uploads nothing.
 
 ### App side
@@ -179,7 +179,7 @@ Settings → General gets an **Updates** section:
   - True during a GIF conversion and while the keep-the-video question is open, and false once the result is routed.
   - True while a Studio export is being filed into history, and false after it's filed.
 - **Release script (`scripts/release.sh <v> --dry-run`).** Prior art: the designated-requirement pin in spec 0002.
-  - A green dry run leaves `build/release/appcast.xml` and the DMG. `sign_update --verify` passes against the public key read from the built app's `Info.plist`.
+  - A green dry run leaves `build/release/appcast.xml` and the DMG. `sign_update --verify` passes against the keychain key, which equals the built app's `SUPublicEDKey`.
   - The appcast item's `sparkle:version`, `shortVersionString`, `minimumSystemVersion`, length and enclosure URL (`…/releases/download/v<v>/Lightshot-<v>.dmg`) match.
   - With the key absent from the keychain (or `SUPublicEDKey` altered in a scratch branch), preflight fails before building.
   - An unexpected nested Mach-O (not a Sparkle helper) still fails the sign step.
