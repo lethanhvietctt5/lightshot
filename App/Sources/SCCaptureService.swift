@@ -72,7 +72,7 @@ final class SCCaptureService: CaptureService {
     /// images come from `freezeWindowImages()`, which Capture Window starts at the same moment.
     ///
     /// Lightshot's own windows above the floating level are left out of the stills: a previous
-    /// overlay still closing, the post-capture toolbar, the OCR notice, the status menu. Pins
+    /// overlay still closing, Quick Access cards, the OCR notice, the status menu. Pins
     /// (floating) and editor windows stay in, as they do in a live capture.
     ///
     /// Stills are uncompressed TIFF, not PNG: they only live for one selection, and a 5K PNG

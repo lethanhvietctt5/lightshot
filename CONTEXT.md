@@ -125,6 +125,15 @@ _Avoid_: snapshot, freeze-frame image
 Taking the frozen screen and showing it under the selection overlay.
 _Avoid_: pause, lock
 
+### Quick Access
+
+**Quick Access card**:
+A screenshot waiting in a corner of the screen for an action: copy, save, annotate, pin, drag out or close (spec 0014). Shown instead of the editor when After Capture is Show Quick Access Overlay.
+_Avoid_: popup, thumbnail, toast, post-capture toolbar (the surface it replaced)
+
+**Card stack**:
+The Quick Access cards on screen, newest at the bottom.
+
 ### Hiding clutter
 
 **Desktop cover**:

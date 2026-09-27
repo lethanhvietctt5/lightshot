@@ -31,6 +31,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let appearance = "app.appearance"   // "system" | "light" | "dark"
         static let ocrKeepsLineBreaks = "ocr.keepLineBreaks"
         static let hideDesktopIcons = "app.hideDesktopIcons"   // screenshots and recordings
+        static let quickAccess = "quickAccess.settings"   // JSON: QuickAccessSettings
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -169,6 +170,21 @@ final class UserDefaultsSettingsStore: SettingsStore {
     var hideDesktopIcons: Bool {
         get { defaults.bool(forKey: Key.hideDesktopIcons) }   // defaults to false (spec 0013)
         set { defaults.set(newValue, forKey: Key.hideDesktopIcons) }
+    }
+
+    /// Spec 0014: missing or unreadable data is the defaults (bottom left, never auto-close).
+    var quickAccess: QuickAccessSettings {
+        get {
+            guard let data = defaults.data(forKey: Key.quickAccess),
+                  let stored = try? JSONDecoder().decode(QuickAccessSettings.self, from: data)
+            else { return QuickAccessSettings() }
+            return stored
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Key.quickAccess)
+            }
+        }
     }
 
     /// Backed by the real login-item registration, not a stored flag, so the toggle can't drift from

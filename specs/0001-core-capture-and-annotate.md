@@ -47,7 +47,7 @@ machine.
 11. As a user, I want the app to capture at native Retina resolution, so that my screenshots are crisp.
 12. As a user, I want to choose whether the mouse cursor is included in the capture, so that I can point at things or keep the shot clean.
 13. As a user, I want a captured image to open immediately in the editor (configurable), so that I don't have to hunt for the file first.
-14. As a user, I want a post-capture toolbar at the selection offering quick actions (annotate, copy, save, pin, discard), so that common outcomes are one click away.
+14. As a user, I want a post-capture toolbar at the selection offering quick actions (annotate, copy, save, pin, discard), so that common outcomes are one click away. *Superseded by spec 0014: Quick Access cards in a corner of the screen replace the toolbar.*
 
 ### Annotation editor
 

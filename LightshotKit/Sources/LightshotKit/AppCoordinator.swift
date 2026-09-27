@@ -9,10 +9,10 @@ import Foundation
 public protocol CaptureUI: AnyObject {
     /// Open the annotation editor showing the captured image.
     func openEditor(with image: CapturedImage)
-    /// Present the post-capture toolbar at the selection (story 14): quick actions — annotate,
-    /// copy, discard — over the freshly captured image. A separate surface shown *after* the image
-    /// exists, positioned using `region`; not part of the pre-capture selection overlay.
-    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion)
+    /// Show the screenshot as a Quick Access card in a corner of the screen (spec 0014, which
+    /// supersedes story 14's toolbar at the selection): copy, save, annotate, pin, drag out or
+    /// close it. Shown *after* the image exists; not part of the pre-capture selection overlay.
+    func presentQuickAccess(for image: CapturedImage)
     /// Show the permission recovery path for `kind`: a message naming the grant plus a deep link to
     /// its System Settings pane. Screenshots always pass `.screenRecording`; recording passes
     /// whichever grant its feature lacked (spec 0006, story 41).
@@ -179,7 +179,7 @@ public final class AppCoordinator {
         switch await captureService.captureFullscreen(displayID: displayID) {
         case let .success(image):
             record(image, source: .fullscreen)
-            ui.openEditor(with: image)
+            presentCapture(image)
         case .failure(.permissionDenied):
             ui.presentPermissionDenied(.screenRecording)
         case .failure(.userCancelled):
@@ -194,7 +194,7 @@ public final class AppCoordinator {
     /// taken, the overlay runs over it to resolve a `CaptureRegion` (drag a rect, Escape to cancel),
     /// and the result is that still cut to the selection — what the user saw is what they get, with
     /// no second, live capture. A cancelled overlay (`nil`) is a silent no-op. On success the capture
-    /// opens in the editor (or the post-capture toolbar at the selection, per `openInEditor`);
+    /// opens in the editor (or a Quick Access card, per `openInEditor`);
     /// failures route as every capture's do — `permissionDenied` to recovery, `userCancelled`
     /// silent, the rest to a distinct message — so a capture never lands the user in a blank editor.
     ///
@@ -209,7 +209,7 @@ public final class AppCoordinator {
         }
         guard let (region, image) = await selectFrozenArea() else { return }
         record(image, source: .area)
-        presentCapture(image, at: region)
+        presentCapture(image)
     }
 
     /// The self-timer area path: overlay over the live screen, the wait, then a live capture.
@@ -221,7 +221,7 @@ public final class AppCoordinator {
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .area)
-            presentCapture(image, at: region)
+            presentCapture(image)
         case let .failure(error):
             routeCaptureFailure(error)
         }
@@ -265,14 +265,15 @@ public final class AppCoordinator {
         }
     }
 
-    /// Where a successful area/window capture lands (story 13, LIG-23): straight in the editor by
-    /// default, or the post-capture toolbar at the selection when the user turned `openInEditor`
-    /// off. Read live from settings, so a change takes effect on the next capture.
-    private func presentCapture(_ image: CapturedImage, at region: CaptureRegion) {
+    /// Where a successful screenshot lands (story 13, LIG-23; spec 0014): straight in the editor by
+    /// default, or a Quick Access card when the user turned `openInEditor` off. Area, window and
+    /// fullscreen all come here. Read live from settings, so a change takes effect on the next
+    /// capture.
+    private func presentCapture(_ image: CapturedImage) {
         if settings.openInEditor {
             ui.openEditor(with: image)
         } else {
-            ui.presentPostCaptureToolbar(for: image, at: region)
+            ui.presentQuickAccess(for: image)
         }
     }
 
@@ -309,9 +310,9 @@ public final class AppCoordinator {
     /// hover-highlights windows and resolves the clicked one to a `.window` `CaptureRegion`. A
     /// window with no frozen image, and every window under a self-timer, is captured live by
     /// `CaptureService.captureRegion(_:)` instead. Escape (`nil`) is a silent no-op with no capture;
-    /// success records the capture in history and opens it in the editor (or the toolbar at the
-    /// window, per `openInEditor`); failures route exactly as the other paths do, so a capture never
-    /// lands the user in a blank editor.
+    /// success records the capture in history and opens it in the editor (or a Quick Access card,
+    /// per `openInEditor`); failures route exactly as the other paths do, so a capture never lands
+    /// the user in a blank editor.
     public func captureWindow() async {
         lastCapture = .window
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
@@ -319,7 +320,7 @@ public final class AppCoordinator {
         guard let (region, frozenImage) = await selectFrozenWindow(withImages: !isTimed) else { return }
         if let frozenImage {
             record(frozenImage, source: .window)
-            presentCapture(frozenImage, at: region)
+            presentCapture(frozenImage)
             return
         }
         // Self-timer (story 10): delay after the window is picked, before it is captured. Also the
@@ -328,7 +329,7 @@ public final class AppCoordinator {
         switch await captureService.captureRegion(region) {
         case let .success(image):
             record(image, source: .window)
-            presentCapture(image, at: region)
+            presentCapture(image)
         case let .failure(error):
             routeCaptureFailure(error)
         }
