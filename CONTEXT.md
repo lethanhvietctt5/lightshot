@@ -111,6 +111,10 @@ _Avoid_: Capture Text (CleanShot's name), text grab, scan
 **Text capture**:
 One run of OCR Text, from selection to clipboard. Unlike a capture, it produces no image.
 
+**Code capture**:
+A text capture whose selection held a QR code or barcode. The code's content is copied instead of the text around it (spec 0012).
+_Avoid_: scan, QR read
+
 ### Freeze Screen
 
 **Frozen screen**:

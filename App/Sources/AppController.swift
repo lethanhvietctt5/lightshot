@@ -777,6 +777,8 @@ final class AppController: NSObject, CaptureUI {
         case "reading": presentTextCaptureStatus(.reading)
         case "none": presentTextCaptureStatus(.noText)
         case "failed": presentTextCaptureStatus(.failed("Text recognition failed: the request was cancelled."))
+        case "qr": presentTextCaptureStatus(.codeCopied("https://example.com/wifi-setup", .qrCode))
+        case "barcode": presentTextCaptureStatus(.codeCopied("4006381333931", .barcode))
         default: presentTextCaptureStatus(.copied("The quick brown fox jumps over the lazy dog and keeps running past the fence\nsecond line"))
         }
     }

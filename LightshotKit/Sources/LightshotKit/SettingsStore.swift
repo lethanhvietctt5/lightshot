@@ -49,6 +49,10 @@ public protocol SettingsStore: AnyObject {
 
     /// How Lightshot's chrome looks (spec 0008): follow macOS, or pin Light or Dark.
     var appearance: AppearancePreference { get set }
+
+    /// OCR Text keeps one line per row (`true`, the default) or joins the rows into one paragraph
+    /// (spec 0012). Read live by `AppCoordinator.captureText()`.
+    var ocrKeepsLineBreaks: Bool { get set }
 }
 
 public extension SettingsStore {

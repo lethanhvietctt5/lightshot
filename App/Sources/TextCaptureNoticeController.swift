@@ -3,14 +3,20 @@ import SwiftUI
 import LightshotKit
 
 /// The notice for an OCR Text run (spec 0010): "Reading text…" while recognition runs, then "Text
-/// copied" with the first line, "No text found", or the recognition error, in a small dark HUD near
-/// the bottom of the screen under the pointer (where the selection was just made). It never takes
-/// focus or the mouse, so the user can paste straight away, and a result fades on its own. Each
-/// status replaces the one before.
+/// copied" with the first line, "QR code copied" / "Barcode copied" (spec 0012), "No text found", or
+/// the recognition error, in a small dark HUD near the bottom of the screen under the pointer (where
+/// the selection was just made). It never takes focus, so the user can paste straight away, and a
+/// result fades on its own. Each status replaces the one before.
+///
+/// "Text copied" carries a Translate button on macOS 14.4+ (spec 0012): only then does the HUD take
+/// the mouse, and it stays while the pointer is over it. Every other state ignores the mouse.
 @MainActor
 final class TextCaptureNoticeController {
     private var panel: NSPanel?
     private var pending: Task<Void, Never>?
+    /// The shown notice's time on screen, restarted when the pointer leaves it.
+    private var duration: Double?
+    private var translateWindow: AnyObject?
 
     func show(_ status: TextCaptureStatus) {
         dismiss()
@@ -29,7 +35,15 @@ final class TextCaptureNoticeController {
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-        let host = NSHostingView(rootView: NoticeView(notice: notice))
+        var translate: (() -> Void)?
+        if #available(macOS 14.4, *), let text = notice.translatable {
+            translate = { [weak self] in self?.openTranslation(of: text) }
+        }
+        let host = NSHostingView(rootView: NoticeView(
+            notice: notice,
+            translate: translate,
+            hovering: { [weak self] inside in inside ? self?.holdOpen() : self?.scheduleFadeOut() }
+        ))
         let size = host.fittingSize
         let frame = NSRect(
             x: visible.midX - size.width / 2,
@@ -42,20 +56,39 @@ final class TextCaptureNoticeController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.level = .statusBar
-        panel.ignoresMouseEvents = true
+        panel.ignoresMouseEvents = translate == nil
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.contentView = host
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { $0.duration = 0.15; panel.animator().alphaValue = 1 }
         self.panel = panel
+        duration = translate == nil ? notice.duration : notice.duration.map { max($0, 4) }
+        scheduleFadeOut()
+    }
 
-        guard let duration = notice.duration else { return }
+    private func scheduleFadeOut() {
+        pending?.cancel()
+        guard panel != nil, let duration else { return }
         pending = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
             guard !Task.isCancelled else { return }
             self?.fadeOut()
         }
+    }
+
+    /// The pointer is over the notice: keep it until the pointer leaves.
+    private func holdOpen() {
+        pending?.cancel()
+        pending = nil
+    }
+
+    @available(macOS 14.4, *)
+    private func openTranslation(of text: String) {
+        dismiss()
+        let controller = translateWindow as? TranslateWindowController ?? TranslateWindowController()
+        translateWindow = controller
+        controller.show(text)
     }
 
     private func fadeOut() {
@@ -69,6 +102,7 @@ final class TextCaptureNoticeController {
     private func dismiss() {
         pending?.cancel()
         pending = nil
+        duration = nil
         panel?.orderOut(nil)
         panel = nil
     }
@@ -82,6 +116,8 @@ private struct Notice {
     /// Seconds on screen; an error stays a little longer so it can be read. `nil` stays until the
     /// next status replaces it.
     var duration: Double?
+    /// The copied text, offered to Translate; `nil` for every other state (a code is never offered).
+    var translatable: String?
 
     init(_ status: TextCaptureStatus) {
         switch status {
@@ -93,6 +129,12 @@ private struct Notice {
         case let .copied(text):
             symbol = "doc.on.clipboard"
             title = "Text copied"
+            detail = Self.preview(of: text)
+            duration = 2
+            translatable = text
+        case let .codeCopied(text, kind):
+            symbol = kind == .qrCode ? "qrcode" : "barcode"
+            title = kind == .qrCode ? "QR code copied" : "Barcode copied"
             detail = Self.preview(of: text)
             duration = 2
         case .noText:
@@ -118,6 +160,9 @@ private struct Notice {
 /// Dark in either appearance (spec 0008), like the countdown: it is read against the screen.
 private struct NoticeView: View {
     let notice: Notice
+    /// Opens the Translate window; `nil` hides the button.
+    let translate: (() -> Void)?
+    let hovering: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -134,11 +179,23 @@ private struct NoticeView: View {
                         .frame(maxWidth: 360, alignment: .leading)
                 }
             }
+            if let translate {
+                Button(action: translate) {
+                    Label("Translate", systemImage: "translate")
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(.white.opacity(0.18), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 4)
+            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
         .fixedSize()
+        .onHover(perform: hovering)
     }
 }

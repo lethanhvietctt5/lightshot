@@ -130,13 +130,13 @@ The menu-bar menu gets a new row, **OCR Text**, directly under **Record Screen**
 
 ## Out of Scope
 
-- A "without line breaks" variant or a line-break toggle (CleanShot has both, and we ship line breaks only).
+- A "without line breaks" variant or a line-break toggle (CleanShot has both, and we ship line breaks only). *Added by spec 0012.*
 - Paragraph detection (blank lines between blocks), column detection beyond same-row joining, and preserving indentation or table structure.
 - Rich text, Markdown, or keeping fonts and colours on the clipboard.
 - OCR from inside the annotation editor, on an opened image file, on history items, or on recordings and the Studio.
 - A language picker or custom recognition languages.
-- Detecting URLs, QR codes or barcodes and opening them.
-- Translating the text.
+- Detecting URLs, QR codes or barcodes and opening them. *Spec 0012 decodes and copies codes; opening them stays out of scope.*
+- Translating the text. *Added by spec 0012.*
 - Window or fullscreen OCR. Area only.
 - Saving recognised text to disk or to history.
 - Any change to auto redact's recognition settings.

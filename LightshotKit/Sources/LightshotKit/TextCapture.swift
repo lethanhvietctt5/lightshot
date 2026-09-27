@@ -10,9 +10,41 @@ import Foundation
 /// fake so the coordinator's routing runs without a screen.
 @MainActor
 public protocol TextRecognizer {
-    /// The recognised lines, in image pixel coordinates (top-left origin), or why recognition failed.
-    /// No text at all is a success with no lines, not a failure.
-    func recognizeText(in image: CapturedImage) async -> Result<[RecognizedLine], TextRecognitionError>
+    /// The recognised lines and QR codes / barcodes (spec 0012), in image pixel coordinates
+    /// (top-left origin), or why recognition failed. Nothing readable is a success with no lines
+    /// and no codes, not a failure.
+    func recognizeText(in image: CapturedImage) async -> Result<TextRecognition, TextRecognitionError>
+}
+
+/// What one recognition pass found in a captured area: its lines of text and its codes.
+public struct TextRecognition: Equatable, Sendable {
+    public var lines: [RecognizedLine]
+    public var codes: [RecognizedCode]
+
+    public init(lines: [RecognizedLine] = [], codes: [RecognizedCode] = []) {
+        self.lines = lines
+        self.codes = codes
+    }
+}
+
+/// A QR code or barcode decoded from a captured area (spec 0012). Only codes whose content is text
+/// are reported; binary payloads never reach the core.
+public struct RecognizedCode: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
+        case qrCode
+        case barcode
+    }
+
+    public var payload: String
+    public var kind: Kind
+    /// In image pixels, top-left origin.
+    public var box: Rect
+
+    public init(payload: String, kind: Kind, box: Rect) {
+        self.payload = payload
+        self.kind = kind
+        self.box = box
+    }
 }
 
 /// Recognition itself failed — distinct from an area with nothing readable in it.
@@ -32,6 +64,9 @@ public enum TextCaptureStatus: Equatable, Sendable {
     case reading
     /// This text is now on the clipboard.
     case copied(String)
+    /// The content of the area's QR codes or barcodes is now on the clipboard (spec 0012); the kind
+    /// is the first code's, in reading order.
+    case codeCopied(String, RecognizedCode.Kind)
     /// Nothing readable was found; the clipboard was left alone.
     case noText
     /// Recognition failed with this message; the clipboard was left alone.
@@ -43,26 +78,52 @@ public enum TextCapture {
     /// lines side by side on a row joined with a space, left to right. Two lines share a row when
     /// their vertical extents overlap by at least half the shorter one's height. The result is
     /// trimmed, so an area with only whitespace yields `""`. Lines without a box are dropped.
-    public static func plainText(from lines: [RecognizedLine]) -> String {
-        let placed = lines
-            .compactMap { line in line.box.map { (text: line.text, box: $0) } }
-            .sorted { $0.box.minY < $1.box.minY }
+    ///
+    /// With `keepingLineBreaks` off (spec 0012) the rows are joined with a space instead, into one
+    /// paragraph.
+    public static func plainText(from lines: [RecognizedLine], keepingLineBreaks: Bool = true) -> String {
+        let placed = lines.compactMap { line in line.box.map { (text: line.text, box: $0) } }
+        return readingOrder(placed, box: \.box)
+            .map { row in row.map(\.text).joined(separator: " ") }
+            .joined(separator: keepingLineBreaks ? "\n" : " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
-        // Each row is anchored on its first (topmost) line, so a run of slightly skewed lines
-        // can't chain into one another down the page.
-        var rows: [(anchor: Rect, lines: [(text: String, box: Rect)])] = []
-        for line in placed {
-            if let last = rows.indices.last, sharesRow(line.box, rows[last].anchor) {
-                rows[last].lines.append(line)
+    /// The content of the area's codes (spec 0012), one per line in the same reading order as text.
+    /// Blank payloads and exact repeats of an earlier one are dropped; the rest are copied as
+    /// decoded, untrimmed, so a multi-line payload keeps its lines. `""` when nothing is left.
+    public static func codeText(from codes: [RecognizedCode]) -> String {
+        var seen = Set<String>()
+        return readable(codes)
+            .filter { seen.insert($0.payload).inserted }
+            .map(\.payload)
+            .joined(separator: "\n")
+    }
+
+    /// The kind of the first code `codeText` copies, for the notice's wording; `nil` when it copies
+    /// nothing.
+    public static func firstCodeKind(in codes: [RecognizedCode]) -> RecognizedCode.Kind? {
+        readable(codes).first?.kind
+    }
+
+    private static func readable(_ codes: [RecognizedCode]) -> [RecognizedCode] {
+        readingOrder(codes.filter { !$0.payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }, box: \.box)
+            .flatMap { $0 }
+    }
+
+    /// Items grouped into rows top to bottom, each row left to right. Each row is anchored on its
+    /// first (topmost) item, so a run of slightly skewed lines can't chain into one another down
+    /// the page.
+    private static func readingOrder<Item>(_ items: [Item], box: (Item) -> Rect) -> [[Item]] {
+        var rows: [(anchor: Rect, items: [Item])] = []
+        for item in items.sorted(by: { box($0).minY < box($1).minY }) {
+            if let last = rows.indices.last, sharesRow(box(item), rows[last].anchor) {
+                rows[last].items.append(item)
             } else {
-                rows.append((line.box, [line]))
+                rows.append((box(item), [item]))
             }
         }
-
-        return rows
-            .map { row in row.lines.sorted { $0.box.minX < $1.box.minX }.map(\.text).joined(separator: " ") }
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return rows.map { row in row.items.sorted { box($0).minX < box($1).minX } }
     }
 
     private static func sharesRow(_ a: Rect, _ b: Rect) -> Bool {

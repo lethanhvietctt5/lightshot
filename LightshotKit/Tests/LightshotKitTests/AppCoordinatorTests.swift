@@ -144,6 +144,7 @@ private final class StubSettings: SettingsStore {
     var rememberLastRecordingArea = false
     var lastRecordingRegion: CaptureRegion?
     var appearance = AppearancePreference.system
+    var ocrKeepsLineBreaks = true
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the
@@ -194,10 +195,12 @@ private final class SpyUI: CaptureUI {
 /// Hands back canned recognised lines (or a failure) and records which images it was asked to read.
 @MainActor
 private final class SpyTextRecognizer: TextRecognizer {
-    var result: Result<[RecognizedLine], TextRecognitionError>
+    var result: Result<TextRecognition, TextRecognitionError>
     private(set) var recognized: [CapturedImage] = []
-    init(_ result: Result<[RecognizedLine], TextRecognitionError>) { self.result = result }
-    func recognizeText(in image: CapturedImage) async -> Result<[RecognizedLine], TextRecognitionError> {
+    init(_ result: Result<[RecognizedLine], TextRecognitionError>, codes: [RecognizedCode] = []) {
+        self.result = result.map { TextRecognition(lines: $0, codes: codes) }
+    }
+    func recognizeText(in image: CapturedImage) async -> Result<TextRecognition, TextRecognitionError> {
         recognized.append(image)
         return result
     }
@@ -1377,11 +1380,12 @@ private struct TextCaptureHarness {
         status: CaptureAuthorizationStatus = .authorized,
         requestResult: CaptureAuthorizationStatus = .authorized,
         region: CaptureRegion? = sampleRegion(),
-        recognition: Result<[RecognizedLine], TextRecognitionError> = .success([])
+        recognition: Result<[RecognizedLine], TextRecognitionError> = .success([]),
+        codes: [RecognizedCode] = []
     ) {
         self.capture = StubCaptureService(capture, status: status, requestResult: requestResult)
         overlay = StubOverlay(region: region)
-        recognizer = SpyTextRecognizer(recognition)
+        recognizer = SpyTextRecognizer(recognition, codes: codes)
         let delays = self.delays
         coordinator = AppCoordinator(
             captureService: self.capture,
@@ -1413,6 +1417,71 @@ private struct TextCaptureHarness {
     #expect(h.ui.openedImages.isEmpty)                         // no editor
     #expect(h.ui.toolbars.isEmpty)                             // no post-capture toolbar
     #expect(h.sink.copied.isEmpty)                             // no image on the clipboard
+}
+
+// MARK: - OCR Text extras (spec 0012)
+
+private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qrCode, y: Double = 0) -> RecognizedCode {
+    RecognizedCode(payload: payload, kind: kind, box: Rect(x: 0, y: y, width: 100, height: 100))
+}
+
+@MainActor
+@Test func captureTextCopiesACodeInsteadOfTheTextAroundIt() async {
+    let h = TextCaptureHarness(
+        recognition: .success([recognizedLine("Scan to join Wi-Fi", y: 200)]),
+        codes: [recognizedCode("https://example.com/b", y: 300), recognizedCode("https://example.com/a", y: 0)]
+    )
+
+    await h.coordinator.captureText()
+
+    #expect(h.sink.copiedText == ["https://example.com/a\nhttps://example.com/b"])
+    #expect(h.ui.textResults == [.reading, .codeCopied("https://example.com/a\nhttps://example.com/b", .qrCode)])
+}
+
+@MainActor
+@Test func captureTextNamesABarcodeByTheFirstCodesKind() async {
+    let h = TextCaptureHarness(codes: [recognizedCode("4006381333931", .barcode)])
+
+    await h.coordinator.captureText()
+
+    #expect(h.ui.textResults == [.reading, .codeCopied("4006381333931", .barcode)])
+}
+
+@MainActor
+@Test func captureTextFallsBackToTheTextWhenCodesAreBlank() async {
+    let h = TextCaptureHarness(
+        recognition: .success([recognizedLine("caption", y: 0)]),
+        codes: [recognizedCode("  ")]
+    )
+
+    await h.coordinator.captureText()
+
+    #expect(h.sink.copiedText == ["caption"])
+    #expect(h.ui.textResults == [.reading, .copied("caption")])
+}
+
+@MainActor
+@Test func captureTextJoinsRowsWhenLineBreaksAreOff() async {
+    let h = TextCaptureHarness(recognition: .success([
+        recognizedLine("second half.", y: 40),
+        recognizedLine("First half,", y: 0),
+    ]))
+    h.settings.ocrKeepsLineBreaks = false
+
+    await h.coordinator.captureText()
+
+    #expect(h.sink.copiedText == ["First half, second half."])
+    #expect(h.ui.textResults == [.reading, .copied("First half, second half.")])
+}
+
+@MainActor
+@Test func theLineBreakSettingLeavesCodeContentAlone() async {
+    let h = TextCaptureHarness(codes: [recognizedCode("line one\nline two")])
+    h.settings.ocrKeepsLineBreaks = false
+
+    await h.coordinator.captureText()
+
+    #expect(h.sink.copiedText == ["line one\nline two"])
 }
 
 @MainActor

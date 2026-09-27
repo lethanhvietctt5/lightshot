@@ -403,6 +403,14 @@ private struct ScreenshotsPane: View {
                 Text("Tokens: %Y %m %d %H %M %S — e.g. \"Screenshot %Y-%m-%d at %H.%M.%S\".")
                     .foregroundStyle(.secondary)
             }
+            Section {
+                Toggle("Keep line breaks", isOn: $model.ocrKeepsLineBreaks)
+            } header: {
+                Text("OCR Text")
+            } footer: {
+                Text("Off joins the lines into one paragraph. A QR code or barcode in the area is copied instead of the text.")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
