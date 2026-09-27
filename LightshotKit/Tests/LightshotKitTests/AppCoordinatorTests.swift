@@ -1425,6 +1425,16 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
     RecognizedCode(payload: payload, kind: kind, box: Rect(x: 0, y: y, width: 100, height: 100))
 }
 
+/// A text capture puts text on the clipboard and nothing else: no image, no editor, no toolbar.
+/// (The harness has no history store, so nothing can be filed there.)
+@MainActor
+private func expectOnlyTextCopied(_ h: TextCaptureHarness) {
+    #expect(h.sink.copied.isEmpty)
+    #expect(h.sink.written.isEmpty)
+    #expect(h.ui.openedImages.isEmpty)
+    #expect(h.ui.toolbars.isEmpty)
+}
+
 @MainActor
 @Test func captureTextCopiesACodeInsteadOfTheTextAroundIt() async {
     let h = TextCaptureHarness(
@@ -1436,6 +1446,19 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
 
     #expect(h.sink.copiedText == ["https://example.com/a\nhttps://example.com/b"])
     #expect(h.ui.textResults == [.reading, .codeCopied("https://example.com/a\nhttps://example.com/b", .qrCode)])
+    expectOnlyTextCopied(h)
+}
+
+@MainActor
+@Test func captureTextNamesMixedCodesByTheFirstInReadingOrder() async {
+    let h = TextCaptureHarness(codes: [
+        recognizedCode("https://example.com", .qrCode, y: 300),
+        recognizedCode("4006381333931", .barcode, y: 0),
+    ])
+
+    await h.coordinator.captureText()
+
+    #expect(h.ui.textResults == [.reading, .codeCopied("4006381333931\nhttps://example.com", .barcode)])
 }
 
 @MainActor
@@ -1445,6 +1468,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
     await h.coordinator.captureText()
 
     #expect(h.ui.textResults == [.reading, .codeCopied("4006381333931", .barcode)])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1458,6 +1482,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
 
     #expect(h.sink.copiedText == ["caption"])
     #expect(h.ui.textResults == [.reading, .copied("caption")])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1472,6 +1497,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
 
     #expect(h.sink.copiedText == ["First half, second half."])
     #expect(h.ui.textResults == [.reading, .copied("First half, second half.")])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor
@@ -1482,6 +1508,7 @@ private func recognizedCode(_ payload: String, _ kind: RecognizedCode.Kind = .qr
     await h.coordinator.captureText()
 
     #expect(h.sink.copiedText == ["line one\nline two"])
+    expectOnlyTextCopied(h)
 }
 
 @MainActor

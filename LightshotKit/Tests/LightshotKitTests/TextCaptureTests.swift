@@ -89,36 +89,35 @@ private func code(_ payload: String, _ kind: RecognizedCode.Kind = .qrCode, x: D
 }
 
 @Test func codesComeBackInReadingOrderOnePerLine() {
-    let text = TextCapture.codeText(from: [
+    let capture = TextCapture.codeCapture(from: [
         code("bottom", y: 300),
         code("top-right", x: 400, y: 10),
         code("top-left", x: 0, y: 0),
     ])
-    #expect(text == "top-left\ntop-right\nbottom")
+    #expect(capture?.text == "top-left\ntop-right\nbottom")
 }
 
 @Test func duplicateAndBlankPayloadsAreDropped() {
-    let text = TextCapture.codeText(from: [
+    let capture = TextCapture.codeCapture(from: [
         code("https://example.com", y: 0),
         code("   ", y: 150),
         code("https://example.com", .barcode, y: 300),
         code("", y: 450),
     ])
-    #expect(text == "https://example.com")
+    #expect(capture?.text == "https://example.com")
 }
 
 @Test func aMultiLinePayloadIsKeptIntact() {
     let wifi = "WIFI:S:Home;T:WPA;P:secret;;\n"
-    #expect(TextCapture.codeText(from: [code(wifi, y: 0)]) == wifi)
+    #expect(TextCapture.codeCapture(from: [code(wifi, y: 0)])?.text == wifi)
 }
 
-@Test func noCodesIsEmpty() {
-    #expect(TextCapture.codeText(from: []) == "")
+@Test func noReadableCodeIsNoCodeCapture() {
+    #expect(TextCapture.codeCapture(from: []) == nil)
+    #expect(TextCapture.codeCapture(from: [code(" \n", y: 0)]) == nil)
 }
 
 @Test func theFirstCodeInReadingOrderNamesTheKind() {
-    let codes = [code("123", .barcode, y: 0), code("qr", .qrCode, y: 300)]
-    #expect(TextCapture.firstCodeKind(in: codes) == .barcode)
-    #expect(TextCapture.firstCodeKind(in: [code(" ", y: 0), code("qr", y: 300)]) == .qrCode)
-    #expect(TextCapture.firstCodeKind(in: []) == nil)
+    #expect(TextCapture.codeCapture(from: [code("123", .barcode, y: 0), code("qr", .qrCode, y: 300)])?.kind == .barcode)
+    #expect(TextCapture.codeCapture(from: [code(" ", .barcode, y: 0), code("qr", .qrCode, y: 300)])?.kind == .qrCode)
 }

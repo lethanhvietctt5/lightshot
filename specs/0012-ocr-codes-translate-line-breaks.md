@@ -64,17 +64,17 @@ When text was copied, the notice shows a **Translate** button (macOS 14.4 and la
 - **`TextRecognizer` returns a `TextRecognition` (domain core).** `recognizeText(in:)` now returns `Result<TextRecognition, TextRecognitionError>`. `TextRecognition` holds `lines: [RecognizedLine]` and `codes: [RecognizedCode]`. `RecognizedCode` is a new value type: `payload: String`, `kind: .qrCode | .barcode`, `box: Rect` in image pixels, top-left origin. One recogniser call covers both, so the image is decoded once.
 - **Pure assembly, `TextCapture` (domain core):**
   - `plainText(from:keepingLineBreaks:)`: rows as today, joined with `"\n"` when keeping line breaks and `" "` otherwise. The default argument keeps line breaks.
-  - `codeText(from:)`: payloads that aren't empty after trimming, in reading order (the same row rule as lines: sorted by top, a code overlapping the row's anchor by half its height shares the row, left to right within a row), exact duplicates dropped after the first, joined with `"\n"`. Payloads aren't trimmed or altered otherwise.
-- **`TextCaptureStatus.codeCopied(String, RecognizedCode.Kind)` (new case).** The kind is the first code's in reading order.
+  - `codeCapture(from:) -> (text, kind)?`: the payloads that aren't empty after trimming, in reading order (the same row rule as lines: sorted by top, a code overlapping the row's anchor by half its height shares the row, left to right within a row), exact duplicates dropped after the first, joined with `"\n"`, plus the first of them's kind. Payloads aren't trimmed or altered otherwise. `nil` when no payload is left, so the code-wins rule lives in one place.
+- **`TextCaptureStatus.codeCopied(String, RecognizedCode.Kind)` (new case).** The text and kind are `codeCapture`'s.
 - **`AppCoordinator.captureText()` routing, after recognition:**
-  - `codeText` is non-empty → `copyText` once with it, then `.codeCopied(text, kind)`.
+  - `codeCapture` returns a capture → `copyText` once with its text, then `.codeCopied(text, kind)`.
   - Otherwise, as spec 0010, with `plainText(from:keepingLineBreaks: settings.ocrKeepsLineBreaks)`.
 - **`SettingsStore.ocrKeepsLineBreaks: Bool` (new).** Stored under `ocr.keepLineBreaks`, missing means `true`.
 - **Vision recogniser (App).** The same `VNImageRequestHandler` performs the text request (unchanged settings) and a `VNDetectBarcodesRequest` with all supported symbologies. An observation with a `payloadStringValue` becomes a `RecognizedCode`; `.qr` and `.microQR` are `.qrCode` and everything else is `.barcode`. A barcode request failure alone doesn't fail recognition (text still counts).
 - **Notice (App).**
   - `.copied` shows a **Translate** button when `#available(macOS 14.4, *)`. The panel accepts the mouse only in that state, stays about 4 s instead of 2, and its dismissal is paused while the pointer is inside it and restarts on exit. Other states are unchanged and still ignore the mouse.
   - `.codeCopied` reads "QR code copied" / "Barcode copied" with the first line of the content as detail, symbol `qrcode` / `barcode`, 2 s, no button.
-- **Translate window (App, new, thin).** A small titled, non-modal window ("Translate") holding a read-only, selectable, scrolling text view of the recognised text, a **Translate** button and a **Copy** button. It attaches SwiftUI's `translationPresentation(isPresented:text:replacementAction:)` (macOS 14.4+) to the text, shown as soon as the window opens. The replacement action swaps the window's text for the translation. Copy writes the window's current text to the pasteboard as plain text. One window at a time: Translate from a newer notice replaces its text. Closing the window releases it.
+- **Translate window (App, new, thin).** A small titled, non-modal window ("Translate") holding a read-only, selectable, scrolling text view of the recognised text, a **Translate** button and a **Copy** button. It attaches SwiftUI's `translationPresentation(isPresented:text:replacementAction:)` (macOS 14.4+) to the text, shown as soon as the window opens. The replacement action swaps the window's text for the translation. Copy writes the window's current text to the pasteboard as plain text. One window at a time: Translate from a newer notice replaces its text, the window keeps its place and size, and the popover opens again. Closing the window releases it.
 
 ### Settings
 
@@ -85,12 +85,14 @@ When text was copied, the notice shows a **Translate** button (macOS 14.4 and la
 - **What makes a good test:** as in spec 0010, assert the clipboard, the notice statuses and that nothing else happened, through the coordinator's fakes and hand-built lines and codes. Vision, the notice and the Translate window are verified by hand.
 - **`TextCapture` (pure):**
   - Without line breaks, rows join with one space, and side-by-side lines still join with one space.
-  - `codeText` orders codes by row then left to right, drops duplicates and blank payloads, keeps a multi-line payload intact, and returns `""` for no codes.
+  - `codeCapture` orders codes by row then left to right, drops duplicates and blank payloads, keeps a multi-line payload intact, names the first copied code's kind, and returns `nil` when no payload is left.
 - **`AppCoordinator.captureText()`:**
   - A code in the result copies its content (not the text) and presents `.codeCopied` with the first code's kind.
   - Codes with only blank payloads fall back to the text.
   - `ocrKeepsLineBreaks = false` copies the paragraph form; the default keeps lines.
   - The line-break setting doesn't change a code's content.
+  - Mixed kinds are named by the first code in reading order.
+  - Each new case also asserts nothing else happened: no image copied or written, no editor, no toolbar.
   - Existing spec 0010 and 0011 OCR tests keep passing with the new result type.
 - **App side (manual, in the isolated `.verify` build):** run the real recogniser on fixture PNGs (a QR code, an EAN-13 barcode, a QR next to a caption, two QR codes, a paragraph) without the Screen Recording grant; check the notice's code and Translate states with the DEBUG `-previewTextNotice` switch; open the Translate window and translate a sample.
 
@@ -124,4 +126,8 @@ When text was copied, the notice shows a **Translate** button (macOS 14.4 and la
 - **Barcodes are a second `perform` on the same handler**, so a barcode failure can't fail the text.
 - **The system popover also has Copy Translation.** macOS's translation UI shows Replace with Translation and Copy Translation. So the translation can be copied straight from the popover, or put in the window with Replace and copied with the window's Copy. Both were checked in the `.verify` build: Replace swapped the window's text for the Spanish translation.
 - **Notice:** "Text copied" with Translate stayed on screen past 6 s while hovered and faded after the pointer left. "QR code copied" and "Barcode copied" were checked with DEBUG `-previewTextNotice qr|barcode`.
+- **Binary payloads (story 8):** Vision returned `payloadStringValue == nil` for a QR code holding 10 non-UTF-8 bytes (and `"hello"` for a text one), so the recogniser drops it before the core sees it.
+- **Review follow-up:**
+  - The Translate window is reused: a second Translate keeps the window where the user moved it and swaps in the new text. That was checked with DEBUG `-previewTextNotice copiedTwice`, which shows two "Text copied" notices 6 s apart.
+  - The popover opens 150 ms after the window is ordered front. Asked for in the same turn, it has no on-screen view to anchor to and doesn't show.
 - **Not verified live:** a real drag over an on-screen QR code, because the verify build has no Screen Recording grant of its own.

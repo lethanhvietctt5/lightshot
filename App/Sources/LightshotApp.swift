@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.debugShowRecordingFrame(frame, paused: defaults.bool(forKey: "previewPaused"), dims: defaults.bool(forKey: "previewDim"))
         }
         if UserDefaults.standard.string(forKey: "previewDevicePicker") != nil { controller.toggleRecording() }
-        // Development aid (spec 0010): `-previewTextNotice reading|copied|none|failed|qr|barcode` shows the
+        // Development aid (spec 0010): `-previewTextNotice reading|copied|copiedTwice|none|failed|qr|barcode` shows the
         // OCR Text notice without capturing.
         if let notice = UserDefaults.standard.string(forKey: "previewTextNotice") { controller.debugShowTextNotice(notice) }
         // Development aid: `-openStudioProject <folder>` opens a studio project at launch, so the
