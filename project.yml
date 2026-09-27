@@ -21,6 +21,11 @@ settings:
 packages:
   LightshotKit:
     path: LightshotKit
+  # The software updater (spec 0015). App target only; LightshotKit never depends on it. Pinned
+  # exactly so a release build is reproducible; bump deliberately.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 
 targets:
   Lightshot:
@@ -47,3 +52,5 @@ targets:
     dependencies:
       - package: LightshotKit
         product: LightshotKit
+      - package: Sparkle
+        product: Sparkle

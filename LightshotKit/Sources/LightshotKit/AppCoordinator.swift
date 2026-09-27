@@ -442,6 +442,14 @@ public final class AppCoordinator {
     /// row key off.
     public var isRecording: Bool { recordingSession.isActive }
 
+    /// True while there is work an app relaunch would cut off (spec 0015, story 21): a take from
+    /// its start until its result has been routed — including the render, the GIF conversion and
+    /// the keep-the-video question — and any take being filed into history. A software update
+    /// holds its relaunch until this turns false.
+    public var hasWorkInProgress: Bool {
+        isRecording || isStartingRecording || isFinishingTake || gifConversion != nil || isArchiving
+    }
+
     /// Seconds of footage so far, excluding pauses (story 11's timer).
     public var recordingElapsed: TimeInterval { recordingSession.elapsed(at: clock()) }
 
@@ -644,11 +652,15 @@ public final class AppCoordinator {
     private var gifConversion: Task<Void, Error>?
     /// True while a finished take is being filed into history (reading its metadata suspends).
     private var isArchiving = false
+    /// True from the moment a take finishes until its result has been routed (spec 0015).
+    private var isFinishingTake = false
 
     /// A take finished. A GIF take is converted first (stories 37–38): the video is what was
     /// recorded, the GIF is what the user asked for; cancelling offers the video instead. Then
     /// the result is routed by the after-recording setting.
     private func finished(_ take: URL) async {
+        isFinishingTake = true
+        defer { isFinishingTake = false }
         let duration = recordingSession.elapsed(at: clock())
         // Read now: the take's own options (its after-recording choice, its look) outlive the
         // session, which is idle again by the time a render or a GIF conversion ends.

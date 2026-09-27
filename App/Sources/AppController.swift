@@ -141,6 +141,12 @@ final class AppController: NSObject, CaptureUI {
         permissionGate: { [weak self] toggle in await self?.ensurePermission(for: toggle) ?? false }
     )
 
+    /// In-app software updates (spec 0015). The relaunch after an install waits while the
+    /// coordinator has a take or a conversion in flight (story 21).
+    lazy var softwareUpdater = SoftwareUpdater(hasWorkInProgress: { [weak self] in
+        self?.coordinator.hasWorkInProgress ?? false
+    })
+
     /// First-run permission onboarding (LIG-21). The checklist of every permission the app requires,
     /// driven through the pure `PermissionOnboardingModel`. v1 lists only **Screen Recording** — the
     /// Carbon global hotkeys need no Accessibility grant — but it is a list so a future requirement is
@@ -355,7 +361,7 @@ final class AppController: NSObject, CaptureUI {
     func showSettings() {
         let window = settingsWindow ?? makeSettingsWindow()
         if window.contentViewController == nil {
-            let hosting = NSHostingController(rootView: SettingsView(model: settingsModel))
+            let hosting = NSHostingController(rootView: SettingsView(model: settingsModel, updater: softwareUpdater))
             // The pane's name becomes the window title, shown in the toolbar beside the sidebar.
             hosting.sceneBridgingOptions = [.title, .toolbars]
             // The window keeps the size set here; the panes scroll.

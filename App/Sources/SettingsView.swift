@@ -7,6 +7,8 @@ import LightshotKit
 /// projection of `SettingsModel` — every control binds straight to it, and it persists on change.
 struct SettingsView: View {
     @Bindable var model: SettingsModel
+    /// Software updates (spec 0015): Sparkle's own preferences, shown live.
+    @Bindable var updater: SoftwareUpdater
     @State private var pane: SettingsPane = .general
 
     var body: some View {
@@ -20,12 +22,12 @@ struct SettingsView: View {
         } detail: {
             Group {
                 switch pane {
-                case .general: GeneralPane(model: model)
+                case .general: GeneralPane(model: model, updater: updater)
                 case .shortcuts: ShortcutsPane(model: model)
                 case .screenshots: ScreenshotsPane(model: model)
                 case .recording: RecordingPane(model: model)
                 case .advanced: AdvancedPane(model: model)
-                case .about: AboutPane()
+                case .about: AboutPane(updater: updater)
                 }
             }
             .formStyle(.grouped)
@@ -168,12 +170,14 @@ enum AppInfo {
 
 private struct GeneralPane: View {
     @Bindable var model: SettingsModel
+    @Bindable var updater: SoftwareUpdater
 
     var body: some View {
         Form {
             Section("Startup") {
                 Toggle("Launch Lightshot at login", isOn: $model.launchAtLogin)
             }
+            UpdatesSection(updater: updater)
             Section {
                 Picker("Appearance", selection: $model.appearance) {
                     ForEach(AppearancePreference.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -243,6 +247,40 @@ private struct GeneralPane: View {
         if panel.runModal() == .OK, let url = panel.url {
             model.saveLocation = url
         }
+    }
+}
+
+/// Software updates (spec 0015, stories 24–30). The toggles are Sparkle's own preferences, so the
+/// answer to its second-launch question shows here too (story 31).
+private struct UpdatesSection: View {
+    @Bindable var updater: SoftwareUpdater
+
+    var body: some View {
+        Section {
+            Toggle("Check for updates automatically", isOn: $updater.automaticallyChecks)
+            // Sparkle downloads on its own only while it checks on its own (story 28).
+            Toggle("Download and install updates automatically", isOn: $updater.automaticallyInstalls)
+                .disabled(!updater.automaticallyChecks)
+            LabeledContent {
+                Button("Check Now") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            } label: {
+                Text("Last checked")
+                Group {
+                    if let date = updater.lastCheckDate {
+                        Text(date, format: .relative(presentation: .named))
+                    } else {
+                        Text("Never")
+                    }
+                }
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            Text("Lightshot contacts GitHub only to look for new versions. Your screenshots and recordings never leave your Mac. Automatic updates install when you quit Lightshot.")
+                .foregroundStyle(.secondary)
+        }
+        .onAppear { updater.refresh() }
     }
 }
 
@@ -465,6 +503,8 @@ private struct AdvancedPane: View {
 // MARK: - About
 
 private struct AboutPane: View {
+    let updater: SoftwareUpdater
+
     var body: some View {
         VStack(spacing: 10) {
             Image(nsImage: NSApp.applicationIconImage)
@@ -473,6 +513,9 @@ private struct AboutPane: View {
             Text("Lightshot").font(.system(size: 22, weight: .semibold))
             Text("Version \(AppInfo.version) (\(AppInfo.build))")
                 .foregroundStyle(.secondary)
+            // Spec 0015, story 6: check where the version is.
+            Button("Check for Updates…") { updater.checkForUpdates() }
+                .disabled(!updater.canCheckForUpdates)
             Text("Screenshots, annotations and screen recordings that never leave your Mac — no account, no cloud.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)

@@ -20,6 +20,14 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/lethanhvietctt5/lightshot/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Oa9N50tU5nrRf9LWeRTf2jzi+zwBXf8XLtr9JkRfGlo=</string>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSPrincipalClass</key>

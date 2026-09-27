@@ -5,7 +5,8 @@
 #   scripts/release.sh <X.Y.Z> [--dry-run]
 #
 # Steps (spec 0002): preflight → test → build Release (universal) → sign with the one
-# pinned self-signed identity → verify → package DMG → tag + draft release.
+# pinned self-signed identity → verify → package DMG → update feed (spec 0015) → tag +
+# draft release.
 # `--dry-run` runs everything except the tag/release step, so the pipeline can be
 # exercised on any branch without publishing anything.
 #
@@ -44,6 +45,11 @@ cd "$ROOT"
 TAG="v$VERSION"
 BUILD_DIR="build/release"
 IDENTITY_FILE="scripts/release-identity.txt"
+# Swift packages resolve here, outside $BUILD_DIR, so Sparkle's release tools are available
+# before the build and survive its clean.
+SPM_DIR="build/spm"
+SPARKLE_BIN="$SPM_DIR/artifacts/sparkle/Sparkle/bin"
+FEED_URL="https://github.com/$REPO_SLUG/releases/latest/download/appcast.xml"
 NOTES_TEMPLATE="docs/releases/$VERSION.md"
 
 # The maintainer's shell sets GH_HOST to an SSH alias that is not a real API host.
@@ -61,7 +67,7 @@ step "Preflight ($TAG$([[ $DRY_RUN == 1 ]] && echo ', dry run'))"
 
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version must look like X.Y.Z, got '$VERSION'"
 
-for tool in git xcodegen xcodebuild codesign lipo hdiutil shasum gh; do
+for tool in git xcodegen xcodebuild codesign lipo hdiutil shasum gh xmllint; do
   command -v "$tool" >/dev/null 2>&1 || fail "required tool not found: $tool"
 done
 
@@ -93,6 +99,25 @@ fi
 
 gh auth status >/dev/null 2>&1 || fail "gh is not authenticated (run: GH_HOST=github.com gh auth login)"
 
+# The update signing key (spec 0015): Sparkle's EdDSA key in the login keychain signs the DMG
+# for in-app updates, and every installed copy checks it against SUPublicEDKey. A missing or
+# mismatched key would ship an update no user can install.
+mkdir -p build
+xcodegen generate --quiet
+xcodebuild -resolvePackageDependencies -project Lightshot.xcodeproj -scheme "$SCHEME" \
+  -clonedSourcePackagesDirPath "$SPM_DIR" > build/resolve-packages.log 2>&1 \
+  || { tail -n 20 build/resolve-packages.log; fail "could not resolve Swift packages"; }
+for tool in generate_keys sign_update generate_appcast; do
+  [[ -x "$SPARKLE_BIN/$tool" ]] || fail "Sparkle's $tool not found in $SPARKLE_BIN"
+done
+UPDATE_KEY="$("$SPARKLE_BIN/generate_keys" -p 2>/dev/null)" \
+  || fail "update signing key not found in the keychain — see scripts/README.md (update signing key)"
+PLIST_UPDATE_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' App/Resources/Info.plist 2>/dev/null)" \
+  || fail "App/Resources/Info.plist has no SUPublicEDKey"
+[[ "$UPDATE_KEY" == "$PLIST_UPDATE_KEY" ]] \
+  || fail "SUPublicEDKey in Info.plist ($PLIST_UPDATE_KEY) is not the keychain's update signing key ($UPDATE_KEY)"
+note "update signing key matches SUPublicEDKey"
+
 if [[ -f "$IDENTITY_FILE" ]]; then
   EXPECTED_REQUIREMENT="$(tr -d '\n' < "$IDENTITY_FILE")"
   [[ -n "$EXPECTED_REQUIREMENT" ]] || fail "$IDENTITY_FILE is empty"
@@ -119,13 +144,13 @@ step "Test (swift test in LightshotKit/)"
 step "Build Release (arm64 + x86_64)"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
-xcodegen generate --quiet
 xcodebuild \
   -project Lightshot.xcodeproj \
   -scheme "$SCHEME" \
   -configuration Release \
   -destination 'platform=macOS' \
   -derivedDataPath "$BUILD_DIR" \
+  -clonedSourcePackagesDirPath "$SPM_DIR" \
   ARCHS="arm64 x86_64" \
   ONLY_ACTIVE_ARCH=NO \
   MARKETING_VERSION="$VERSION" \
@@ -142,26 +167,45 @@ EXECUTABLE="$APP/Contents/MacOS/Lightshot"
 note "built $APP"
 
 # ---------------------------------------------------------------------------
-# 4. Sign — one explicit codesign on the bundle, no --deep. LightshotKit links
-#    statically and a Release build has no debug dylib, so there must be no
-#    nested Mach-O to sign inside-out; assert that rather than assume it.
+# 4. Sign — inside-out, no --deep. LightshotKit links statically and a Release
+#    build has no debug dylib; the only nested code is Sparkle (spec 0015). Its
+#    helpers are signed with the same identity first, then the framework, then
+#    the app. Any other nested Mach-O fails the build rather than ship unsigned.
 # ---------------------------------------------------------------------------
 step "Sign with '$IDENTITY'"
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+[[ -d "$SPARKLE" ]] || fail "Sparkle.framework is missing from the bundle"
+# A non-sandboxed app never uses Sparkle's XPC services; drop them rather than sign them.
+rm -rf "$SPARKLE/Versions/B/XPCServices" "$SPARKLE/XPCServices"
+SPARKLE_CODE=(
+  "$SPARKLE/Versions/B/Autoupdate"
+  "$SPARKLE/Versions/B/Updater.app"
+  "$SPARKLE"
+)
+ALLOWED_NESTED="$(printf '%s\n' \
+  "$SPARKLE/Versions/B/Sparkle" \
+  "$SPARKLE/Versions/B/Autoupdate" \
+  "$SPARKLE/Versions/B/Updater.app/Contents/MacOS/Updater" | sort)"
 NESTED="$(find "$APP" -type f ! -path "$EXECUTABLE" -print0 \
-  | xargs -0 file --no-pad 2>/dev/null | grep 'Mach-O' | cut -d: -f1 || true)"
-if [[ -n "$NESTED" ]]; then
-  echo "$NESTED"
+  | xargs -0 file --no-pad 2>/dev/null | grep 'Mach-O' | cut -d: -f1 \
+  | sed 's/ (for architecture .*)$//' | sort -u || true)"
+UNEXPECTED="$(comm -23 <(printf '%s\n' "$NESTED") <(printf '%s\n' "$ALLOWED_NESTED") | sed '/^$/d')"
+if [[ -n "$UNEXPECTED" ]]; then
+  echo "$UNEXPECTED"
   fail "unexpected nested Mach-O code in the bundle; it would need signing inside-out first"
 fi
+for code in "${SPARKLE_CODE[@]}"; do
+  codesign --force --sign "$IDENTITY" --timestamp=none "$code"
+done
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
-note "signed"
+note "signed Sparkle's helpers, the framework, then the app"
 
 # ---------------------------------------------------------------------------
 # 5. Verify — signature, pinned designated requirement, both architectures,
 #    version and bundle id. spctl is informational only.
 # ---------------------------------------------------------------------------
 step "Verify"
-codesign --verify --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
+codesign --verify --strict --deep --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
 
 ACTUAL_REQUIREMENT="$(codesign -d -r- "$APP" 2>/dev/null | sed -n 's/^designated => //p')"
 [[ -n "$ACTUAL_REQUIREMENT" ]] || fail "could not read the designated requirement"
@@ -188,6 +232,8 @@ plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST"; }
 [[ "$(plist CFBundleShortVersionString)" == "$VERSION" ]] || fail "Info.plist version is $(plist CFBundleShortVersionString), expected $VERSION"
 [[ "$(plist CFBundleVersion)" == "$BUILD_NUMBER" ]] || fail "Info.plist build is $(plist CFBundleVersion), expected $BUILD_NUMBER"
 [[ "$(plist CFBundleIdentifier)" == "$BUNDLE_ID" ]] || fail "bundle identifier is $(plist CFBundleIdentifier), expected $BUNDLE_ID"
+[[ "$(plist SUPublicEDKey)" == "$UPDATE_KEY" ]] || fail "the built app's SUPublicEDKey is not the update signing key"
+[[ "$(plist SUFeedURL)" == "$FEED_URL" ]] || fail "the built app's SUFeedURL is $(plist SUFeedURL), expected $FEED_URL"
 note "version $VERSION ($BUILD_NUMBER), bundle id $BUNDLE_ID"
 
 if spctl --assess --type execute "$APP" >/dev/null 2>&1; then
@@ -231,7 +277,7 @@ NOTES="$BUILD_DIR/release-notes.md"
 
 **Verify your download (optional):** \`shasum -a 256 ~/Downloads/Lightshot-$VERSION.dmg\` should print the checksum below.
 
-**Updating:** quit Lightshot, download the new DMG, and replace the app in Applications. Every release is signed with the same certificate, so your permissions carry over. You will see the first-launch warning again for each new download.
+**Updating:** Lightshot updates itself: choose **Check for Updates…** in its menu, or turn on automatic checks in **Settings → General → Updates**. Your permissions carry over, and there is no first-launch warning after an in-app update. Versions 0.6.0 and earlier can't update themselves, so install this DMG by hand once: quit Lightshot and replace the app in Applications.
 
 **Uninstalling:** quit Lightshot, delete it from Applications, and run \`tccutil reset All $BUNDLE_ID\`.
 
@@ -247,12 +293,55 @@ NOTES_EOF
 note "release notes: $NOTES"
 
 # ---------------------------------------------------------------------------
+# 6b. Update feed (spec 0015) — appcast.xml for this version alone, signed with
+#     the update signing key, uploaded next to the DMG. Installed copies read it
+#     from $FEED_URL, which only moves when the draft is published.
+# ---------------------------------------------------------------------------
+step "Update feed"
+FEED_DIR="$BUILD_DIR/feed"
+rm -rf "$FEED_DIR"
+mkdir -p "$FEED_DIR"
+cp "$DMG" "$FEED_DIR/"
+RELEASE_PAGE="https://github.com/$REPO_SLUG/releases/tag/$TAG"
+if [[ -f "$NOTES_TEMPLATE" ]]; then
+  cp "$NOTES_TEMPLATE" "$FEED_DIR/Lightshot-$VERSION.md"
+else
+  printf '[See the release page](%s) for what changed.\n' "$RELEASE_PAGE" > "$FEED_DIR/Lightshot-$VERSION.md"
+fi
+"$SPARKLE_BIN/generate_appcast" \
+  --download-url-prefix "https://github.com/$REPO_SLUG/releases/download/$TAG/" \
+  --full-release-notes-url "$RELEASE_PAGE" \
+  --embed-release-notes \
+  --maximum-deltas 0 \
+  "$FEED_DIR" 2>&1 | grep -v 'deprecated' | sed 's/^/    /'
+APPCAST="$BUILD_DIR/appcast.xml"
+mv "$FEED_DIR/appcast.xml" "$APPCAST"
+
+feed() { xmllint --xpath "string($1)" "$APPCAST"; }
+ITEM='//*[local-name()="item"]'
+ENCLOSURE="$ITEM/*[local-name()=\"enclosure\"]"
+[[ "$(xmllint --xpath "count($ITEM)" "$APPCAST")" == 1 ]] || fail "the update feed should describe exactly one version"
+[[ "$(feed "$ITEM/*[local-name()=\"version\"]")" == "$BUILD_NUMBER" ]] || fail "feed build number is not $BUILD_NUMBER"
+[[ "$(feed "$ITEM/*[local-name()=\"shortVersionString\"]")" == "$VERSION" ]] || fail "feed version is not $VERSION"
+[[ "$(feed "$ITEM/*[local-name()=\"minimumSystemVersion\"]")" == "14.0" ]] || fail "feed minimum macOS is not 14.0"
+[[ -z "$(feed "$ITEM/*[local-name()=\"hardwareRequirements\"]")" ]] || fail "feed restricts the hardware; the build should be universal"
+[[ "$(feed "$ENCLOSURE/@url")" == "https://github.com/$REPO_SLUG/releases/download/$TAG/Lightshot-$VERSION.dmg" ]] \
+  || fail "feed download URL is $(feed "$ENCLOSURE/@url")"
+[[ "$(feed "$ENCLOSURE/@length")" == "$(stat -f %z "$DMG")" ]] || fail "feed length does not match the DMG"
+SIGNATURE="$(feed "$ENCLOSURE/@*[local-name()=\"edSignature\"]")"
+[[ -n "$SIGNATURE" ]] || fail "feed carries no EdDSA signature"
+"$SPARKLE_BIN/sign_update" --verify "$DMG" "$SIGNATURE" >/dev/null 2>&1 \
+  || fail "the DMG's update signature does not verify against the update signing key"
+note "$APPCAST — build $BUILD_NUMBER, signature verified"
+
+# ---------------------------------------------------------------------------
 # 7. Publish — annotated tag, then a DRAFT release. Publishing the draft is a
 #    manual click after reviewing the notes and the artifact.
 # ---------------------------------------------------------------------------
 if [[ $DRY_RUN == 1 ]]; then
   step "Dry run complete — nothing tagged or uploaded"
   note "artifact: $DMG"
+  note "feed:     $APPCAST"
   note "notes:    $NOTES"
   exit 0
 fi
@@ -260,7 +349,7 @@ fi
 step "Publish draft release $TAG"
 git tag -a "$TAG" -m "Lightshot $VERSION"
 git push origin "$TAG"
-gh release create "$TAG" "$DMG" \
+gh release create "$TAG" "$DMG" "$APPCAST" \
   --repo "$REPO_SLUG" \
   --draft \
   --generate-notes \
