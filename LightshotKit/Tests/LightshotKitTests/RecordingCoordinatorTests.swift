@@ -248,6 +248,7 @@ private final class StubSettings: SettingsStore {
     var lastRecordingRegion: CaptureRegion?
     var appearance = AppearancePreference.system
     var ocrKeepsLineBreaks = true
+    var hideDesktopIcons = false
 }
 
 /// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.
@@ -348,6 +349,24 @@ private let display = CaptureRegion.display(id: 7)
     #expect(h.service.starts.first?.url.pathExtension == "mp4")
     #expect(h.ui.states == [.recording])
     #expect(h.waits.isEmpty)   // no countdown configured
+}
+
+@Test @MainActor func aTakeHidesWhatTheSettingsAskFor() async {
+    let h = Harness()
+    h.settings.hideDesktopIcons = true
+    h.settings.recordingDefaults.hideNotifications = true
+    await h.coordinator.toggleRecording()
+
+    #expect(h.service.starts.first?.options.hideDesktopIcons == true)
+    #expect(h.service.starts.first?.options.hideNotifications == true)
+}
+
+@Test @MainActor func aTakeHidesNothingByDefault() async {
+    let h = Harness()
+    await h.coordinator.toggleRecording()
+
+    #expect(h.service.starts.first?.options.hideDesktopIcons == false)
+    #expect(h.service.starts.first?.options.hideNotifications == false)
 }
 
 @Test @MainActor func toggleAgainStopsFinishesAndSavesToTheDefaultDestination() async {

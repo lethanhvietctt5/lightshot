@@ -37,11 +37,12 @@ final class AppController: NSObject, CaptureUI {
     /// The ScreenCaptureKit service, held once so the same instance backs both the capture spine and
     /// the permission-onboarding checklist (LIG-21) — they share one view of the Screen Recording
     /// grant, including the "have we asked yet?" flag that tells `.notDetermined` from `.denied`.
-    private let captureService = SCCaptureService(includeCursor: {
-        // Read the cursor-inclusion preference live at capture time (story 12), off the main actor,
-        // from the same defaults the settings window writes.
-        UserDefaultsSettingsStore.storedIncludeCursor()
-    })
+    private let captureService = SCCaptureService(
+        // Read the cursor-inclusion (story 12) and hide-desktop-icons (spec 0013) preferences live
+        // at capture time, off the main actor, from the same defaults the settings window writes.
+        includeCursor: { UserDefaultsSettingsStore.storedIncludeCursor() },
+        hideDesktopIcons: { UserDefaultsSettingsStore.storedHideDesktopIcons() }
+    )
 
     /// The ScreenCaptureKit stream → MP4 recorder (spec 0006, R2) and the one file sink every
     /// recording path (delivery, recovery, history copy) goes through.
@@ -60,6 +61,7 @@ final class AppController: NSObject, CaptureUI {
     private let recordingControls = RecordingControlsController()
     private let recordingFrame = RecordingFrameController()
     private let textCaptureNotice = TextCaptureNoticeController()
+    private let desktopCover = DesktopCover()
     /// The previous recording state, so `presentRecordingState` can play the start / stop cues on
     /// the transitions that deserve them.
     private var lastRecordingState: RecordingSession.State = .idle
@@ -74,7 +76,7 @@ final class AppController: NSObject, CaptureUI {
         // clipped, so the system tooltip itself is made near-instant — registered, not persisted.
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 80])
         let cameraFeed = CameraFeed()
-        recordingService = SCRecordingService(cameraFeed: cameraFeed)
+        recordingService = SCRecordingService(cameraFeed: cameraFeed, desktopCover: desktopCover)
         cameraBubble = CameraBubbleController(feed: cameraFeed)
         super.init()
         cameraBubble.onAnchorChanged = { [weak self] anchor in
@@ -770,6 +772,15 @@ final class AppController: NSObject, CaptureUI {
             ? .rect(Rect(x: parts[0], y: parts[1], width: parts[2], height: parts[3]))
             : .display(id: CGMainDisplayID())
         recordingFrame.show(around: region, dimsOutside: dims, isPaused: paused)
+    }
+
+    /// Spec 0013: put the desktop cover up for `seconds`, as a take would.
+    func debugShowDesktopCover(for seconds: Double) {
+        Task {
+            _ = await desktopCover.show()
+            try? await Task.sleep(for: .seconds(seconds))
+            desktopCover.hide()
+        }
     }
 
     func debugShowTextNotice(_ name: String) {

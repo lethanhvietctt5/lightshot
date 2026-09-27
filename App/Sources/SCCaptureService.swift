@@ -21,9 +21,16 @@ final class SCCaptureService: CaptureService {
     /// Whether to draw the cursor into the capture (story 12). A closure, not a stored flag, so it
     /// reads the live `SettingsStore` value at capture time rather than a value frozen at launch.
     private let includeCursor: @Sendable () -> Bool
+    /// Whether to leave the desktop icons out of display grabs (spec 0013). Read live, like
+    /// `includeCursor`.
+    private let hideDesktopIcons: @Sendable () -> Bool
 
-    init(includeCursor: @escaping @Sendable () -> Bool = { false }) {
+    init(
+        includeCursor: @escaping @Sendable () -> Bool = { false },
+        hideDesktopIcons: @escaping @Sendable () -> Bool = { false }
+    ) {
         self.includeCursor = includeCursor
+        self.hideDesktopIcons = hideDesktopIcons
     }
 
     /// Advisory Screen Recording status (see `ScreenRecordingPermission`). The capture call stays
@@ -73,7 +80,7 @@ final class SCCaptureService: CaptureService {
     /// ~20 ms for TIFF. Whatever is taken from them is encoded as PNG.
     func freezeScreen() async -> Result<FrozenScreen, CaptureError> {
         do {
-            let snapshot = try await Self.snapshot()
+            let snapshot = try await Self.snapshot(hidingDesktopIcons: hideDesktopIcons())
             let displays = try await Self.grabDisplays(snapshot, showsCursor: includeCursor())
             guard !displays.isEmpty else { return .failure(.noDisplayAvailable) }
             let windows = snapshot.windows.map { FrozenWindow(id: $0.windowID, frame: Rect($0.frame), image: nil) }
@@ -86,23 +93,32 @@ final class SCCaptureService: CaptureService {
     /// Every window-picker candidate grabbed on its own, concurrently, shadow trimmed (spec 0011).
     /// A window whose grab fails is left out, and is captured live if it's picked.
     func freezeWindowImages() async -> [UInt32: CapturedImage] {
-        guard let snapshot = try? await Self.snapshot() else { return [:] }
+        guard let snapshot = try? await Self.snapshot(hidingDesktopIcons: false) else { return [:] }
         return await Self.grabWindows(snapshot, showsCursor: includeCursor())
     }
 
-    /// The on-screen desktop a freeze grabs from: every display, our own windows to leave out of
-    /// the stills, and the window picker's candidates, front-most first.
-    private static func snapshot() async throws -> Snapshot {
+    /// The on-screen desktop a freeze grabs from: every display, the windows to leave out of the
+    /// stills (our own, and the desktop icons when hiding them), and the window picker's
+    /// candidates, front-most first.
+    private static func snapshot(hidingDesktopIcons: Bool) async throws -> Snapshot {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let ownProcess = ProcessInfo.processInfo.processIdentifier
         let floating = NSWindow.Level.floating.rawValue
+        let own = content.windows.filter {
+            $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating
+        }
         return Snapshot(
             displays: content.displays,
-            excluded: content.windows.filter {
-                $0.owningApplication?.processID == ownProcess && $0.windowLayer > floating
-            },
+            excluded: own + (hidingDesktopIcons ? desktopIconWindows(in: content.windows) : []),
             windows: content.windows.filter(isWindowCandidate)
         )
+    }
+
+    /// Finder's desktop-icon windows (spec 0013): leaving them out of a display grab shows the
+    /// wallpaper beneath. Finder draws the icons in one window per display at this level.
+    static func desktopIconWindows(in windows: [SCWindow]) -> [SCWindow] {
+        let iconLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
+        return windows.filter { $0.windowLayer == iconLevel && $0.owningApplication?.bundleIdentifier == "com.apple.finder" }
     }
 
     /// Whether `window` is a window-capture candidate: on screen, a normal app window (not the menu
@@ -266,7 +282,8 @@ final class SCCaptureService: CaptureService {
             guard let display = pick(content.displays) ?? content.displays.first else {
                 return .failure(.noDisplayAvailable)
             }
-            let fullImage = try await Self.grab(display, excluding: [], showsCursor: includeCursor())
+            let excluded = hideDesktopIcons() ? Self.desktopIconWindows(in: content.windows) : []
+            let fullImage = try await Self.grab(display, excluding: excluded, showsCursor: includeCursor())
             guard let cgImage = transform(fullImage, Self.backingScale(for: display), display.frame) else {
                 return .failure(.systemFailure("The selected region was empty."))
             }

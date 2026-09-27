@@ -124,3 +124,9 @@ _Avoid_: snapshot, freeze-frame image
 **Freeze**:
 Taking the frozen screen and showing it under the selection overlay.
 _Avoid_: pause, lock
+
+### Hiding clutter
+
+**Desktop cover**:
+Pictures of each display's wallpaper that Lightshot lays over the desktop icons for the length of a recording when Hide desktop icons is on (spec 0013). The take shows them in place of the icons.
+_Avoid_: overlay (the selection and recording overlays already use that word)

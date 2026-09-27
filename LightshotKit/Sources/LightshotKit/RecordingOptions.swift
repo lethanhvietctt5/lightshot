@@ -165,6 +165,10 @@ public struct RecordingOptions: Equatable, Sendable {
     /// the pointer, clicks and keys recorded as data and the camera as its own movie, filed as a
     /// studio project instead of a finished recording.
     public var studio: Bool
+    /// Leave the desktop icons out of the take, and hide them on screen while it runs (spec 0013).
+    public var hideDesktopIcons: Bool
+    /// Leave notification banners out of the take (spec 0013).
+    public var hideNotifications: Bool
 
     public init(
         region: CaptureRegion,
@@ -184,7 +188,9 @@ public struct RecordingOptions: Equatable, Sendable {
         showCursor: Bool = true,
         countdownSeconds: Int = 0,
         afterRecording: AfterRecordingAction = .showOverlay,
-        studio: Bool = false
+        studio: Bool = false,
+        hideDesktopIcons: Bool = false,
+        hideNotifications: Bool = false
     ) {
         self.region = region
         self.output = output
@@ -204,6 +210,8 @@ public struct RecordingOptions: Equatable, Sendable {
         self.countdownSeconds = max(0, countdownSeconds)
         self.afterRecording = afterRecording
         self.studio = studio
+        self.hideDesktopIcons = hideDesktopIcons
+        self.hideNotifications = hideNotifications
     }
 
     public var hasCountdown: Bool { countdownSeconds > 0 }
@@ -211,12 +219,14 @@ public struct RecordingOptions: Equatable, Sendable {
     /// Merge the Settings-owned defaults with the per-recording toggles from the recorder toolbar.
     /// Overrides win (story 9); anything the toolbar left alone comes from `defaults`. `output` is
     /// always per recording — it is which Start button was pressed — so it is a parameter, not an
-    /// override.
+    /// override. `hideDesktopIcons` is a general setting, not a recording default (spec 0013), so
+    /// it comes in on its own.
     public static func resolve(
         region: CaptureRegion,
         output: RecordingOutputKind,
         defaults: RecordingDefaults,
-        overrides: RecordingOverrides = .none
+        overrides: RecordingOverrides = .none,
+        hideDesktopIcons: Bool = false
     ) -> RecordingOptions {
         let microphoneOn = overrides.microphone ?? defaults.recordMicrophone
         let cameraOn = overrides.camera ?? defaults.recordCamera
@@ -240,7 +250,9 @@ public struct RecordingOptions: Equatable, Sendable {
             afterRecording: overrides.afterRecording ?? defaults.afterRecording,
             // Every take records its ingredients (spec 0007, S8 / LIG-57) — the OpenScreen model:
             // a clean screen plus input data and the camera as its own movie, editable afterwards.
-            studio: true
+            studio: true,
+            hideDesktopIcons: hideDesktopIcons,
+            hideNotifications: defaults.hideNotifications
         )
     }
 }
@@ -296,6 +308,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
     public var showRecordingTimeInMenuBar: Bool
     /// What a finished take leads to (story 33).
     public var afterRecording: AfterRecordingAction
+    /// Leave notification banners out of the take; they still show on screen (spec 0013).
+    public var hideNotifications: Bool
 
     public init(
         video: VideoSettings = .standard,
@@ -323,7 +337,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         dimScreenWhileRecording: Bool = false,
         confirmBeforeDiscard: Bool = true,
         showRecordingTimeInMenuBar: Bool = true,
-        afterRecording: AfterRecordingAction = .showOverlay
+        afterRecording: AfterRecordingAction = .showOverlay,
+        hideNotifications: Bool = false
     ) {
         self.video = video
         self.gif = gif
@@ -351,6 +366,7 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
         self.confirmBeforeDiscard = confirmBeforeDiscard
         self.showRecordingTimeInMenuBar = showRecordingTimeInMenuBar
         self.afterRecording = afterRecording
+        self.hideNotifications = hideNotifications
     }
 
     /// The shipped defaults: a 3-second countdown with sounds, everything else off.
@@ -386,7 +402,8 @@ public struct RecordingDefaults: Equatable, Codable, Sendable {
             dimScreenWhileRecording: try c.decodeIfPresent(Bool.self, forKey: .dimScreenWhileRecording) ?? false,
             confirmBeforeDiscard: try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeDiscard) ?? true,
             showRecordingTimeInMenuBar: try c.decodeIfPresent(Bool.self, forKey: .showRecordingTimeInMenuBar) ?? true,
-            afterRecording: try c.decodeIfPresent(AfterRecordingAction.self, forKey: .afterRecording) ?? .showOverlay
+            afterRecording: try c.decodeIfPresent(AfterRecordingAction.self, forKey: .afterRecording) ?? .showOverlay,
+            hideNotifications: try c.decodeIfPresent(Bool.self, forKey: .hideNotifications) ?? false
         )
     }
 }

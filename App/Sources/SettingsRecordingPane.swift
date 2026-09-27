@@ -198,6 +198,8 @@ struct RecordingPane: View {
             }
             .disabled(!model.recordingDefaults.showRecordingControls)
             Toggle("Dim screen while recording", isOn: $model.recordingDefaults.dimScreenWhileRecording)
+            Toggle("Hide notifications", isOn: $model.recordingDefaults.hideNotifications)
+                .help("Notification banners are left out of the recording. They still appear on your screen.")
                 .help("Darken everything outside the recording area so you can see what's in frame.")
             Toggle("Confirm before discarding a recording", isOn: $model.recordingDefaults.confirmBeforeDiscard)
             Toggle("Remember last recording area", isOn: $model.rememberLastRecordingArea)

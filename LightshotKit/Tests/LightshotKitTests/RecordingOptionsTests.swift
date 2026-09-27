@@ -183,3 +183,32 @@ private let allOnDefaults = RecordingDefaults(
     #expect(studio.afterRecording == .openEditor)
     #expect(studio.microphone == plain.microphone)   // nothing else changes
 }
+
+// MARK: - Hide desktop icons / notifications (spec 0013)
+
+@Test func hidingNotificationsComesFromTheDefaultsAndDesktopIconsFromTheParameter() {
+    var defaults = RecordingDefaults.standard
+    defaults.hideNotifications = true
+    let o = RecordingOptions.resolve(region: region, output: .video, defaults: defaults, hideDesktopIcons: true)
+    #expect(o.hideNotifications)
+    #expect(o.hideDesktopIcons)
+}
+
+@Test func nothingIsHiddenByDefault() {
+    let o = RecordingOptions.resolve(region: region, output: .gif, defaults: .standard)
+    #expect(!o.hideNotifications)
+    #expect(!o.hideDesktopIcons)
+    #expect(!RecordingDefaults.standard.hideNotifications)
+}
+
+@Test func aStoredBlobFromBeforeHideNotificationsStillDecodes() throws {
+    var defaults = RecordingDefaults.standard
+    defaults.hideNotifications = true
+    let data = try JSONEncoder().encode(defaults)
+    #expect(try JSONDecoder().decode(RecordingDefaults.self, from: data).hideNotifications)
+
+    var json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+    json.removeValue(forKey: "hideNotifications")
+    let older = try JSONDecoder().decode(RecordingDefaults.self, from: JSONSerialization.data(withJSONObject: json))
+    #expect(!older.hideNotifications)
+}

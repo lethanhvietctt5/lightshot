@@ -30,6 +30,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let lastRecordingRegion = "recording.lastRegion"   // JSON: CaptureRegion
         static let appearance = "app.appearance"   // "system" | "light" | "dark"
         static let ocrKeepsLineBreaks = "ocr.keepLineBreaks"
+        static let hideDesktopIcons = "capture.hideDesktopIcons"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -165,6 +166,11 @@ final class UserDefaultsSettingsStore: SettingsStore {
         set { defaults.set(newValue, forKey: Key.ocrKeepsLineBreaks) }
     }
 
+    var hideDesktopIcons: Bool {
+        get { defaults.bool(forKey: Key.hideDesktopIcons) }   // defaults to false (spec 0013)
+        set { defaults.set(newValue, forKey: Key.hideDesktopIcons) }
+    }
+
     /// Backed by the real login-item registration, not a stored flag, so the toggle can't drift from
     /// system state (story 59). A failed (un)register is logged and surfaced by the getter returning
     /// the unchanged status.
@@ -188,6 +194,11 @@ final class UserDefaultsSettingsStore: SettingsStore {
     /// the same key `includeCursor` writes, so it always reflects the latest saved value.
     nonisolated static func storedIncludeCursor(_ defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: Key.includeCursor)
+    }
+
+    /// The persisted hide-desktop-icons flag, readable off the main actor for the same reason.
+    nonisolated static func storedHideDesktopIcons(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: Key.hideDesktopIcons)
     }
 
     static let defaultPattern = "Screenshot %Y-%m-%d at %H.%M.%S"

@@ -52,13 +52,18 @@ actor SCRecordingService: RecordingService {
     private var finalURL: URL?
     private var sleepAssertion: IOPMAssertionID = 0
 
+    /// Hides the desktop icons on screen for the length of a take that asks for it (spec 0013).
+    private let desktopCover: DesktopCover
+
     init(
         pointerEvents: any InputEventSource = MouseEventMonitor(), keyEvents: any InputEventSource = KeyEventTap(),
-        cameraFeed: CameraFeed = CameraFeed()
+        cameraFeed: CameraFeed = CameraFeed(),
+        desktopCover: DesktopCover
     ) {
         self.pointerEvents = pointerEvents
         self.keyEvents = keyEvents
         self.cameraFeed = cameraFeed
+        self.desktopCover = desktopCover
     }
 
     /// The fragmented scratch movie for a requested MP4 URL — the file `RecordingRecovery` looks for.
@@ -86,10 +91,12 @@ actor SCRecordingService: RecordingService {
         if case let .video(settings) = options.output { video = settings } else { video = .standard }
 
         do {
+            // The cover goes up first, so the content query below sees its panels (spec 0013).
+            let cover = options.hideDesktopIcons ? await desktopCover.show() : []
             // The shareable-content query is the first thing that fails when Screen Recording
             // permission is missing — it surfaces as SCStreamError.userDeclined.
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            let target = try Self.target(for: options.region, in: content)
+            let target = try Self.target(for: options, in: content, cover: cover)
             let size = Self.outputSize(points: target.pointSize, scale: target.scale, settings: video)
 
             let configuration = SCStreamConfiguration()
@@ -239,9 +246,11 @@ actor SCRecordingService: RecordingService {
             return .success(())
         } catch let error as RecordingError {
             log.error("Recording failed to start: \(String(describing: error), privacy: .public)")
+            await desktopCover.hide()
             return .failure(error)
         } catch {
             log.error("Recording failed to start: \(error.localizedDescription, privacy: .public)")
+            await desktopCover.hide()
             return .failure(Self.mapError(error))
         }
     }
@@ -351,6 +360,8 @@ actor SCRecordingService: RecordingService {
         writer = nil
         finalURL = nil
         releaseDisplayAwake()
+        // Every way a take ends comes through here, so the icons always come back.
+        Task { @MainActor [desktopCover] in desktopCover.hide() }
     }
 
     // MARK: - Target resolution
@@ -368,18 +379,28 @@ actor SCRecordingService: RecordingService {
         let sourceRect: CGRect?
     }
 
-    private static func target(for region: CaptureRegion, in content: SCShareableContent) throws -> Target {
+    private static func target(for options: RecordingOptions, in content: SCShareableContent, cover: [CGWindowID]) throws -> Target {
         // Exclude Lightshot's own windows by process, so the toolbar, controls pill, countdown and
-        // dimming never reach the file even when they overlap the region (story 15).
-        let ownApp = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+        // dimming never reach the file even when they overlap the region (story 15) — all but the
+        // desktop cover, which stands in for the icons (spec 0013). Hiding notifications leaves
+        // out Notification Center's banners the same way.
+        let ownProcess = ProcessInfo.processInfo.processIdentifier
+        let excluded = content.applications.filter {
+            $0.processID == ownProcess
+                || (options.hideNotifications && $0.bundleIdentifier == "com.apple.notificationcenterui")
+        }
+        let excepted = content.windows.filter { cover.contains($0.windowID) }
+        let filter = { (display: SCDisplay) in
+            SCContentFilter(display: display, excludingApplications: excluded, exceptingWindows: excepted)
+        }
 
-        switch region.recordedArea {
+        switch options.region.recordedArea {
         case let .display(id):
             guard let display = content.displays.first(where: { $0.displayID == id }) ?? content.displays.first else {
                 throw RecordingError.noDisplayAvailable
             }
             return Target(
-                filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
+                filter: filter(display),
                 pointSize: CGSize(width: display.width, height: display.height),
                 regionOrigin: Point(x: display.frame.minX, y: display.frame.minY),
                 scale: SCCaptureService.backingScale(for: display),
@@ -392,7 +413,7 @@ actor SCRecordingService: RecordingService {
             guard let display = content.displays.first else { throw RecordingError.noDisplayAvailable }
             let sourceRect = CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
             return Target(
-                filter: SCContentFilter(display: display, excludingApplications: ownApp, exceptingWindows: []),
+                filter: filter(display),
                 pointSize: sourceRect.size,
                 regionOrigin: Point(x: display.frame.minX + sourceRect.minX, y: display.frame.minY + sourceRect.minY),
                 scale: SCCaptureService.backingScale(for: display),
