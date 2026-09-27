@@ -4,7 +4,8 @@ import Quartz
 import SwiftUI
 import LightshotKit
 
-/// The post-recording overlay (spec 0006, stories 32–34; CleanShot's Quick Access Overlay): a
+/// The post-recording overlay (spec 0006, stories 32–34; CleanShot shows takes in its Quick Access
+/// Overlay, Lightshot keeps this separate from the screenshot cards of spec 0014): a
 /// small panel in the screen's bottom-right corner with a looping, muted preview of the take, its
 /// duration and size, a name to edit, and the after-recording actions. The take is still in the
 /// scratch directory while this is up; the `AppCoordinator` owns it and decides where it goes

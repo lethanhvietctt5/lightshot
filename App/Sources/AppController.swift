@@ -23,7 +23,19 @@ final class AppController: NSObject, CaptureUI {
     private var historyWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
-    private let postCaptureToolbar = PostCaptureToolbarController()
+    /// Screenshots waiting in the corner when After Capture is Show Quick Access Overlay (spec 0014).
+    private lazy var quickAccess = QuickAccessController(
+        // A card is the bare screenshot: every action works on it as an unannotated document.
+        actions: QuickAccessController.Actions(
+            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: $0)) },
+            save: { [weak self] in self?.quietSave(AnnotationDocument(baseImage: $0)) ?? false },
+            saveAs: { [weak self] in self?.saveAs(AnnotationDocument(baseImage: $0)) ?? false },
+            annotate: { [weak self] in self?.openEditor(with: $0) },
+            pin: { [weak self] in self?.pin(AnnotationDocument(baseImage: $0)) },
+            dragFile: { [weak self] in self?.dragFile(for: AnnotationDocument(baseImage: $0), in: $1) }
+        ),
+        settings: { [weak self] in self?.settings.quickAccess ?? QuickAccessSettings() }
+    )
     /// The post-recording overlay (spec 0006, stories 32–34), the GIF progress popup (37–38) and
     /// the video editor window (35–36).
     private let postRecordingOverlay = PostRecordingOverlayController()
@@ -270,7 +282,7 @@ final class AppController: NSObject, CaptureUI {
         Task { await coordinator.repeatLastCapture() }
     }
 
-    /// Menu / hotkey entry point for area capture: overlay → capture → post-capture toolbar.
+    /// Menu / hotkey entry point for area capture: overlay → capture → editor or Quick Access card.
     func captureArea() {
         Task { await coordinator.captureArea() }
     }
@@ -434,16 +446,8 @@ final class AppController: NSObject, CaptureUI {
 
     // MARK: - CaptureUI
 
-    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {
-        // Wire the toolbar's actions to capabilities that already exist: annotate opens the editor
-        // (story 13's `openEditor(with:)`), copy flattens the un-annotated capture through the same
-        // render → clipboard path the editor uses, discard just dismisses.
-        postCaptureToolbar.present(
-            at: region,
-            annotate: { [weak self] in self?.openEditor(with: image) },
-            copy: { [weak self] in self?.coordinator.copyToClipboard(AnnotationDocument(baseImage: image)) },
-            pin: { [weak self] in self?.pin(AnnotationDocument(baseImage: image)) }
-        )
+    func presentQuickAccess(for image: CapturedImage) {
+        quickAccess.present(image)
     }
 
     func openEditor(with image: CapturedImage) {
@@ -665,7 +669,7 @@ final class AppController: NSObject, CaptureUI {
 
     #if DEBUG
     /// Development aid (spec 0008): open one surface without capturing or recording, so it can be
-    /// looked at in Light and Dark. `file` is an image (editor, post-capture, pin) or a movie
+    /// looked at in Light and Dark. `file` is an image (editor, quickAccess, pin) or a movie
     /// (post-recording); a generated sample image stands in when it is missing.
     func debugPreviewSurface(_ name: String, file: URL?) {
         let image = file.flatMap { try? FileImageSource().loadImage(from: $0).get() } ?? Self.debugSampleImage()
@@ -674,8 +678,9 @@ final class AppController: NSObject, CaptureUI {
         case "settings": showSettings()
         case "history": showHistory()
         case "onboarding": showPermissionOnboarding()
-        case "postCapture":
-            presentPostCaptureToolbar(for: image, at: .rect(Rect(x: 200, y: 160, width: 640, height: 400)))
+        case "quickAccess":
+            // Spec 0014: three cards, so the stack, hover and drag can be looked at.
+            for _ in 0..<3 { presentQuickAccess(for: image) }
         case "pin": pin(AnnotationDocument(baseImage: image))
         case "postRecording":
             guard let file else { return }
@@ -882,7 +887,8 @@ final class AppController: NSObject, CaptureUI {
     /// Save-As (stories 41–42): an `NSSavePanel` that lets the user pick location, name, and format
     /// (PNG / JPEG). JPEG carries the configured default quality — the per-save override flows
     /// through the same `ImageFormat` value to the sink.
-    private func saveAs(_ document: AnnotationDocument) {
+    @discardableResult
+    private func saveAs(_ document: AnnotationDocument) -> Bool {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.directoryURL = settings.saveLocation
@@ -896,12 +902,43 @@ final class AppController: NSObject, CaptureUI {
         panel.allowedContentTypes = [settings.defaultFormat == .png ? .png : .jpeg]
 
         WindowPresenter.activateApp()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
         do {
             try coordinator.save(document, to: url, format: picker.format)
             NSWorkspace.shared.activateFileViewerSelecting([url])
+            return true
         } catch {
             presentSaveFailure(error)
+            return false
+        }
+    }
+
+    /// A Quick Access card's Save (spec 0014): the default save, without revealing the file — the
+    /// card's tick says it worked. A failure shows the alert and reports `false`, so the card stays.
+    private func quietSave(_ document: AnnotationDocument) -> Bool {
+        do {
+            try coordinator.save(document)
+            return true
+        } catch {
+            presentSaveFailure(error)
+            return false
+        }
+    }
+
+    /// The document as a file to drag out of a Quick Access card (spec 0014): the drag payload the
+    /// coordinator builds, written into `folder` under its suggested name, so the receiving app gets
+    /// a proper file name.
+    private func dragFile(for document: AnnotationDocument, in folder: URL) -> URL? {
+        let item = coordinator.dragItem(for: document)
+        let url = folder
+            .appendingPathComponent(item.suggestedName)
+            .appendingPathExtension(item.format.fileExtension)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try item.data.write(to: url)
+            return url
+        } catch {
+            return nil
         }
     }
 

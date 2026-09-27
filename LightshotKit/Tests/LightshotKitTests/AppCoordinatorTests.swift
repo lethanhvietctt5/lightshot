@@ -146,6 +146,7 @@ private final class StubSettings: SettingsStore {
     var appearance = AppearancePreference.system
     var ocrKeepsLineBreaks = true
     var hideDesktopIcons = false
+    var quickAccess = QuickAccessSettings()
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the
@@ -159,14 +160,14 @@ private final class DelaySpy {
 @MainActor
 private final class SpyUI: CaptureUI {
     private(set) var openedImages: [CapturedImage] = []
-    private(set) var toolbars: [(image: CapturedImage, region: CaptureRegion)] = []
+    private(set) var quickAccess: [CapturedImage] = []
     private(set) var permissionDeniedCount = 0
     private(set) var failures: [CaptureError] = []
     private(set) var imageLoadFailures: [ImageLoadError] = []
 
     func openEditor(with image: CapturedImage) { openedImages.append(image) }
-    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {
-        toolbars.append((image, region))
+    func presentQuickAccess(for image: CapturedImage) {
+        quickAccess.append(image)
     }
     private(set) var deniedKinds: [PermissionKind] = []
     func presentPermissionDenied(_ kind: PermissionKind) { permissionDeniedCount += 1; deniedKinds.append(kind) }
@@ -575,7 +576,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(overlay.callCount == 1)                 // the overlay runs first, once
     #expect(capture.capturedRegions.isEmpty)        // …and the selection is cut from the frozen still
     #expect(ui.openedImages == [sampleFrozenScreen().image(of: region)!])   // straight to the editor (LIG-23)
-    #expect(ui.toolbars.isEmpty)                    // …with no toolbar step in between
+    #expect(ui.quickAccess.isEmpty)                 // …with no card in between
     #expect(ui.failures.isEmpty)
 }
 
@@ -597,10 +598,9 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     await coordinator.captureArea()
 
-    #expect(ui.toolbars.count == 1)                 // the setting off brings the toolbar back
-    #expect(ui.toolbars.first?.image == sampleFrozenScreen().image(of: region))
-    #expect(ui.toolbars.first?.region == region)    // positioned at the selection
-    #expect(ui.openedImages.isEmpty)                // the toolbar, not the editor, is the surface
+    #expect(ui.quickAccess.count == 1)              // the setting off shows a Quick Access card
+    #expect(ui.quickAccess.first == sampleFrozenScreen().image(of: region))
+    #expect(ui.openedImages.isEmpty)                // the card, not the editor, is the surface
 }
 
 @MainActor
@@ -621,12 +621,13 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureArea()
 
     #expect(ui.openedImages.count == 1)             // first capture: editor
-    #expect(ui.toolbars.count == 1)                 // second capture: toolbar, no restart needed
+    #expect(ui.quickAccess.count == 1)              // second capture: a card, no restart needed
 }
 
 @MainActor
-@Test func fullscreenAndOpenFileOpenTheEditorEvenWhenOpenInEditorIsOff() async {
-    // Neither path has a selection to anchor a toolbar to, so the setting doesn't apply to them.
+@Test func fullscreenFollowsOpenInEditorButOpenFileAlwaysOpensTheEditor() async {
+    // A fullscreen screenshot is a screenshot (spec 0014): with the setting off it becomes a card.
+    // Opening a file is not a capture, so it still goes straight to the editor.
     let image = sampleImage()
     let ui = SpyUI()
     let settings = StubSettings()
@@ -643,8 +644,55 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureFullscreen()
     coordinator.openFile()
 
-    #expect(ui.openedImages == [image, image])
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess == [image])
+    #expect(ui.openedImages == [image])
+}
+
+@MainActor
+@Test func theSelfTimerAndRepeatLastCapturePathsAlsoEndInQuickAccess() async {
+    // Spec 0014: every screenshot path goes through the same After Capture choice.
+    let image = sampleImage()
+    let ui = SpyUI()
+    let settings = StubSettings()
+    settings.openInEditor = false
+    settings.captureDelay = 3
+    let delays = DelaySpy()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: StubOverlay(region: sampleRegion()),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: settings,
+        sleep: { await delays.sleep($0) },
+        ui: ui
+    )
+
+    await coordinator.captureArea()          // self-timer: a live capture after the wait
+    await coordinator.captureFullscreen()
+    await coordinator.repeatLastCapture()    // re-fires fullscreen
+
+    #expect(delays.waits == [3, 3, 3])
+    #expect(ui.quickAccess == [image, image, image])
+    #expect(ui.openedImages.isEmpty)
+}
+
+@MainActor
+@Test func fullscreenOpensTheEditorWhenOpenInEditorIsOn() async {
+    let image = sampleImage()
+    let ui = SpyUI()
+    let coordinator = AppCoordinator(
+        captureService: StubCaptureService(.success(image)),
+        overlay: unusedOverlay(),
+        imageSource: unusedImageSource(),
+        imageSink: SpyImageSink(),
+        settings: StubSettings(),
+        ui: ui
+    )
+
+    await coordinator.captureFullscreen()
+
+    #expect(ui.openedImages == [image])
+    #expect(ui.quickAccess.isEmpty)
 }
 
 @MainActor
@@ -663,7 +711,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureArea()
 
     #expect(capture.capturedRegions.isEmpty)        // Escape captures nothing
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.permissionDeniedCount == 0)
     #expect(ui.failures.isEmpty)
@@ -684,7 +732,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureArea()
 
     #expect(ui.permissionDeniedCount == 1)
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.failures.isEmpty)
 }
@@ -703,7 +751,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     await coordinator.captureArea()
 
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.permissionDeniedCount == 0)
     #expect(ui.failures.isEmpty)
@@ -724,7 +772,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureArea()
 
     #expect(ui.failures == [.noDisplayAvailable])
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.permissionDeniedCount == 0)
 }
@@ -753,7 +801,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     #expect(overlay.callCount == 0)                 // …not the drag-a-rect path
     #expect(capture.capturedRegions.isEmpty)        // …and the window comes from the freeze
     #expect(ui.openedImages == [frozenSampleWindowCapture()!])   // straight to the editor (LIG-23)
-    #expect(ui.toolbars.isEmpty)                    // …with no toolbar step in between
+    #expect(ui.quickAccess.isEmpty)                 // …with no card in between
     #expect(ui.failures.isEmpty)
 }
 
@@ -775,10 +823,9 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     await coordinator.captureWindow()
 
-    #expect(ui.toolbars.count == 1)                 // the setting off brings the toolbar back
-    #expect(ui.toolbars.first?.image == frozenSampleWindowCapture())
-    #expect(ui.toolbars.first?.region == region)    // positioned at the window
-    #expect(ui.openedImages.isEmpty)                // the toolbar, not the editor, is the surface
+    #expect(ui.quickAccess.count == 1)              // the setting off shows a Quick Access card
+    #expect(ui.quickAccess.first == frozenSampleWindowCapture())
+    #expect(ui.openedImages.isEmpty)                // the card, not the editor, is the surface
 }
 
 @MainActor
@@ -820,7 +867,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureWindow()
 
     #expect(capture.capturedRegions.isEmpty)        // Escape captures nothing
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.permissionDeniedCount == 0)
     #expect(ui.failures.isEmpty)
@@ -841,7 +888,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureWindow()
 
     #expect(ui.permissionDeniedCount == 1)
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.failures.isEmpty)
 }
@@ -860,7 +907,7 @@ private func sampleWindowRegion() -> CaptureRegion {
 
     await coordinator.captureWindow()
 
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.permissionDeniedCount == 0)
     #expect(ui.failures.isEmpty)
@@ -881,7 +928,7 @@ private func sampleWindowRegion() -> CaptureRegion {
     await coordinator.captureWindow()
 
     #expect(ui.failures == [.noDisplayAvailable])
-    #expect(ui.toolbars.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
     #expect(ui.openedImages.isEmpty)
     #expect(ui.permissionDeniedCount == 0)
 }
@@ -1408,7 +1455,7 @@ private func expectOnlyTextCopied(_ h: TextCaptureHarness, sourceLocation: Sourc
     #expect(h.sink.copied.isEmpty, sourceLocation: sourceLocation)
     #expect(h.sink.written.isEmpty, sourceLocation: sourceLocation)
     #expect(h.ui.openedImages.isEmpty, sourceLocation: sourceLocation)
-    #expect(h.ui.toolbars.isEmpty, sourceLocation: sourceLocation)
+    #expect(h.ui.quickAccess.isEmpty, sourceLocation: sourceLocation)
 }
 
 @MainActor
@@ -1687,7 +1734,7 @@ private func frozenCoordinator(
 }
 
 @MainActor
-@Test func areaCaptureOfTheFrozenScreenShowsTheToolbarAndIsRecordedInHistory() async throws {
+@Test func areaCaptureOfTheFrozenScreenShowsAQuickAccessCardAndIsRecordedInHistory() async throws {
     let settings = StubSettings()
     settings.openInEditor = false
     let (history, dir) = tempHistory()
@@ -1702,8 +1749,7 @@ private func frozenCoordinator(
     await coordinator.captureArea()
 
     let crop = sampleFrozenScreen().image(of: sampleRegion())
-    #expect(ui.toolbars.first?.image == crop)
-    #expect(ui.toolbars.first?.region == sampleRegion())
+    #expect(ui.quickAccess.first == crop)
     let records = history.all()
     #expect(records.map(\.pixelWidth) == [1280])
     #expect(history.capturedImage(for: records[0]) == crop)

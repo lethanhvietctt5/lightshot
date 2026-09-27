@@ -94,7 +94,7 @@ One attempt within a session. Restart throws the current take away and begins an
 
 **Post-recording overlay**:
 The result popup after stop, with copy / save / trim / delete.
-_Avoid_: Quick Access Overlay (CleanShot's name), QAO
+_Avoid_: Quick Access Overlay (that is the screenshot cards' feature, spec 0014), QAO
 
 **Video editor**:
 The trim / resize / quality / audio window. Not the annotation editor.
@@ -124,6 +124,19 @@ _Avoid_: snapshot, freeze-frame image
 **Freeze**:
 Taking the frozen screen and showing it under the selection overlay.
 _Avoid_: pause, lock
+
+### Quick Access
+
+**Quick Access Overlay**:
+The After Capture choice that shows each screenshot as a Quick Access card instead of opening the editor (spec 0014). Screenshots only; a recording has its post-recording overlay.
+_Avoid_: post-capture toolbar (the surface it replaced), QAO
+
+**Quick Access card**:
+A screenshot waiting in a corner of the screen for an action: copy, save, annotate, pin, drag out or close (spec 0014). Shown instead of the editor when After Capture is Show Quick Access Overlay.
+_Avoid_: popup, thumbnail, toast
+
+**Card stack**:
+The Quick Access cards on screen, newest at the bottom.
 
 ### Hiding clutter
 

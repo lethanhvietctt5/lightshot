@@ -36,6 +36,7 @@ final class SettingsModel {
     var rememberLastRecordingArea: Bool { didSet { store.rememberLastRecordingArea = rememberLastRecordingArea } }
     var ocrKeepsLineBreaks: Bool { didSet { store.ocrKeepsLineBreaks = ocrKeepsLineBreaks } }
     var hideDesktopIcons: Bool { didSet { store.hideDesktopIcons = hideDesktopIcons } }
+    var quickAccess: QuickAccessSettings { didSet { store.quickAccess = quickAccess } }
     /// Applied app-wide the moment it changes (spec 0008, story 14).
     var appearance: AppearancePreference {
         didSet {
@@ -106,6 +107,7 @@ final class SettingsModel {
         self.rememberLastRecordingArea = store.rememberLastRecordingArea
         self.ocrKeepsLineBreaks = store.ocrKeepsLineBreaks
         self.hideDesktopIcons = store.hideDesktopIcons
+        self.quickAccess = store.quickAccess
         self.appearance = store.appearance
         self.recordingDefaults = store.recordingDefaults
         self.historyRetention = store.historyRetention

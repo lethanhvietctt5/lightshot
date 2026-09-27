@@ -35,8 +35,9 @@ struct SettingsView: View {
     }
 }
 
-/// The panes, in sidebar order. Lightshot has no Quick Access, Wallpaper, Annotate or Cloud
-/// settings (Cloud is out of scope: local-only), so those CleanShot panes are not here.
+/// The panes, in sidebar order. Quick Access lives in Screenshots (spec 0014); Lightshot has no
+/// Wallpaper, Annotate or Cloud settings (Cloud is out of scope: local-only), so those
+/// CleanShot panes are not here.
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general, shortcuts, screenshots, recording, advanced, about
 
@@ -246,9 +247,9 @@ private struct GeneralPane: View {
 }
 
 /// CleanShot's action × kind grid. Lightshot takes one action per column: a screenshot opens in
-/// the editor or shows the capture toolbar (`openInEditor`); a recording shows the overlay, saves
-/// silently or opens the video editor (`afterRecording`). A dash marks an action that does not
-/// apply to that kind.
+/// the editor or shows a Quick Access card (`openInEditor`, spec 0014); a recording shows the
+/// overlay, saves silently or opens the video editor (`afterRecording`). A dash marks an action
+/// that does not apply to that kind.
 private struct AfterCaptureTable: View {
     @Bindable var model: SettingsModel
 
@@ -409,6 +410,21 @@ private struct ScreenshotsPane: View {
                 Text("File Name")
             } footer: {
                 Text("Tokens: %Y %m %d %H %M %S — e.g. \"Screenshot %Y-%m-%d at %H.%M.%S\".")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Position", selection: $model.quickAccess.side) {
+                    Text("Bottom Left").tag(QuickAccessSide.left)
+                    Text("Bottom Right").tag(QuickAccessSide.right)
+                }
+                Picker("Close automatically", selection: $model.quickAccess.autoClose) {
+                    ForEach(QuickAccessAutoClose.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Toggle("Close after dragging", isOn: $model.quickAccess.closeAfterDragging)
+            } header: {
+                Text("Quick Access")
+            } footer: {
+                Text("Screenshots wait in a corner of the screen when After Capture is Show Quick Access Overlay. Hold ⌥ while dropping to keep the card.")
                     .foregroundStyle(.secondary)
             }
             Section {

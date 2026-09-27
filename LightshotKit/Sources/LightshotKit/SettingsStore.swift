@@ -18,9 +18,9 @@ public protocol SettingsStore: AnyObject {
 
     /// The global-hotkey chords bound to each capture action (story 56).
     var hotkeys: HotkeyBindings { get set }
-    /// Whether a fresh area/window capture opens straight in the editor (story 13/60) — the default
-    /// — or shows the post-capture toolbar at the selection instead. Read live at capture time by
-    /// `AppCoordinator` (LIG-23).
+    /// Whether a fresh screenshot opens straight in the editor (story 13/60) — the default — or
+    /// shows a Quick Access card instead (spec 0014). Read live at capture time by `AppCoordinator`
+    /// (LIG-23).
     var openInEditor: Bool { get set }
     /// Whether the mouse cursor is included in captures (story 12). Read live at capture time by
     /// `SCCaptureService`.
@@ -57,6 +57,9 @@ public protocol SettingsStore: AnyObject {
     /// Leave the desktop icons out of screenshots and recordings (spec 0013). Screenshots read it
     /// live in the capture service; a take reads it once, when it's configured.
     var hideDesktopIcons: Bool { get set }
+
+    /// Where Quick Access cards stack, and when they close on their own (spec 0014).
+    var quickAccess: QuickAccessSettings { get set }
 }
 
 public extension SettingsStore {

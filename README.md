@@ -15,6 +15,7 @@ Everything happens on your machine. No cloud, no accounts, no network — even c
 - **Auto Redact** (⇧⌘R) — on-device text recognition finds keys, passwords, cards, IBANs, emails, phone numbers, IPs and QR codes and redacts them in the current style. It can miss things; check before sharing.
 - **OCR Text** — drag over any part of the screen to copy its text, recognised on your Mac. A QR code or barcode in the area is decoded and its content copied instead. Choose whether line breaks are kept, and translate the text with macOS's built-in translation (macOS 14.4+).
 - **Finish** — copy to the clipboard, save as PNG/JPEG, drag out, or **pin** the shot so it floats on top while you work.
+- **Quick Access Overlay** — set After Capture to show it, and each screenshot waits as a card in a corner of the screen: copy, save, annotate, pin, or drag it into another app. Cards stack up, and can close themselves after a while.
 - **Open existing images** in the editor.
 
 **Screen recording**

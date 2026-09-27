@@ -152,7 +152,7 @@ private final class SpyUI: CaptureUI {
     private(set) var permissionDeniedCount = 0
 
     func openEditor(with image: CapturedImage) {}
-    func presentPostCaptureToolbar(for image: CapturedImage, at region: CaptureRegion) {}
+    func presentQuickAccess(for image: CapturedImage) {}
     private(set) var deniedKinds: [PermissionKind] = []
     func presentPermissionDenied(_ kind: PermissionKind) { permissionDeniedCount += 1; deniedKinds.append(kind) }
     func presentCaptureFailure(_ error: CaptureError) {}
@@ -249,6 +249,7 @@ private final class StubSettings: SettingsStore {
     var appearance = AppearancePreference.system
     var ocrKeepsLineBreaks = true
     var hideDesktopIcons = false
+    var quickAccess = QuickAccessSettings()
 }
 
 /// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.
