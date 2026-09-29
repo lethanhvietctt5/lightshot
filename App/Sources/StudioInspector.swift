@@ -353,7 +353,7 @@ struct StudioInspector: View {
         }
         if let size = model.outputSize { valueRow("Canvas", "\(Int(size.width)) × \(Int(size.height)) px") }
         valueRow("Length", TimelineScale.label(model.duration))
-        valueRow("Estimated Size", "≈ \(model.estimateText)")
+        valueRow("Estimated Size", model.estimateText)
     }
 
     // MARK: - Building blocks

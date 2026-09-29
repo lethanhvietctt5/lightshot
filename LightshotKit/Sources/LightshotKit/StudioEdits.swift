@@ -386,6 +386,13 @@ public struct StudioOutput: Equatable, Codable, Sendable {
         self.format = format
     }
 
+    /// A new edit's frame rate (LIG-75): the take's own recorded rate, rounded up to a choice so no
+    /// frame is dropped, capped at 60. A take that didn't keep its rate stays at 60.
+    public static func defaultFPS(recorded: Int?) -> Int {
+        guard let recorded, recorded > 0 else { return frameRates.last! }
+        return frameRates.first { $0 >= recorded } ?? frameRates.last!
+    }
+
     /// The Studio export's share of the recorder's bits per pixel: an edit of screen content looks
     /// the same at 40 % of them (SSIM 0.999 on a real take), and the recorder's rate made a 94 s
     /// Retina edit three times the size of its take.
@@ -394,10 +401,15 @@ public struct StudioOutput: Equatable, Codable, Sendable {
     static let hevcShare = 0.7
     /// The frame rate the quality curve is rated at.
     static let referenceFPS = 30.0
+    /// The longest stretch between key frames, in seconds (LIG-75). Left unset, the encoder put one
+    /// every half second, and on screen content those were most of the file: at 5 s the same rate
+    /// encodes a 94 s Retina edit at 16 instead of 42 MB, and looks the same (SSIM against the take
+    /// unchanged). The rate is then a ceiling that screen content usually stays well under.
+    public static let maxKeyFrameInterval = 5.0
 
     /// The export's average video bit rate for a canvas (story 25), used by both the encoder and the
-    /// size estimate. The quality curve is `VideoBitRate`'s, rated at 30 fps; more frames cost only
-    /// `√(fps / 30)` more, since consecutive frames of a screen differ less the closer they are.
+    /// size estimate — which is therefore an upper bound (see `maxKeyFrameInterval`). The quality
+    /// curve is `VideoBitRate`'s, rated at 30 fps; more frames cost only `√(fps / 30)` more, since consecutive frames of a screen differ less the closer they are.
     /// Recording keeps `VideoBitRate` itself.
     public func videoBitsPerSecond(canvas: Size) -> Double {
         let perFrame = canvas.width * canvas.height * VideoBitRate.bitsPerPixel(quality: quality) * Self.bitsPerPixelShare

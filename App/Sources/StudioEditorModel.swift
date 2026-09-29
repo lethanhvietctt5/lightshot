@@ -175,6 +175,8 @@ final class StudioEditorModel {
         sources.map { CanvasLayout(sourceSize: $0.pixelSize, style: edits.canvas, resolution: edits.output.resolution).canvas }
     }
 
+    /// The export's estimated size, marked as an upper bound for a movie ("≤ 49 MB") and as a
+    /// rough guess for a GIF ("≈ 12 MB").
     var estimateText: String {
         guard let sources else { return "—" }
         let exportState = CanvasLayout(sourceSize: sources.pixelSize, style: edits.canvas, resolution: edits.output.resolution)
@@ -185,7 +187,9 @@ final class StudioEditorModel {
         let audio = hasAudio && edits.audio != .remove ? VideoBitRate.audioBitsPerSecondPerChannel * (edits.audio == .mono ? 1 : 2) : 0
         var bytes = (video + audio) / 8 * duration + SizeEstimator.containerOverheadBytes
         if edits.output.format == .gif { bytes *= 1.6 }
-        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        let size = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        // A movie's rate is a ceiling that screen content usually stays well under (LIG-75).
+        return edits.output.format == .gif ? "≈ \(size)" : "≤ \(size)"
     }
 
     // MARK: - Loading
@@ -204,14 +208,18 @@ final class StudioEditorModel {
         do {
             let sources = try await StudioComposition.Sources.load(screen: screenURL, camera: cameraURL)
             self.sources = sources
-            // First opening: the edits start from the movie's real length.
+            // First opening: the edits start from the movie's real length, exporting at the rate
+            // the take was recorded at.
+            func fresh(_ look: StudioEdits.Look) -> StudioDocument {
+                var edits = StudioEdits(sourceDuration: sources.duration, look: look)
+                edits.output.fps = StudioOutput.defaultFPS(recorded: input?.frameRate)
+                return StudioDocument(edits: edits)
+            }
             switch session {
             case let .project(project, store):
-                if store.loadEdits(project) == nil {
-                    document = StudioDocument(edits: StudioEdits(sourceDuration: sources.duration, look: .studio))
-                }
+                if store.loadEdits(project) == nil { document = fresh(.studio) }
             case .file:
-                document = StudioDocument(edits: StudioEdits(sourceDuration: sources.duration, look: .plain))
+                document = fresh(.plain)
             }
             installTimeObserver()
             rebuild()
@@ -306,7 +314,7 @@ final class StudioEditorModel {
         previewState = state
         let renderSize = CGSize(width: state.layout.canvas.width, height: state.layout.canvas.height)
         do {
-            let built = try StudioComposition.make(sources, state: state, renderSize: renderSize, fps: 30)
+            let built = try StudioComposition.make(sources, state: state, renderSize: renderSize, frameDuration: StudioComposition.frameDuration(fps: 30))
             if builtClips != edits.clips || builtAudio != edits.audio || player.currentItem == nil {
                 let time = currentTime
                 let item = AVPlayerItem(asset: built.asset)

@@ -25,6 +25,8 @@ public struct StudioInputRecorder: Sendable {
     /// The first frame arrived: source time zero. Later calls are ignored.
     /// Whether the screen movie has the cursor drawn in (an ordinary take); see `StudioInput.cursorInVideo`.
     public var cursorInVideo = false
+    /// The rate the screen is recorded at; see `StudioInput.frameRate`.
+    public var frameRate: Int?
 
     public mutating func start(at hostTime: Double) {
         guard startTime == nil else { return }
@@ -73,7 +75,7 @@ public struct StudioInputRecorder: Sendable {
     private func relative(_ p: Point) -> Point { Point(x: p.x - regionOrigin.x, y: p.y - regionOrigin.y) }
 
     public func finish() -> StudioInput {
-        StudioInput(regionSize: regionSize, samples: samples, clicks: clicks, keys: keys, cursorInVideo: cursorInVideo)
+        StudioInput(regionSize: regionSize, samples: samples, clicks: clicks, keys: keys, cursorInVideo: cursorInVideo, frameRate: frameRate)
     }
 }
 

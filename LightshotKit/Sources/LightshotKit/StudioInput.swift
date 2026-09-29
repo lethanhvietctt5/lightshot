@@ -39,19 +39,25 @@ public struct StudioInput: Equatable, Codable, Sendable {
     /// the pointer data only to steer zooms and never draws a second cursor. `false` for a studio
     /// take's clean screen.
     public var cursorInVideo: Bool
+    /// The frame rate the take was recorded at, which sets a new edit's export rate (LIG-75). The
+    /// screen movie can't tell: ScreenCaptureKit only sends a frame when the screen changes.
+    /// `nil` for takes recorded before it was kept.
+    public var frameRate: Int?
 
-    public init(regionSize: Size, samples: [TimedPoint] = [], clicks: [TimedPoint] = [], keys: [TimedKeyEvent] = [], cursorInVideo: Bool = false) {
+    public init(regionSize: Size, samples: [TimedPoint] = [], clicks: [TimedPoint] = [], keys: [TimedKeyEvent] = [], cursorInVideo: Bool = false, frameRate: Int? = nil) {
         version = Self.currentVersion
         self.regionSize = regionSize
         self.samples = samples
         self.clicks = clicks
         self.keys = keys
         self.cursorInVideo = cursorInVideo
+        self.frameRate = frameRate
     }
 
-    private enum CodingKeys: String, CodingKey { case version, regionSize, samples, clicks, keys, cursorInVideo }
+    private enum CodingKeys: String, CodingKey { case version, regionSize, samples, clicks, keys, cursorInVideo, frameRate }
 
     /// `cursorInVideo` is newer than the format; older files are studio takes, so it defaults to `false`.
+    /// `frameRate` is newer still and stays `nil`.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decode(Int.self, forKey: .version)
@@ -60,5 +66,6 @@ public struct StudioInput: Equatable, Codable, Sendable {
         clicks = try c.decode([TimedPoint].self, forKey: .clicks)
         keys = try c.decode([TimedKeyEvent].self, forKey: .keys)
         cursorInVideo = try c.decodeIfPresent(Bool.self, forKey: .cursorInVideo) ?? false
+        frameRate = try c.decodeIfPresent(Int.self, forKey: .frameRate)
     }
 }

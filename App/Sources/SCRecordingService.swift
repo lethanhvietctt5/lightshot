@@ -153,6 +153,7 @@ actor SCRecordingService: RecordingService {
                 regionOrigin: target.regionOrigin,
                 regionSize: Size(width: target.pointSize.width, height: target.pointSize.height),
                 cursorInVideo: configuration.showsCursor,
+                frameRate: video.fps,
                 queue: queue,
                 cameraScratchURL: url.deletingPathExtension().appendingPathExtension("camera-writing.mov")
             ) : nil

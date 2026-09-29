@@ -18,6 +18,7 @@ final class StudioRenderState: @unchecked Sendable {
     let cursor: CursorPath?
     let zoom: ZoomCamera
     let keyEvents: [TimedKeyEvent]
+    /// The canvas background with the screen card's shadow already on it.
     let background: CIImage
     let systemIsDark: Bool
     /// `false` when the cursor is already in the movie (an ordinary take): the data still steers
@@ -37,7 +38,10 @@ final class StudioRenderState: @unchecked Sendable {
         }
         zoom = ZoomCamera(zooms: edits.zooms, transition: edits.zoomTransition, cursor: cursor, regionSize: regionSize)
         keyEvents = input?.keys ?? []
-        background = StudioBackgroundRenderer.render(edits.background, blur: edits.canvas.backgroundBlur, canvas: layout.canvas, assetURL: assetURL, context: context)
+        background = StudioBackgroundRenderer.render(
+            edits.background, blur: edits.canvas.backgroundBlur, canvas: layout.canvas,
+            shadow: StudioFrameRenderer.cardShadow(layout, strength: edits.canvas.shadow), assetURL: assetURL, context: context
+        )
         systemIsDark = KeystrokeOverlayAppearance.systemIsDark
         drawsCursor = !(input?.cursorInVideo ?? false)
     }
@@ -144,21 +148,13 @@ enum StudioFrameRenderer {
     static func render(_ state: StudioRenderState, screen: CIImage?, camera: CIImage?, outputTime: Double, frameDuration: Double) -> CIImage {
         let edits = state.edits
         let layout = state.layout
-        let canvasHeight = layout.canvas.height
         let content = layout.content
-        let contentCI = CGRect(x: content.minX, y: canvasHeight - content.maxY, width: content.width, height: content.height)
+        let contentCI = contentRect(layout)
         let t = state.timeline.sourceTime(atOutput: outputTime)
         let viewport = state.zoom.viewport(at: t)
 
+        // The background, with the screen card's shadow baked in (`cardShadow`).
         var image = state.background
-
-        // Shadow under the screen card.
-        if layout.shadowRadius > 0 {
-            let shadow = roundedRect(contentCI.offsetBy(dx: 0, dy: -layout.shadowRadius * 0.35), radius: layout.cornerRadius,
-                                     color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35 + 0.35 * edits.canvas.shadow))
-                .applyingGaussianBlur(sigma: layout.shadowRadius / 2)
-            image = shadow.composited(over: image)
-        }
 
         // The screen through the zoom viewport, with motion blur while the camera moves.
         if let screen {
@@ -181,10 +177,13 @@ enum StudioFrameRenderer {
                     }
                 }
             }
-            let mask = roundedRect(contentCI, radius: layout.cornerRadius, color: .white)
-            layer = layer.applyingFilter("CIBlendWithMask", parameters: [
-                kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask,
-            ])
+            // Square corners need no mask: the layer is already cropped to the card.
+            if layout.cornerRadius > 0 {
+                let mask = roundedRect(contentCI, radius: layout.cornerRadius, color: .white)
+                layer = layer.applyingFilter("CIBlendWithMask", parameters: [
+                    kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask,
+                ])
+            }
             image = layer.composited(over: image)
         }
 
@@ -470,6 +469,22 @@ enum StudioFrameRenderer {
 
     // MARK: - Shapes
 
+    /// The shadow under the screen card. It depends only on the layout, so it is drawn once into
+    /// the background: blurred at canvas size on every frame it cost a quarter of the export's
+    /// render time (LIG-75).
+    static func cardShadow(_ layout: CanvasLayout, strength: Double) -> CIImage? {
+        guard layout.shadowRadius > 0 else { return nil }
+        return roundedRect(contentRect(layout).offsetBy(dx: 0, dy: -layout.shadowRadius * 0.35), radius: layout.cornerRadius,
+                           color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35 + 0.35 * strength))
+            .applyingGaussianBlur(sigma: layout.shadowRadius / 2)
+    }
+
+    /// The screen card in Core Image coordinates (bottom-left origin).
+    static func contentRect(_ layout: CanvasLayout) -> CGRect {
+        let content = layout.content
+        return CGRect(x: content.minX, y: layout.canvas.height - content.maxY, width: content.width, height: content.height)
+    }
+
     static func roundedRect(_ rect: CGRect, radius: Double, color: CIColor) -> CIImage {
         let filter = CIFilter.roundedRectangleGenerator()
         filter.extent = rect
@@ -489,10 +504,10 @@ enum StudioFrameRenderer {
     }
 }
 
-/// The canvas background (story 20), rendered once per edit into a bitmap so frames only
-/// composite it.
+/// The canvas background (story 20) and the card's shadow, rendered once per edit into GPU memory
+/// so frames only composite it.
 enum StudioBackgroundRenderer {
-    static func render(_ background: StudioBackground, blur: Double, canvas: Size, assetURL: (String) -> URL?, context: CIContext) -> CIImage {
+    static func render(_ background: StudioBackground, blur: Double, canvas: Size, shadow: CIImage?, assetURL: (String) -> URL?, context: CIContext) -> CIImage {
         let rect = CGRect(x: 0, y: 0, width: canvas.width, height: canvas.height)
         var image: CIImage
         var blurs = false
@@ -531,10 +546,19 @@ enum StudioBackgroundRenderer {
         if blurs, blur > 0 {
             image = image.clampedToExtent().applyingGaussianBlur(sigma: blur * 0.03 * min(rect.width, rect.height))
         }
+        if let shadow { image = shadow.composited(over: image) }
         image = image.cropped(to: rect)
-        // Rendered once: every frame then composites a plain bitmap.
-        guard let cg = context.createCGImage(image, from: rect) else { return image }
-        return CIImage(cgImage: cg)
+        // Rendered once into an IOSurface the GPU reads in place: a `CGImage` was uploaded again on
+        // every frame, another fifth of the export's render time (LIG-75).
+        var buffer: CVPixelBuffer?
+        let attributes: [String: Any] = [
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](),
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+        ]
+        CVPixelBufferCreate(nil, Int(rect.width), Int(rect.height), kCVPixelFormatType_32BGRA, attributes as CFDictionary, &buffer)
+        guard let buffer, let sRGB = CGColorSpace(name: CGColorSpace.sRGB) else { return image }
+        context.render(image, to: buffer, bounds: rect, colorSpace: sRGB)
+        return CIImage(cvPixelBuffer: buffer, options: [.colorSpace: sRGB])
     }
 
     static func gradient(_ preset: GradientPreset, in rect: CGRect) -> CIImage {
