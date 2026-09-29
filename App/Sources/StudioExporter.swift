@@ -2,8 +2,8 @@ import AVFoundation
 import LightshotKit
 
 /// Exports a Studio edit (spec 0007, stories 25–28): the composition read through
-/// `StudioCompositor` at the canvas size and chosen frame rate, encoded as H.264 or HEVC at the
-/// `VideoBitRate` for the quality; audio mixed per the audio edit. GIF output encodes the MP4 first
+/// `StudioCompositor` at the canvas size and chosen frame rate, encoded as H.264 or HEVC at
+/// `StudioOutput.videoBitsPerSecond`; audio mixed per the audio edit. GIF output encodes the MP4 first
 /// and converts it with spec 0006's `GIFEncoder`.
 enum StudioExporter {
     static func export(
@@ -27,7 +27,7 @@ enum StudioExporter {
     /// The export's encoded size estimate (story 25), from the same bit rates the encoder uses.
     static func estimatedBytes(state: StudioRenderState, hasAudio: Bool, audioChannels: Int) -> Double {
         let size = state.layout.canvas
-        let video = VideoBitRate.videoBitsPerSecond(size: size, fps: Double(state.edits.output.fps), quality: state.edits.output.quality)
+        let video = state.edits.output.videoBitsPerSecond(canvas: size)
         let channels = state.edits.audio == .mono ? 1 : max(1, min(audioChannels, 2))
         let audio = hasAudio && state.edits.audio != .remove ? VideoBitRate.audioBitsPerSecondPerChannel * Double(channels) : 0
         return (video + audio) / 8 * state.timeline.outputDuration + SizeEstimator.containerOverheadBytes
@@ -56,7 +56,7 @@ enum StudioExporter {
         reader.add(videoOut)
         let codec: AVVideoCodecType = edits.output.codec == .hevc ? .hevc : .h264
         var compression: [String: Any] = [
-            AVVideoAverageBitRateKey: Int(VideoBitRate.videoBitsPerSecond(size: canvas, fps: Double(edits.output.fps), quality: edits.output.quality)),
+            AVVideoAverageBitRateKey: Int(edits.output.videoBitsPerSecond(canvas: canvas)),
             AVVideoExpectedSourceFrameRateKey: edits.output.fps,
         ]
         if codec == .h264 { compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel }
