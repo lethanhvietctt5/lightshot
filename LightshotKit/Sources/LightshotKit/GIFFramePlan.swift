@@ -15,12 +15,17 @@ public struct GIFFramePlan: Equatable, Sendable {
         frameDelay = Self.delay(forFPS: settings.fps)
         // A hair under before rounding up, so 0.9 / 0.1 = 9.000000000000002 is nine frames, not ten.
         frameCount = max(1, Int((max(duration, 0) / frameDelay - 1e-6).rounded(.up)))
+        outputSize = Self.outputSize(sourceSize: sourceSize, settings: settings)
+    }
+
+    /// The GIF's pixel size for a source, known before the source is: a Studio GIF renders its
+    /// frames at this size (LIG-75).
+    public static func outputSize(sourceSize: Size, settings: GIFSettings) -> Size {
         if let maxWidth = settings.maxWidth, sourceSize.width > Double(maxWidth), sourceSize.width > 0 {
             let scale = Double(maxWidth) / sourceSize.width
-            outputSize = Size(width: Double(maxWidth), height: max(1, (sourceSize.height * scale).rounded()))
-        } else {
-            outputSize = Size(width: max(1, sourceSize.width.rounded()), height: max(1, sourceSize.height.rounded()))
+            return Size(width: Double(maxWidth), height: max(1, (sourceSize.height * scale).rounded()))
         }
+        return Size(width: max(1, sourceSize.width.rounded()), height: max(1, sourceSize.height.rounded()))
     }
 
     /// A GIF delay is stored in 1/100 s; the nearest one to `1/fps`, never under 2 (browsers treat

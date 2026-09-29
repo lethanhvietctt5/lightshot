@@ -242,7 +242,7 @@ private struct StudioOutputSummary: View {
             }
             chip("\(model.edits.output.fps) fps · \(model.edits.output.codec.title)", systemImage: "film")
             chip(model.edits.output.format.title, systemImage: "doc")
-            chip("≈ \(model.estimateText)", systemImage: "internaldrive")
+            chip(model.estimateText, systemImage: "internaldrive")
         }
     }
 
@@ -370,7 +370,7 @@ struct StudioExportPanel: View {
                     Text("\(Int(size.width)) × \(Int(size.height)) · \(model.edits.output.fps) fps").foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("≈ \(model.estimateText)").monospacedDigit()
+                Text(model.estimateText).monospacedDigit()
             }
             .font(.system(size: 12))
             Text(model.isProject
