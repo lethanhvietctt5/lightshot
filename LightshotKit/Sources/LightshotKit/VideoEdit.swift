@@ -121,9 +121,10 @@ public struct VideoEditSettings: Equatable, Sendable {
     }
 }
 
-/// The one place the encoder's bit rate comes from, so the estimate and the export agree (story
-/// 35's estimated file size). The recorder writes at 0.1 bits per pixel per frame; that is the
-/// default quality here, and the slider runs from a quarter of it to double.
+/// The recorder's and the video trimmer's bit rate, shared by their encoders and the trimmer's
+/// estimate so the two agree (story 35's estimated file size); a Studio export scales it down
+/// through `StudioOutput.videoBitsPerSecond`. The recorder writes at 0.1 bits per pixel per
+/// frame; that is the default quality here, and the slider runs from a quarter of it to double.
 public enum VideoBitRate {
     public static let defaultQuality: Double = 0.5
     public static let minimumBitsPerSecond: Double = 500_000

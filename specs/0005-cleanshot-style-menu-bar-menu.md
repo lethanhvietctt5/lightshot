@@ -39,7 +39,7 @@ The menu is rebuilt as an AppKit status-item menu in CleanShot's layout: a captu
 ## Testing
 
 - The domain core is untouched, so `swift test` covers nothing new.
-- The app shell has no unit tests; icons, row height, live shortcut rendering (⇧⌘4, ⌃⌘3), section order, About, ⌘, on Settings, and the display submenu were verified by hand against a debug build on macOS 27 (see `.context/menu-cleanshot-style.png` on the branch's workspace).
+- The app shell has no unit tests; icons, row height, live shortcut rendering (⇧⌘4, ⌃⌘3), section order, About, ⌘, on Settings, and the display submenu were verified by hand against a debug build on macOS 27 (see `.context/menu-cleanshot-style.png` on the branch's workspace). That check ran on one display, so it missed the multi-display row being greyed out (LIG-74: `action = nil` set after the submenu was attached); LIG-74 re-verified it on two displays.
 
 ## Out of Scope
 

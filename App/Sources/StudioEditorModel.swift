@@ -178,7 +178,10 @@ final class StudioEditorModel {
     var estimateText: String {
         guard let sources else { return "—" }
         let exportState = CanvasLayout(sourceSize: sources.pixelSize, style: edits.canvas, resolution: edits.output.resolution)
-        let video = edits.output.videoBitsPerSecond(canvas: exportState.canvas)
+        // A GIF's size doesn't follow the movie's bit rate: keep its rough estimate on the recorder's.
+        let video = edits.output.format == .gif
+            ? VideoBitRate.videoBitsPerSecond(size: exportState.canvas, fps: Double(edits.output.fps), quality: edits.output.quality)
+            : edits.output.videoBitsPerSecond(canvas: exportState.canvas)
         let audio = hasAudio && edits.audio != .remove ? VideoBitRate.audioBitsPerSecondPerChannel * (edits.audio == .mono ? 1 : 2) : 0
         var bytes = (video + audio) / 8 * duration + SizeEstimator.containerOverheadBytes
         if edits.output.format == .gif { bytes *= 1.6 }
