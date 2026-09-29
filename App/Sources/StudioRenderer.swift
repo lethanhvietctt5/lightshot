@@ -148,9 +148,8 @@ enum StudioFrameRenderer {
     static func render(_ state: StudioRenderState, screen: CIImage?, camera: CIImage?, outputTime: Double, frameDuration: Double) -> CIImage {
         let edits = state.edits
         let layout = state.layout
-        let canvasHeight = layout.canvas.height
         let content = layout.content
-        let contentCI = CGRect(x: content.minX, y: canvasHeight - content.maxY, width: content.width, height: content.height)
+        let contentCI = contentRect(layout)
         let t = state.timeline.sourceTime(atOutput: outputTime)
         let viewport = state.zoom.viewport(at: t)
 
@@ -475,11 +474,15 @@ enum StudioFrameRenderer {
     /// render time (LIG-75).
     static func cardShadow(_ layout: CanvasLayout, strength: Double) -> CIImage? {
         guard layout.shadowRadius > 0 else { return nil }
-        let content = layout.content
-        let contentCI = CGRect(x: content.minX, y: layout.canvas.height - content.maxY, width: content.width, height: content.height)
-        return roundedRect(contentCI.offsetBy(dx: 0, dy: -layout.shadowRadius * 0.35), radius: layout.cornerRadius,
+        return roundedRect(contentRect(layout).offsetBy(dx: 0, dy: -layout.shadowRadius * 0.35), radius: layout.cornerRadius,
                            color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35 + 0.35 * strength))
             .applyingGaussianBlur(sigma: layout.shadowRadius / 2)
+    }
+
+    /// The screen card in Core Image coordinates (bottom-left origin).
+    static func contentRect(_ layout: CanvasLayout) -> CGRect {
+        let content = layout.content
+        return CGRect(x: content.minX, y: layout.canvas.height - content.maxY, width: content.width, height: content.height)
     }
 
     static func roundedRect(_ rect: CGRect, radius: Double, color: CIColor) -> CIImage {

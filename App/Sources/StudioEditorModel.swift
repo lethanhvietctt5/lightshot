@@ -314,7 +314,7 @@ final class StudioEditorModel {
         previewState = state
         let renderSize = CGSize(width: state.layout.canvas.width, height: state.layout.canvas.height)
         do {
-            let built = try StudioComposition.make(sources, state: state, renderSize: renderSize, frameDuration: CMTime(value: 1, timescale: 30))
+            let built = try StudioComposition.make(sources, state: state, renderSize: renderSize, frameDuration: StudioComposition.frameDuration(fps: 30))
             if builtClips != edits.clips || builtAudio != edits.audio || player.currentItem == nil {
                 let time = currentTime
                 let item = AVPlayerItem(asset: built.asset)

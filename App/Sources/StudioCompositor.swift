@@ -80,6 +80,11 @@ struct StudioComposition: @unchecked Sendable {
     let audioMix: AVAudioMix?
     let hasAudio: Bool
 
+    /// One frame at `fps`.
+    static func frameDuration(fps: Int) -> CMTime {
+        CMTime(value: 1, timescale: CMTimeScale(max(fps, 1)))
+    }
+
     /// The source movies, loaded once per editor session.
     struct Sources: @unchecked Sendable {
         let screen: AVAsset
@@ -115,7 +120,7 @@ struct StudioComposition: @unchecked Sendable {
     /// for preview and GIF) with a frame every `frameDuration`. Motion blur spans `blurDuration`
     /// (default: one frame) — a GIF samples its own few frames but keeps the export's blur.
     static func make(
-        _ sources: Sources, state: StudioRenderState, renderSize: CGSize, frameDuration: CMTime, blurDuration: Double? = nil
+        _ sources: Sources, state: StudioRenderState, renderSize: CGSize, frameDuration: CMTime, blurDuration: CMTime? = nil
     ) throws -> StudioComposition {
         let composition = AVMutableComposition()
         guard let screenTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -163,7 +168,7 @@ struct StudioComposition: @unchecked Sendable {
         video.instructions = [StudioInstruction(
             timeRange: CMTimeRange(start: .zero, duration: composition.duration),
             state: state, screenTrackID: screenTrack.trackID, cameraTrackID: cameraTrack?.trackID,
-            frameDuration: blurDuration ?? CMTimeGetSeconds(frameDuration)
+            frameDuration: CMTimeGetSeconds(blurDuration ?? frameDuration)
         )]
 
         var audioMix: AVAudioMix?

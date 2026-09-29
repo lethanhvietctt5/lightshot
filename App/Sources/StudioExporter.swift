@@ -30,13 +30,12 @@ enum StudioExporter {
     ) async throws {
         var settings = GIFSettings.standard
         settings.maxWidth = min(settings.maxWidth ?? 800, Int(state.layout.canvas.width))
-        let size = GIFFramePlan.outputSize(sourceSize: state.layout.canvas, settings: settings)
-        let delay = CMTime(value: CMTimeValue((GIFFramePlan.delay(forFPS: settings.fps) * 100).rounded()), timescale: 100)
+        let plan = GIFFramePlan(duration: state.timeline.outputDuration, sourceSize: state.layout.canvas, settings: settings)
         let built = try StudioComposition.make(
-            sources, state: state, renderSize: CGSize(width: size.width, height: size.height), frameDuration: delay,
-            blurDuration: 1 / Double(max(state.edits.output.fps, 1))
+            sources, state: state, renderSize: CGSize(width: plan.outputSize.width, height: plan.outputSize.height),
+            frameDuration: CMTime(value: CMTimeValue((plan.frameDelay * 100).rounded()), timescale: 100),   // whole centiseconds
+            blurDuration: StudioComposition.frameDuration(fps: state.edits.output.fps)
         )
-        let plan = GIFFramePlan(duration: CMTimeGetSeconds(built.asset.duration), sourceSize: state.layout.canvas, settings: settings)
         try await ImageIOGIFEncoder().encode(plan: plan, settings: settings, to: output, progress: progress) {
             let reader = try AVAssetReader(asset: built.asset)
             let frames = AVAssetReaderVideoCompositionOutput(
@@ -67,7 +66,7 @@ enum StudioExporter {
         let canvas = state.layout.canvas
         let renderSize = CGSize(width: canvas.width, height: canvas.height)
         let built = try StudioComposition.make(
-            sources, state: state, renderSize: renderSize, frameDuration: CMTime(value: 1, timescale: CMTimeScale(max(edits.output.fps, 1)))
+            sources, state: state, renderSize: renderSize, frameDuration: StudioComposition.frameDuration(fps: edits.output.fps)
         )
         let composition = built.asset
 

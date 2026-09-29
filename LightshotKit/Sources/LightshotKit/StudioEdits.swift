@@ -408,8 +408,8 @@ public struct StudioOutput: Equatable, Codable, Sendable {
     public static let maxKeyFrameInterval = 5.0
 
     /// The export's average video bit rate for a canvas (story 25), used by both the encoder and the
-    /// size estimate — which is therefore an upper bound (see `maxKeyFrameInterval`). The quality curve is `VideoBitRate`'s, rated at 30 fps; more frames cost only
-    /// `√(fps / 30)` more, since consecutive frames of a screen differ less the closer they are.
+    /// size estimate — which is therefore an upper bound (see `maxKeyFrameInterval`). The quality
+    /// curve is `VideoBitRate`'s, rated at 30 fps; more frames cost only `√(fps / 30)` more, since consecutive frames of a screen differ less the closer they are.
     /// Recording keeps `VideoBitRate` itself.
     public func videoBitsPerSecond(canvas: Size) -> Double {
         let perFrame = canvas.width * canvas.height * VideoBitRate.bitsPerPixel(quality: quality) * Self.bitsPerPixelShare

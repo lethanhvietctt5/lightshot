@@ -5,8 +5,8 @@ import LightshotKit
 import UniformTypeIdentifiers
 
 /// The in-process GIF encoder (spec 0006, stories 37–38): reads the finished MP4 — or a Studio
-/// edit's composition, frame by frame — with `AVAssetReader`, keeps the frames a pure `GIFFramePlan` picks, scales them to the plan's size,
-/// posterises per the quality setting, and writes them with ImageIO — which quantises each frame
+/// edit's composition — with `AVAssetReader`, keeps the frames a pure `GIFFramePlan` picks,
+/// scales them to the plan's size, posterises per the quality setting, and writes them with ImageIO — which quantises each frame
 /// to a palette. With "Optimise GIFs" on, pixels unchanged since the previous frame are written
 /// transparent so the previous frame shows through and the frame compresses to almost nothing.
 /// No third-party binaries.
@@ -36,18 +36,18 @@ struct ImageIOGIFEncoder: GIFEncoding {
     /// The pixel format the frames are read in, which `FrameCanvas` draws from.
     static let frameFormat: [String: any Sendable] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
 
-    /// Encode the frames `frames` reads (a reader and its one video output, not yet started) to
-    /// `output` per `plan`. A Studio GIF reads its composition here, rendered at the plan's size
+    /// Encode the frames read by the reader `makeReader` builds (with its one video output, not yet
+    /// started) to `output` per `plan`. A Studio GIF reads its composition here, rendered at the plan's size
     /// and frame delay, instead of encoding a movie first (LIG-75).
     func encode(
         plan: GIFFramePlan, settings: GIFSettings, to output: URL, progress: @escaping @Sendable (Double) -> Void,
-        frames: sending @escaping () throws -> (AVAssetReader, AVAssetReaderOutput)
+        makeReader: sending @escaping () throws -> (AVAssetReader, AVAssetReaderOutput)
     ) async throws {
         // Decoding and quantising are CPU work: off the caller's actor. A detached task inherits
         // no cancellation, so the caller's Cancel is forwarded to it by hand (story 38).
         try Task.checkCancellation()
         let job = Task.detached(priority: .userInitiated) {
-            let (reader, readerOutput) = try frames()
+            let (reader, readerOutput) = try makeReader()
             try Self.write(reader: reader, readerOutput: readerOutput, plan: plan, settings: settings, to: output, progress: progress)
         }
         try await withTaskCancellationHandler {
