@@ -374,7 +374,7 @@ public struct StudioOutput: Equatable, Codable, Sendable {
     public var resolution: OutputResolution
     public var fps: Int
     public var codec: StudioCodec
-    /// `0…1`, the same curve as spec 0006's `VideoBitRate`.
+    /// `0…1`, spec 0006's `VideoBitRate` quality curve (scaled for export by `videoBitsPerSecond`).
     public var quality: Double
     public var format: StudioOutputFormat
 
@@ -384,6 +384,25 @@ public struct StudioOutput: Equatable, Codable, Sendable {
         self.codec = codec
         self.quality = quality
         self.format = format
+    }
+
+    /// The Studio export's share of the recorder's bits per pixel: an edit of screen content looks
+    /// the same at 40 % of them (SSIM 0.999 on a real take), and the recorder's rate made a 94 s
+    /// Retina edit three times the size of its take.
+    static let bitsPerPixelShare = 0.4
+    /// HEVC gets the same look for fewer bits.
+    static let hevcShare = 0.7
+    /// The frame rate the quality curve is rated at.
+    static let referenceFPS = 30.0
+
+    /// The export's average video bit rate for a canvas (story 25), used by both the encoder and the
+    /// size estimate. The quality curve is `VideoBitRate`'s, rated at 30 fps; more frames cost only
+    /// `√(fps / 30)` more, since consecutive frames of a screen differ less the closer they are.
+    /// Recording keeps `VideoBitRate` itself.
+    public func videoBitsPerSecond(canvas: Size) -> Double {
+        let perFrame = canvas.width * canvas.height * VideoBitRate.bitsPerPixel(quality: quality) * Self.bitsPerPixelShare
+        let rate = perFrame * Self.referenceFPS * (Double(max(fps, 1)) / Self.referenceFPS).squareRoot() * (codec == .hevc ? Self.hevcShare : 1)
+        return max(VideoBitRate.minimumBitsPerSecond, rate)
     }
 }
 

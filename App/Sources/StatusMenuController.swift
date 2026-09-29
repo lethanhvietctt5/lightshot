@@ -245,8 +245,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
                 controller.captureFullscreen(displayID: display.id)
             })
         }
-        item.submenu = submenu
+        // Clear the action *before* attaching the submenu: attaching it gives the row AppKit's
+        // `submenuAction:`, and a nil action set afterwards makes auto-enabling grey the row out.
         item.action = nil
+        item.submenu = submenu
         return item
     }
 
