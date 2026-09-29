@@ -306,7 +306,8 @@ private struct StudioRegionPill<Content: View, Actions: View>: View {
     @ViewBuilder var content: () -> Content
 
     @State private var dragOrigin: (start: Double, end: Double)?
-    private static var edge: CGFloat { 8 }
+    /// Up to 8 points, but a third of a tiny pill at most, so both handles fit and its middle still moves.
+    private var edge: CGFloat { min(8, width / 3) }
 
     init(
         model: StudioEditorModel, id: UUID, start: Double, end: Double, scale: TimelineScale, color: Color,
@@ -338,11 +339,17 @@ private struct StudioRegionPill<Content: View, Actions: View>: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(color.opacity(isSelected ? 1 : 0.75))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isSelected ? Color.white : .clear, lineWidth: 2))
-            content()
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(StudioStyle.onAccent)
-                .padding(.horizontal, 10)
-                .opacity(width > 56 ? 1 : 0)
+                // The label is an overlay so it never sizes the pill: laid out in the ZStack, its
+                // minimum width widened a short pill past its span and pushed the edge handles
+                // outside the hit area, so a default-length trim or speed could not be resized.
+                .overlay {
+                    content()
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(StudioStyle.onAccent)
+                        .padding(.horizontal, 10)
+                        .opacity(width > 56 ? 1 : 0)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             HStack {
                 edgeHandle(leading: true)
                 Spacer(minLength: 0)
@@ -368,7 +375,7 @@ private struct StudioRegionPill<Content: View, Actions: View>: View {
 
     private func edgeHandle(leading: Bool) -> some View {
         Color.white.opacity(isSelected ? 0.35 : 0.001)
-            .frame(width: Self.edge)
+            .frame(width: edge)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .contentShape(Rectangle())
             .onHover { inside in if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
