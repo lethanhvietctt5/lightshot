@@ -8,8 +8,9 @@ import LightshotKit
 ///
 /// A thin OS wrapper (no unit tests; the coordinator's overlay → capture ordering is tested against
 /// a fake). Every entry point bridges the window's imperative lifecycle to `async` via a checked
-/// continuation, resumed exactly once when the user confirms or cancels: `selectRegion(over:)` drags
-/// a rect (LIG-13), `selectWindow(over:)` hover-highlights and clicks a window (LIG-14),
+/// continuation, resumed exactly once when the user confirms or cancels: `selectRegion(over:adjustable:)`
+/// drags a rect (LIG-13) — kept editable until a Capture button when `adjustable` (spec 0016) —,
+/// `selectWindow(over:)` hover-highlights and clicks a window (LIG-14),
 /// `selectRecording(initial:defaults:)` runs the editable recording selection with the recorder
 /// toolbar (spec 0006). The two screenshot modes put one overlay window on every display (spec 0011)
 /// and resolve regions in global top-left screen points; the recording overlay stays on the main
@@ -29,6 +30,9 @@ final class OverlaySelectionController: OverlayController {
     private let cameraBubble: CameraBubbleController?
     /// The overlay windows up now — one per display for the screenshot modes, one for recording.
     private var windows: [OverlayKeyWindow] = []
+    /// The adjustable selection's per-display models while it is up (spec 0016): one selection
+    /// across all of them, confirmed from any window.
+    private var adjustableModels: [AdjustableSelectionOverlayModel] = []
 
     init(
         openSettings: @escaping () -> Void = {},
@@ -48,11 +52,15 @@ final class OverlaySelectionController: OverlayController {
     private var continuation: CheckedContinuation<CaptureRegion?, Never>?
     private var recordingContinuation: CheckedContinuation<RecordingChoice?, Never>?
 
-    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion? {
+    func selectRegion(over frozen: FrozenScreen?, adjustable: Bool) async -> CaptureRegion? {
         resolveStaleContinuation()
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            presentRectOverlay(over: frozen)
+            if adjustable {
+                presentAdjustableRectOverlay(over: frozen)
+            } else {
+                presentRectOverlay(over: frozen)
+            }
         }
     }
 
@@ -161,6 +169,47 @@ final class OverlaySelectionController: OverlayController {
             return (window, screen.frame)
         }
         present(overlays)
+    }
+
+    /// The adjustable drag overlay on every display (spec 0016). Each display has its own selection
+    /// model in its own points, but there is only one selection: drawing on one display clears the
+    /// others, and Return or the arrow keys on any window act on whichever display holds it.
+    private func presentAdjustableRectOverlay(over frozen: FrozenScreen?) {
+        let screens = Self.overlayScreens()
+        let models = screens.map { screen in
+            let origin = screen.bounds.origin
+            return AdjustableSelectionOverlayModel(
+                bounds: Rect(x: 0, y: 0, width: screen.frame.width, height: screen.frame.height),
+                pixelScale: screen.scale
+            ) { [weak self] region in
+                guard case let .rect(local)? = region else { self?.finish(with: nil); return }
+                self?.finish(with: .rect(Rect(
+                    x: local.minX + origin.x, y: local.minY + origin.y, width: local.width, height: local.height
+                )))
+            }
+        }
+        adjustableModels = models
+        let overlays = zip(screens, models).map { screen, model in
+            model.onDrawBegan = { [weak self, weak model] in
+                self?.adjustableModels.filter { $0 !== model }.forEach { $0.clearSelection() }
+            }
+            let window = makeOverlayWindow(frame: screen.frame)
+            window.onConfirm = { [weak self] in self?.adjustableSelection?.confirm() }
+            window.onCancel = { model.cancel() }
+            window.onArrow = { [weak self] dx, dy, shift in self?.adjustableSelection?.arrow(dx: dx, dy: dy, shift: shift) }
+            window.contentView = Self.content(
+                FirstMouseHostingView(rootView: AdjustableSelectionOverlayView(model: model)),
+                over: frozen?.displays.first { $0.displayID == screen.displayID },
+                size: screen.frame.size
+            )
+            return (window, screen.frame)
+        }
+        present(overlays)
+    }
+
+    /// The display holding the adjustable selection, if any.
+    private var adjustableSelection: AdjustableSelectionOverlayModel? {
+        adjustableModels.first { $0.hasSelection }
     }
 
     /// The window picker on every display (spec 0011). Each model gets the candidates in its own
@@ -276,6 +325,7 @@ final class OverlaySelectionController: OverlayController {
     private func dismissWindows() {
         windows.forEach { $0.orderOut(nil) }
         windows = []
+        adjustableModels = []
     }
 
     /// The capture candidates for window mode: on-screen, normal-layer windows other than our own,
@@ -321,6 +371,13 @@ final class OverlaySelectionController: OverlayController {
         if choice == nil { cameraBubble?.hide() }
         recordingContinuation.resume(returning: choice)
     }
+}
+
+/// A hosting view whose first click into a non-key overlay window is a real click, not just the
+/// one that makes the window key — so with several displays, the drag that starts a new adjustable
+/// selection on another display (spec 0016) draws at once instead of being swallowed.
+final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// A borderless window that can still become key — so it receives Escape/Return — and routes those

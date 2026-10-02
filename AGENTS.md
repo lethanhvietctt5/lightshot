@@ -8,7 +8,7 @@ Canonical working agreement for any AI agent (Claude Code, Copilot, Codex, …) 
 
 ## Current state — read first
 
-The app is shipping (see [`docs/releases/`](docs/releases) for per-version highlights). Specs [`0001`](specs)–`0015` are implemented: screenshot capture and annotation, release and distribution, the editor passes, the menu-bar menu, screen recording, the Studio video editor, light/dark appearance, auto redact, OCR Text, Freeze Screen, the OCR Text extras (QR codes and barcodes, Translate, line breaks), hiding desktop icons and notifications, the Quick Access Overlay for screenshots, and in-app software updates (Sparkle).
+The app is shipping (see [`docs/releases/`](docs/releases) for per-version highlights). Specs [`0001`](specs)–`0016` are implemented: screenshot capture and annotation, release and distribution, the editor passes, the menu-bar menu, screen recording, the Studio video editor, light/dark appearance, auto redact, OCR Text, Freeze Screen, the OCR Text extras (QR codes and barcodes, Translate, line breaks), hiding desktop icons and notifications, the Quick Access Overlay for screenshots, in-app software updates (Sparkle), and adjusting the Capture Area selection before capturing.
 
 - [`LightshotKit/`](LightshotKit) — the SwiftPM domain-core package. Pure Swift, **no AppKit / ScreenCaptureKit imports**, with a Swift Testing suite per module.
 - [`App/`](App) — the menu-bar app (`LSUIElement`) and the concrete ScreenCaptureKit / AVFoundation / AppKit services.

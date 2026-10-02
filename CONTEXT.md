@@ -115,6 +115,12 @@ One run of OCR Text, from selection to clipboard. Unlike a capture, it produces 
 A text capture whose selection held a QR code or barcode. The code's content is copied instead of the text around it (spec 0012).
 _Avoid_: scan, QR read
 
+### Capture Area
+
+**Adjustable selection**:
+A Capture Area selection that stays editable after the drag (move, resize, nudge, redraw) until the Capture button or Return takes it. Used only when *Adjust the area before capturing* is on (spec 0016); otherwise releasing the drag captures.
+_Avoid_: edit mode, selection-editing mode ("editor" already means the annotation editor)
+
 ### Freeze Screen
 
 **Frozen screen**:

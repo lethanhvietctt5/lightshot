@@ -241,7 +241,7 @@ private final class StubOverlay: OverlayController {
     private(set) var initials: [CaptureRegion?] = []
     private(set) var seededDefaults: [RecordingDefaults] = []
     private(set) var regionCallCount = 0
-    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion? { regionCallCount += 1; return nil }
+    func selectRegion(over frozen: FrozenScreen?, adjustable: Bool) async -> CaptureRegion? { regionCallCount += 1; return nil }
     func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion? { nil }
     func selectRecording(initial: CaptureRegion?, defaults: RecordingDefaults) async -> RecordingChoice? {
         initials.append(initial)
@@ -279,6 +279,7 @@ private final class StubSettings: SettingsStore {
     var ocrKeepsLineBreaks = true
     var hideDesktopIcons = false
     var quickAccess = QuickAccessSettings()
+    var adjustAreaBeforeCapture = false
 }
 
 /// A manual clock and a sleep spy, so countdown and elapsed time are deterministic.

@@ -23,6 +23,7 @@ final class UserDefaultsSettingsStore: SettingsStore {
         static let hotkeys = "capture.hotkeys"   // JSON: [action.rawValue: HotkeyBinding]
         static let openInEditor = "capture.openInEditor"
         static let includeCursor = "capture.includeCursor"
+        static let adjustAreaBeforeCapture = "capture.adjustAreaBeforeCapture"
         static let captureDelay = "capture.delay"   // TimeInterval seconds; 0 == off
         static let historyRetention = "history.retention"
         static let recordingDefaults = "recording.defaults"   // JSON: RecordingDefaults
@@ -170,6 +171,11 @@ final class UserDefaultsSettingsStore: SettingsStore {
     var hideDesktopIcons: Bool {
         get { defaults.bool(forKey: Key.hideDesktopIcons) }   // defaults to false (spec 0013)
         set { defaults.set(newValue, forKey: Key.hideDesktopIcons) }
+    }
+
+    var adjustAreaBeforeCapture: Bool {
+        get { defaults.bool(forKey: Key.adjustAreaBeforeCapture) }   // defaults to false (spec 0016)
+        set { defaults.set(newValue, forKey: Key.adjustAreaBeforeCapture) }
     }
 
     /// Spec 0014: missing or unreadable data is the defaults (bottom left, never auto-close).

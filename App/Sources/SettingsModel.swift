@@ -32,6 +32,7 @@ final class SettingsModel {
     var filenamePattern: String { didSet { store.filenamePattern = filenamePattern } }
     var openInEditor: Bool { didSet { store.openInEditor = openInEditor } }
     var includeCursor: Bool { didSet { store.includeCursor = includeCursor } }
+    var adjustAreaBeforeCapture: Bool { didSet { store.adjustAreaBeforeCapture = adjustAreaBeforeCapture } }
     var captureDelay: TimeInterval { didSet { store.captureDelay = captureDelay } }
     var rememberLastRecordingArea: Bool { didSet { store.rememberLastRecordingArea = rememberLastRecordingArea } }
     var ocrKeepsLineBreaks: Bool { didSet { store.ocrKeepsLineBreaks = ocrKeepsLineBreaks } }
@@ -103,6 +104,7 @@ final class SettingsModel {
         self.filenamePattern = store.filenamePattern
         self.openInEditor = store.openInEditor
         self.includeCursor = store.includeCursor
+        self.adjustAreaBeforeCapture = store.adjustAreaBeforeCapture
         self.captureDelay = store.captureDelay
         self.rememberLastRecordingArea = store.rememberLastRecordingArea
         self.ocrKeepsLineBreaks = store.ocrKeepsLineBreaks

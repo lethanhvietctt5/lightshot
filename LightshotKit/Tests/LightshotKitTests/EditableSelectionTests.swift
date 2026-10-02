@@ -24,6 +24,13 @@ private func drawn(_ a: Point, _ b: Point, ratio: AspectRatio = .freeform, squar
     #expect(s.dragKind(at: Point(x: 200, y: 100)) == .move)      // still editable after release
 }
 
+@Test func aDrawStartingOutsideASelectionReplacesIt() {
+    var s = drawn(Point(x: 100, y: 100), Point(x: 300, y: 200))
+    s.dragBegan(at: Point(x: 500, y: 500))
+    s.dragEnded(at: Point(x: 600, y: 650))
+    #expect(s.rect == Rect(x: 500, y: 500, width: 100, height: 150))
+}
+
 @Test func aDegenerateDragLeavesNoSelection() {
     let s = drawn(Point(x: 10, y: 10), Point(x: 12, y: 11))
     #expect(s.rect == nil)
