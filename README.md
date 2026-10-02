@@ -161,6 +161,7 @@ Everything interesting is a pure function over a value type; everything OS-facin
   - `RecordingSession`, `HistoryStore`, `AppCoordinator`, `ThemePalette`, and the service *protocols* (`CaptureService`, `RecordingService`, `ImageSource`, `ImageSink`, `MediaSink`, `HotkeyService`, `AudioInputService`, `CameraService`, `InputEventSource`, `OverlayController`, `SettingsStore`, …).
 - **[`App/`](App)** — the SwiftUI / AppKit menu-bar app shell (`LSUIElement`) plus the concrete ScreenCaptureKit / AVFoundation / AppKit implementations of those protocols, including the Studio compositor and exporter.
 - **[`scripts/`](scripts)** — `release.sh`, which builds, signs, and packages a release DMG. See [`scripts/README.md`](scripts/README.md).
+- **[`website/`](website)** — the landing page, a React + Vite site deployed on Vercel. See [`website/README.md`](website/README.md).
 - **[`project.yml`](project.yml)** — the XcodeGen spec. **`Lightshot.xcodeproj` is generated, not committed** — run `xcodegen generate` after cloning or after editing `project.yml`.
 
 ## Getting started

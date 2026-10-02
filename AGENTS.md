@@ -14,6 +14,7 @@ The app is shipping (see [`docs/releases/`](docs/releases) for per-version highl
 - [`App/`](App) — the menu-bar app (`LSUIElement`) and the concrete ScreenCaptureKit / AVFoundation / AppKit services.
 - [`project.yml`](project.yml) — the XcodeGen spec. **`Lightshot.xcodeproj` is generated, not committed** (it's gitignored); run `xcodegen generate` after cloning or after editing `project.yml`.
 - [`scripts/`](scripts) — the release script; [`docs/adr/`](docs/adr) — architecture decision records.
+- [`website/`](website) — the landing page (spec 0017), a standalone React + Vite project deployed on Vercel; see [`website/README.md`](website/README.md). It never touches `App/` or `LightshotKit/`.
 
 Guidance:
 
