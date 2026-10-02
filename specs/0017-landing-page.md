@@ -9,13 +9,13 @@
 
 ## Problem Statement
 
-Lightshot has a README and a Releases page, but nowhere to send someone who asks "what is it, and why would I use it over the screenshot tool I have?" The README is written for people who already decided to install it. A visitor needs the pitch in one screen, proof that it's local-only, and an honest install path, including the first-launch warning, because the app isn't notarized.
+Lightshot has a README and a Releases page, but nowhere to send someone who asks "what is it, and why would I use it over the screenshot tool I have?" The README is written for people who already decided to install it. A visitor needs the pitch in one screen and proof that it's local-only. Install instructions stay in the README.
 
 ## Solution
 
 A single page at the site root, matching the Clean design at 1440 px wide and reflowing for tablets and phones. Sections, top to bottom:
 
-1. **Nav** — app icon and wordmark, anchor links (Screenshots, Recording, Studio, Privacy, Install), GitHub, Download.
+1. **Nav** — app icon and wordmark, anchor links (Screenshots, Recording, Studio, Privacy), GitHub, Download.
 2. **Hero** — "Show anything on your screen. Share nothing you didn't mean to.", with "anything" drawn as a capture selection (handles and a live `W × H` readout). Subhead, **Download for macOS** and **Star on GitHub**, requirements line, and the editor screenshot on a stage with capture brackets.
 3. **Trust strip** — no account, nothing uploaded, captions on-device, MIT licensed, Apple Silicon and Intel.
 4. **01 Screenshots** — capture modes with their real default shortcuts (⌃⌘4 Area, ⌃⌘3 Full display; Window and OCR Text are rebindable with no default), the Auto Redact feature (⇧⌘R) with its "can miss things" caveat and the Blackout-vs-blur note, and the annotation toolbar.
@@ -23,8 +23,7 @@ A single page at the site root, matching the Clean design at 1440 px wide and re
 6. **03 Studio** (dark) — the Studio screenshot and four Studio features.
 7. **04 Privacy** — "0 accounts · 0 uploads · 0 cloud transcription · 1 network request" (the optional update check).
 8. **05 Everyday** — Quick Access Overlay, Pin, OCR + Translate, history, capture options, shortcuts, Light and Dark.
-9. **06 Install** — three steps including Open Anyway and the `xattr` command (with a copy button), checksum / build-from-source / signed-updates notes.
-10. **Final CTA and footer.**
+9. **Final CTA and footer.**
 
 Download links go to the latest GitHub release. The version badge comes from the newest file in `docs/releases/` at build time, so it can't drift from the shipped notes.
 
@@ -36,10 +35,8 @@ Download links go to the latest GitHub release. The version badge comes from the
 4. As a privacy-minded visitor, I want the page to say exactly what leaves my Mac (one optional update check), so that I can trust the claim.
 5. As a privacy-minded visitor, I want the site itself to make no tracking or third-party requests, so that the site behaves like the app.
 6. As a visitor about to share redacted screenshots, I want the page to say Auto Redact can miss things and that only Blackout is secure, so that I'm not misled.
-7. As a new user, I want honest install steps, including the first-launch warning and how to allow it, so that the warning doesn't look like malware.
-8. As a new user, I want to copy the `xattr` command with one click, so that I don't mistype it.
-9. As a phone or tablet visitor, I want the page to reflow without horizontal scrolling, so that I can read it anywhere.
-10. As a keyboard or screen-reader user, I want real headings, link semantics, alt text and visible focus, so that the page is usable without a mouse.
+7. As a phone or tablet visitor, I want the page to reflow without horizontal scrolling, so that I can read it anywhere.
+8. As a keyboard or screen-reader user, I want real headings, link semantics, alt text and visible focus, so that the page is usable without a mouse.
 
 ## Implementation Decisions
 
@@ -58,6 +55,7 @@ Download links go to the latest GitHub release. The version badge comes from the
 
 ## Out of Scope
 
+* An install section. It was designed and built, then removed at the maintainer's request; the README's Install section (first-launch warning, Open Anyway, `xattr`) is the one place for it.
 * A docs site, blog, changelog pages or localisation.
 * Analytics, newsletter sign-up, or any form.
 * A direct DMG download link (the DMG file name carries the version; the link goes to the release page instead).
@@ -72,6 +70,5 @@ Download links go to the latest GitHub release. The version badge comes from the
   * **Auto Redact copy.** It now says Auto Redact redacts "in the style you've picked" instead of "black out". Per spec 0009 it uses the selected redaction style, which defaults to pixelate. The visible copy now carries the "can miss things" caveat; before, it was only in the `aria-hidden` mock. The mock's toast now counts all five rows, including the card.
   * **Screen readers.** Shortcut chips have visually hidden spoken names, because `aria-label` on `<kbd>` isn't read. The GitHub nav link keeps its name on phones. The copy button announces "Copied" through a status region.
   * **Toolbar.** It's a static list instead of ten fake toggle buttons.
-  * **Install.** The `xattr` command now has a lead-in saying it's the Terminal alternative.
   * **Smaller fixes.** "OCR Text" and "Redact" now match `CONTEXT.md`. The Translate note says macOS 14.4+. The handle markup is shared, and each section has its own file.
-* **Left as is:** the README heading anchors in `links.ts` (`#option-2--build-from-source` and others) break silently if those headings are renamed. They all resolve today.
+* **Install section removed** after review, at the maintainer's request: the section, its nav link, its styles and the three README-anchor links only it used. The page is now 8,413 px tall at 1440 px.

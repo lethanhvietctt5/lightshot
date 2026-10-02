@@ -8,7 +8,6 @@ const sections = [
   ['Recording', '#recording'],
   ['Studio', '#studio'],
   ['Privacy', '#privacy'],
-  ['Install', '#install'],
 ] as const
 
 export function Nav() {

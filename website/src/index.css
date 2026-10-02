@@ -1069,112 +1069,6 @@ code {
   line-height: 25px;
 }
 
-/* ── 06 Install ──────────────────────────────────────────────── */
-
-.section-install {
-  gap: 72px;
-}
-
-.steps {
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-}
-
-.steps li {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding-top: 28px;
-  border-top: 2px solid var(--ink);
-}
-
-.step-num {
-  color: var(--accent);
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-}
-
-.steps h3 {
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.5px;
-}
-
-.steps p:not(.step-num) {
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 24px;
-}
-
-.command {
-  display: flex;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: var(--night);
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 20px;
-}
-
-.command-prompt {
-  color: var(--accent);
-}
-
-.command code {
-  flex: 1;
-  min-width: 0;
-  color: var(--night-ink);
-  overflow-wrap: anywhere;
-}
-
-.command-copy {
-  display: flex;
-  flex: none;
-  align-items: flex-start;
-  padding: 3px;
-  margin: -3px -3px 0 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--night-muted);
-  cursor: pointer;
-}
-
-.command-copy:hover {
-  color: var(--night-ink);
-}
-
-.alt-paths {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 40px;
-  padding-top: 24px;
-  border-top: 1px solid var(--line);
-}
-
-.alt-paths li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.alt-paths svg {
-  flex: none;
-  color: var(--steel-deep);
-}
-
-.alt-paths a:hover {
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 /* ── Final CTA and footer ────────────────────────────────────── */
 
 .final {
@@ -1349,11 +1243,6 @@ code {
 
   .studio-features li {
     border-color: var(--night-line);
-  }
-
-  .steps {
-    grid-template-columns: 1fr;
-    row-gap: 48px;
   }
 
   .recording-split {

@@ -2,7 +2,6 @@ import { Everyday } from './sections/Everyday'
 import { FinalCta } from './sections/FinalCta'
 import { Footer } from './sections/Footer'
 import { Hero } from './sections/Hero'
-import { Install } from './sections/Install'
 import { Nav } from './sections/Nav'
 import { Privacy } from './sections/Privacy'
 import { Recording } from './sections/Recording'
@@ -22,7 +21,6 @@ export default function App() {
         <Studio />
         <Privacy />
         <Everyday />
-        <Install />
         <FinalCta />
       </main>
       <Footer />
