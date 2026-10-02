@@ -200,21 +200,25 @@ public final class AppCoordinator {
     ///
     /// With a self-timer set there is no freeze: the timer exists to capture a *later* screen, so
     /// the overlay runs live and the region is captured live after the wait (story 10).
+    ///
+    /// With *Adjust the area before capturing* on (spec 0016) the overlay keeps the selection
+    /// editable until its Capture button; everything after the overlay is the same.
     public func captureArea() async {
         lastCapture = .area
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
+        let adjustable = settings.adjustAreaBeforeCapture
         guard settings.captureDelay <= 0 else {
-            await captureLiveArea()
+            await captureLiveArea(adjustable: adjustable)
             return
         }
-        guard let (region, image) = await selectFrozenArea() else { return }
+        guard let (region, image) = await selectFrozenArea(adjustable: adjustable) else { return }
         record(image, source: .area)
         presentCapture(image)
     }
 
     /// The self-timer area path: overlay over the live screen, the wait, then a live capture.
-    private func captureLiveArea() async {
-        guard let region = await overlay.selectRegion(over: nil) else { return }
+    private func captureLiveArea(adjustable: Bool) async {
+        guard let region = await overlay.selectRegion(over: nil, adjustable: adjustable) else { return }
         // Self-timer (story 10) runs *after* the region is chosen but *before* the shot fires, so the
         // user can set up transient UI over the selection they just made.
         await applyCaptureDelay()
@@ -229,10 +233,11 @@ public final class AppCoordinator {
 
     /// Freeze Screen (spec 0011): take the still, select over it, and cut the selection out of it.
     /// `nil` when the freeze failed (already routed), the user cancelled, or the selection missed
-    /// the screen (routed as a failure, never a blank image). Shared by area capture and OCR Text.
-    private func selectFrozenArea() async -> (region: CaptureRegion, image: CapturedImage)? {
+    /// the screen (routed as a failure, never a blank image). Shared by area capture and OCR Text;
+    /// only area capture ever asks for an `adjustable` selection (spec 0016).
+    private func selectFrozenArea(adjustable: Bool) async -> (region: CaptureRegion, image: CapturedImage)? {
         guard let frozen = await freezeScreen() else { return nil }
-        guard let region = await overlay.selectRegion(over: frozen) else { return nil }
+        guard let region = await overlay.selectRegion(over: frozen, adjustable: adjustable) else { return nil }
         guard let image = frozen.image(of: region) else {
             ui.presentCaptureFailure(.systemFailure("The selection is outside the screen."))
             return nil
@@ -379,7 +384,7 @@ public final class AppCoordinator {
     public func captureText() async {
         guard let textRecognizer, !isRecording, !isStartingRecording else { return }
         guard await guideFirstRunAuthorizationIfNeeded() else { return }
-        guard let (_, image) = await selectFrozenArea() else { return }
+        guard let (_, image) = await selectFrozenArea(adjustable: false) else { return }
         ui.presentTextCaptureStatus(.reading)
         switch await textRecognizer.recognizeText(in: image) {
         case let .success(recognition):

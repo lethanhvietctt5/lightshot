@@ -60,6 +60,10 @@ public protocol SettingsStore: AnyObject {
 
     /// Where Quick Access cards stack, and when they close on their own (spec 0014).
     var quickAccess: QuickAccessSettings { get set }
+
+    /// Capture Area keeps the selection editable after the drag until Capture or Return (spec
+    /// 0016); `false` (the default) captures on release. Read live by `AppCoordinator.captureArea()`.
+    var adjustAreaBeforeCapture: Bool { get set }
 }
 
 public extension SettingsStore {

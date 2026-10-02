@@ -89,13 +89,16 @@ private final class StubOverlay: OverlayController {
     private(set) var windowCallCount = 0
     /// The backdrop each selection was shown over — `nil` is the live screen (spec 0011).
     private(set) var backdrops: [FrozenScreen?] = []
+    /// Whether each area selection was asked to stay adjustable until Capture (spec 0016).
+    private(set) var adjustables: [Bool] = []
     init(region: CaptureRegion?, windowRegion: CaptureRegion? = nil) {
         self.region = region
         self.windowRegion = windowRegion
     }
-    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion? {
+    func selectRegion(over frozen: FrozenScreen?, adjustable: Bool) async -> CaptureRegion? {
         callCount += 1
         backdrops.append(frozen)
+        adjustables.append(adjustable)
         return region
     }
     func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion? {
@@ -147,6 +150,7 @@ private final class StubSettings: SettingsStore {
     var ocrKeepsLineBreaks = true
     var hideDesktopIcons = false
     var quickAccess = QuickAccessSettings()
+    var adjustAreaBeforeCapture = false
 }
 
 /// Records the self-timer waits the coordinator asked for, standing in for a real sleep so the
@@ -1940,4 +1944,132 @@ private func frozenCoordinator(
     await coordinator.captureFullscreen()
 
     #expect(capture.freezeCount == 0)
+}
+
+// MARK: - Adjust the area before capturing (spec 0016)
+
+@MainActor
+@Test func areaCaptureCapturesOnReleaseByDefault() async {
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: StubCaptureService(.success(sampleImage())), overlay: overlay, ui: ui)
+
+    await coordinator.captureArea()
+
+    #expect(overlay.adjustables == [false])
+}
+
+@MainActor
+@Test func withTheSettingOnAreaCaptureAsksForAnAdjustableSelectionAndCapturesItAsUsual() async throws {
+    let settings = StubSettings()
+    settings.adjustAreaBeforeCapture = true
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: capture, overlay: overlay, settings: settings, history: history, ui: ui)
+
+    await coordinator.captureArea()
+
+    #expect(overlay.adjustables == [true])
+    #expect(overlay.backdrops == [sampleFrozenScreen()])      // still over the frozen screen
+    #expect(capture.capturedRegions.isEmpty)
+    let crop = sampleFrozenScreen().image(of: sampleRegion())
+    #expect(ui.openedImages == [try #require(crop)])
+    #expect(history.all().map(\.pixelWidth) == [1280])
+}
+
+@MainActor
+@Test func withTheSettingOnAnAdjustedAreaStillFollowsAfterCaptureToQuickAccess() async {
+    let settings = StubSettings()
+    settings.adjustAreaBeforeCapture = true
+    settings.openInEditor = false
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: StubCaptureService(.success(sampleImage())), overlay: overlay, settings: settings, ui: ui)
+
+    await coordinator.captureArea()
+
+    #expect(overlay.adjustables == [true])
+    #expect(ui.quickAccess == [sampleFrozenScreen().image(of: sampleRegion())!])
+    #expect(ui.openedImages.isEmpty)
+}
+
+@MainActor
+@Test func withTheSettingOnASelfTimerAdjustsOverTheLiveScreenThenWaits() async {
+    let settings = StubSettings()
+    settings.adjustAreaBeforeCapture = true
+    settings.captureDelay = 3
+    let capture = StubCaptureService(.success(sampleImage()))
+    let overlay = StubOverlay(region: sampleRegion())
+    let delays = DelaySpy()
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: capture, overlay: overlay, settings: settings, delays: delays, ui: ui)
+
+    await coordinator.captureArea()
+
+    #expect(overlay.adjustables == [true])
+    #expect(overlay.backdrops == [nil])
+    #expect(delays.waits == [3])
+    #expect(capture.capturedRegions == [sampleRegion()])
+    #expect(ui.openedImages == [sampleImage()])
+}
+
+@MainActor
+@Test func withTheSettingOnRepeatLastCaptureAdjustsToo() async {
+    let settings = StubSettings()
+    settings.adjustAreaBeforeCapture = true
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: StubCaptureService(.success(sampleImage())), overlay: overlay, settings: settings, ui: ui)
+
+    await coordinator.captureArea()
+    await coordinator.repeatLastCapture()
+
+    #expect(overlay.adjustables == [true, true])
+}
+
+@MainActor
+@Test func theSettingIsReadLiveOnEachCapture() async {
+    let settings = StubSettings()
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: StubCaptureService(.success(sampleImage())), overlay: overlay, settings: settings, ui: ui)
+
+    await coordinator.captureArea()
+    settings.adjustAreaBeforeCapture = true
+    await coordinator.captureArea()
+
+    #expect(overlay.adjustables == [false, true])
+}
+
+@MainActor
+@Test func withTheSettingOnCancellingCapturesNothing() async {
+    let settings = StubSettings()
+    settings.adjustAreaBeforeCapture = true
+    let (history, dir) = tempHistory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let capture = StubCaptureService(.success(sampleImage()))
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: capture, overlay: StubOverlay(region: nil), settings: settings, history: history, ui: ui)
+
+    await coordinator.captureArea()
+
+    #expect(capture.capturedRegions.isEmpty)
+    #expect(ui.openedImages.isEmpty)
+    #expect(ui.quickAccess.isEmpty)
+    #expect(ui.failures.isEmpty)
+    #expect(history.all().isEmpty)
+}
+
+@MainActor
+@Test func ocrTextCopiesOnReleaseWhateverTheSetting() async {
+    let h = TextCaptureHarness(recognition: .success([recognizedLine("hello", y: 0)]))
+    h.settings.adjustAreaBeforeCapture = true
+
+    await h.coordinator.captureText()
+
+    #expect(h.overlay.adjustables == [false])
+    #expect(h.sink.copiedText == ["hello"])
 }

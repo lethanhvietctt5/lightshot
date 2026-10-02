@@ -418,6 +418,8 @@ private struct ScreenshotsPane: View {
         Form {
             Section("Capture") {
                 Toggle("Include the mouse cursor", isOn: $model.includeCursor)
+                Toggle("Adjust the area before capturing", isOn: $model.adjustAreaBeforeCapture)
+                    .help("After you drag, move or resize the area, then click Capture or press Return.")
                 Picker("Self-timer", selection: $model.captureDelay) {
                     Text("Off").tag(TimeInterval(0))
                     Text("3 seconds").tag(TimeInterval(3))

@@ -702,10 +702,13 @@ final class AppController: NSObject, CaptureUI {
                 return FrozenDisplay(displayID: id, frame: Rect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height), image: image)
             }
             let overlay = OverlaySelectionController()
+            // The preview skips the coordinator, so it reads Adjust the area before capturing (spec 0016) itself.
+            let adjustable = settings.adjustAreaBeforeCapture
             Task { @MainActor in
                 let windows = (try? await captureService.freezeScreen().get())?.windows ?? []
                 let frozen = FrozenScreen(displays: displays, windows: windows)
-                _ = name == "frozenArea" ? await overlay.selectRegion(over: frozen) : await overlay.selectWindow(over: frozen)
+                let region = name == "frozenArea" ? await overlay.selectRegion(over: frozen, adjustable: adjustable) : await overlay.selectWindow(over: frozen)
+                NSLog("previewSurface %@ resolved %@", name, String(describing: region))
             }
         case "freeze":
             // Freeze Screen (spec 0011): run the real freeze and window grab and write what they

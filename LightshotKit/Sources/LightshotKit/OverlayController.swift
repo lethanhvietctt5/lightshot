@@ -10,7 +10,7 @@ import Foundation
 /// which is how the coordinator's overlay → capture → toolbar ordering is verified with no screen.
 ///
 /// The two entry points map to the spec's two selection modes and share the same overlay
-/// infrastructure: `selectRegion(over:)` drags a rect (LIG-13), `selectWindow(over:)`
+/// infrastructure: `selectRegion(over:adjustable:)` drags a rect (LIG-13), `selectWindow(over:)`
 /// hover-highlights and clicks a window (LIG-14). Both resolve to a `CaptureRegion` in global
 /// top-left screen points (or `nil` on Escape); the coordinator takes the result from the frozen
 /// screen, or — on the self-timer paths — from `CaptureService.captureRegion(_:)`.
@@ -24,23 +24,30 @@ public protocol OverlayController: AnyObject {
     /// `frozen` is the desktop to select over (spec 0011, Freeze Screen): the overlay covers every
     /// display and shows each one's still as an opaque backdrop so nothing underneath moves. `nil`
     /// selects over the live screens.
-    func selectRegion(over frozen: FrozenScreen?) async -> CaptureRegion?
+    ///
+    /// `adjustable` (spec 0016, Settings' *Adjust the area before capturing*): releasing the drag
+    /// does not confirm. The selection stays editable — move, resize from its handles, arrow keys,
+    /// or drag out a different area — until a Capture button (or Return) resolves it. `false` is the
+    /// release-to-capture overlay. Either way it resolves to the same `CaptureRegion`, or `nil`.
+    func selectRegion(over frozen: FrozenScreen?, adjustable: Bool) async -> CaptureRegion?
 
     /// Present the window-capture overlay and await the user's choice (stories 6–7): windows
     /// highlight on hover, a click picks one, Escape cancels.
     ///
     /// Resolves to a `.window` `CaptureRegion` for the clicked window, or `nil` on cancel — the
-    /// same silent-no-op contract as `selectRegion(over:)`. The overlay is dismissed by the time this
-    /// returns, so it is never itself the window that gets captured. `frozen` is the backdrop, as
-    /// for `selectRegion(over:)`, and its windows are the candidates, at their positions then.
+    /// same silent-no-op contract as `selectRegion(over:adjustable:)`. The overlay is dismissed by
+    /// the time this returns, so it is never itself the window that gets captured. `frozen` is the
+    /// backdrop, as for `selectRegion(over:adjustable:)`, and its windows are the candidates, at
+    /// their positions then.
     func selectWindow(over frozen: FrozenScreen?) async -> CaptureRegion?
 
     /// Present the recording overlay (spec 0006, stories 3–9): drag a rect that stays editable
     /// (handles, move, arrow keys, ratio lock, typed size), hover-and-click a window to snap to it,
     /// or pick the whole display — with the recorder toolbar at the selection: Start Video, Start
-    /// GIF and the per-recording toggles seeded from `defaults`. Unlike `selectRegion(over:)`, releasing
-    /// the drag does not confirm; a Start button (or Return, for video) does. `initial` is a
-    /// remembered region to pre-fill: a rect is clipped to what still fits (or dropped), a window
+    /// GIF and the per-recording toggles seeded from `defaults`. Unlike
+    /// `selectRegion(over:adjustable:)` with `adjustable == false`, releasing the drag does not
+    /// confirm; a Start button (or Return, for video) does. `initial` is a remembered region to
+    /// pre-fill: a rect is clipped to what still fits (or dropped), a window
     /// only if it is still open, a display only if it is the one the overlay covers.
     ///
     /// Resolves to the region, the chosen output and the toggle overrides, or `nil` on Escape.
