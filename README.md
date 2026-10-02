@@ -243,3 +243,13 @@ This project is spec-driven and issue-tracked. Read [`AGENTS.md`](AGENTS.md) fir
 - **Local-only** — no networking, accounts, analytics, or cloud upload. The only exception is the in-app update check ([ADR 0002](docs/adr/0002-in-app-update-checks.md)).
 - **Never present blur/pixelate as secure redaction** — only `blackout` is safe for secrets.
 - **macOS 14+ / ScreenCaptureKit only** — no deprecated `CGWindowListCreateImage`.
+
+## Support
+
+Lightshot is free and open source. If it saves you time, you can [buy me a coffee](https://buymeacoffee.com/viet.le) ☕
+
+<p>
+  <a href="https://buymeacoffee.com/viet.le">
+    <img src="docs/images/buymeacoffee-qr.png" width="200" alt="QR code linking to buymeacoffee.com/viet.le">
+  </a>
+</p>
