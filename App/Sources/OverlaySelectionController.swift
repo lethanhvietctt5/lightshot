@@ -33,6 +33,8 @@ final class OverlaySelectionController: OverlayController {
     /// The adjustable selection's per-display models while it is up (spec 0016): one selection
     /// across all of them, confirmed from any window.
     private var adjustableModels: [AdjustableSelectionOverlayModel] = []
+    /// The area another display held when a redraw began, put back if the redraw comes to nothing.
+    private var setAside: (model: AdjustableSelectionOverlayModel, selection: EditableSelection)?
 
     init(
         openSettings: @escaping () -> Void = {},
@@ -151,13 +153,7 @@ final class OverlaySelectionController: OverlayController {
     /// points; the region it resolves is shifted into global points before it's reported.
     private func presentRectOverlay(over frozen: FrozenScreen?) {
         let overlays = Self.overlayScreens().map { screen in
-            let origin = screen.bounds.origin
-            let model = SelectionOverlayModel(pixelScale: screen.scale) { [weak self] region in
-                guard case let .rect(local)? = region else { self?.finish(with: nil); return }
-                self?.finish(with: .rect(Rect(
-                    x: local.minX + origin.x, y: local.minY + origin.y, width: local.width, height: local.height
-                )))
-            }
+            let model = SelectionOverlayModel(pixelScale: screen.scale, finish: finishShifted(by: screen.bounds.origin))
             let window = makeOverlayWindow(frame: screen.frame)
             window.onConfirm = { model.confirm() }
             window.onCancel = { model.cancel() }
@@ -177,22 +173,16 @@ final class OverlaySelectionController: OverlayController {
     private func presentAdjustableRectOverlay(over frozen: FrozenScreen?) {
         let screens = Self.overlayScreens()
         let models = screens.map { screen in
-            let origin = screen.bounds.origin
-            return AdjustableSelectionOverlayModel(
+            AdjustableSelectionOverlayModel(
                 bounds: Rect(x: 0, y: 0, width: screen.frame.width, height: screen.frame.height),
-                pixelScale: screen.scale
-            ) { [weak self] region in
-                guard case let .rect(local)? = region else { self?.finish(with: nil); return }
-                self?.finish(with: .rect(Rect(
-                    x: local.minX + origin.x, y: local.minY + origin.y, width: local.width, height: local.height
-                )))
-            }
+                pixelScale: screen.scale,
+                finish: finishShifted(by: screen.bounds.origin)
+            )
         }
         adjustableModels = models
         let overlays = zip(screens, models).map { screen, model in
-            model.onDrawBegan = { [weak self, weak model] in
-                self?.adjustableModels.filter { $0 !== model }.forEach { $0.clearSelection() }
-            }
+            model.onDrawBegan = { [weak self, weak model] in self?.setAsideOtherSelections(except: model) }
+            model.onDrawEnded = { [weak self] kept in self?.endRedraw(kept: kept) }
             let window = makeOverlayWindow(frame: screen.frame)
             window.onConfirm = { [weak self] in self?.adjustableSelection?.confirm() }
             window.onCancel = { model.cancel() }
@@ -210,6 +200,30 @@ final class OverlaySelectionController: OverlayController {
     /// The display holding the adjustable selection, if any.
     private var adjustableSelection: AdjustableSelectionOverlayModel? {
         adjustableModels.first { $0.hasSelection }
+    }
+
+    /// A redraw began on `model`'s display: clear the others, keeping their area to put back.
+    private func setAsideOtherSelections(except model: AdjustableSelectionOverlayModel?) {
+        let others = adjustableModels.filter { $0 !== model }
+        setAside = others.first { $0.hasSelection }.map { ($0, $0.selection) }
+        others.forEach { $0.clearSelection() }
+    }
+
+    /// The redraw ended; one that left no area puts the set-aside area back.
+    private func endRedraw(kept: Bool) {
+        if !kept, let setAside { setAside.model.restore(setAside.selection) }
+        setAside = nil
+    }
+
+    /// The `finish` for one display's rect overlay: its local rect shifted into global points by
+    /// the display's `origin`, or a cancel.
+    private func finishShifted(by origin: Point) -> (CaptureRegion?) -> Void {
+        { [weak self] region in
+            guard case let .rect(local)? = region else { self?.finish(with: nil); return }
+            self?.finish(with: .rect(Rect(
+                x: local.minX + origin.x, y: local.minY + origin.y, width: local.width, height: local.height
+            )))
+        }
     }
 
     /// The window picker on every display (spec 0011). Each model gets the candidates in its own
@@ -326,6 +340,7 @@ final class OverlaySelectionController: OverlayController {
         windows.forEach { $0.orderOut(nil) }
         windows = []
         adjustableModels = []
+        setAside = nil
     }
 
     /// The capture candidates for window mode: on-screen, normal-layer windows other than our own,

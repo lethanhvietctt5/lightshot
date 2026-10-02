@@ -1981,6 +1981,22 @@ private func frozenCoordinator(
 }
 
 @MainActor
+@Test func withTheSettingOnAnAdjustedAreaStillFollowsAfterCaptureToQuickAccess() async {
+    let settings = StubSettings()
+    settings.adjustAreaBeforeCapture = true
+    settings.openInEditor = false
+    let overlay = StubOverlay(region: sampleRegion())
+    let ui = SpyUI()
+    let coordinator = frozenCoordinator(capture: StubCaptureService(.success(sampleImage())), overlay: overlay, settings: settings, ui: ui)
+
+    await coordinator.captureArea()
+
+    #expect(overlay.adjustables == [true])
+    #expect(ui.quickAccess == [sampleFrozenScreen().image(of: sampleRegion())!])
+    #expect(ui.openedImages.isEmpty)
+}
+
+@MainActor
 @Test func withTheSettingOnASelfTimerAdjustsOverTheLiveScreenThenWaits() async {
     let settings = StubSettings()
     settings.adjustAreaBeforeCapture = true

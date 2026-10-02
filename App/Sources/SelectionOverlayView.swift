@@ -49,6 +49,8 @@ struct SelectionOverlayView: View {
 /// and the arrow keys come from the hosting window. Coordinates are screen points at 1:1.
 struct AdjustableSelectionOverlayView: View {
     @State private var model: AdjustableSelectionOverlayModel
+    /// The Capture button's rendered size, measured, so placement and clamping use the real thing.
+    @State private var buttonSize = CGSize(width: 124, height: 36)
 
     init(model: AdjustableSelectionOverlayModel) {
         _model = State(initialValue: model)
@@ -83,7 +85,8 @@ struct AdjustableSelectionOverlayView: View {
                 GeometryReader { geometry in
                     CaptureButton(action: model.confirm)
                         .fixedSize()
-                        .position(Self.captureButtonCenter(for: rect, in: geometry.size))
+                        .onGeometryChange(for: CGSize.self) { $0.size } action: { buttonSize = $0 }
+                        .position(Self.captureButtonCenter(for: rect, button: buttonSize, in: geometry.size))
                 }
             }
         }
@@ -108,16 +111,17 @@ struct AdjustableSelectionOverlayView: View {
 
     // MARK: - Capture button placement
 
-    private static let buttonHeight: CGFloat = 36
-    private static let buttonHalfWidth: CGFloat = 64
     private static let gap: CGFloat = 10
-    /// The room the readout pill takes on its side of the selection, its gap included.
+    /// The room the readout pill takes on its side of the selection, its gap included. A little
+    /// more than `drawReadout` needs (its pill is about 21 pt tall, 8 pt off the selection), so the
+    /// button may sit a few points further out than strictly necessary, but never on the pill.
     private static let readoutClearance: CGFloat = 30
 
     /// Centred under the selection; above it when there is no room below; inside its bottom edge
     /// when neither fits. Never over the readout — `OverlayCanvas.drawReadout` puts the pill above
     /// the selection, or below it when there is no room above — and clamped to the display.
-    static func captureButtonCenter(for rect: CGRect, in size: CGSize) -> CGPoint {
+    static func captureButtonCenter(for rect: CGRect, button: CGSize, in size: CGSize) -> CGPoint {
+        let buttonHeight = button.height
         let readoutBelow = rect.minY < readoutClearance
         let belowTop = rect.maxY + gap + (readoutBelow ? readoutClearance : 0)
         let aboveBottom = rect.minY - gap - (readoutBelow ? 0 : readoutClearance)
@@ -129,7 +133,7 @@ struct AdjustableSelectionOverlayView: View {
         } else {
             y = max(rect.maxY - gap - buttonHeight / 2, buttonHeight / 2)
         }
-        let x = min(max(rect.midX, buttonHalfWidth), size.width - buttonHalfWidth)
+        let x = min(max(rect.midX, button.width / 2), size.width - button.width / 2)
         return CGPoint(x: x, y: y)
     }
 }

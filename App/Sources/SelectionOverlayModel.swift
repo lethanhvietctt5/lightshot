@@ -100,8 +100,11 @@ final class SelectionOverlayModel {
 final class AdjustableSelectionOverlayModel {
     private let pixelScale: Double
     private let finish: (CaptureRegion?) -> Void
-    /// A new area started drawing here, so the controller clears every other display's (story 24).
+    /// A new area started drawing here, so the controller sets every other display's aside (story 24).
     var onDrawBegan: () -> Void = {}
+    /// That redraw ended: `kept` when it left a real area; otherwise the controller puts the area
+    /// it set aside back, so a slip on another display costs nothing either.
+    var onDrawEnded: (_ kept: Bool) -> Void = { _ in }
 
     private(set) var selection: EditableSelection
     /// What the pointer should look like where it is: a crosshair over empty screen, an open hand
@@ -111,6 +114,7 @@ final class AdjustableSelectionOverlayModel {
     private(set) var isDragging = false
 
     private var dragStart: Point?
+    private var isDrawing = false
     /// The selection before a redraw began, put back if the redraw comes to nothing — a slip never
     /// costs the area the user already adjusted.
     private var beforeRedraw: EditableSelection?
@@ -145,11 +149,7 @@ final class AdjustableSelectionOverlayModel {
     }
 
     private func cursor(at point: Point) -> PointerCursor {
-        switch selection.dragKind(at: point) {
-        case .draw: return .crosshair
-        case .move: return .openHand
-        case let .resize(handle): return .resize(handle)
-        }
+        PointerCursor(selection.dragKind(at: point))
     }
 
     /// Only movement past a few points becomes a drag, so a click outside the selection leaves it
@@ -163,13 +163,11 @@ final class AdjustableSelectionOverlayModel {
             guard start.distance(to: point) >= Self.dragThreshold else { return }
             isDragging = true
             let kind = selection.dragKind(at: start)
-            switch kind {
-            case .draw:
-                cursor = .crosshair
+            cursor = PointerCursor(kind, grabbing: true)
+            if kind == .draw {
+                isDrawing = true
                 beforeRedraw = hasSelection ? selection : nil
                 onDrawBegan()
-            case .move: cursor = .closedHand
-            case let .resize(handle): cursor = .resize(handle)
             }
             selection.dragBegan(at: start)
         }
@@ -177,10 +175,14 @@ final class AdjustableSelectionOverlayModel {
     }
 
     func dragEnded(at point: Point) {
-        defer { dragStart = nil; isDragging = false; beforeRedraw = nil }
+        defer { dragStart = nil; isDragging = false; isDrawing = false; beforeRedraw = nil }
         if isDragging {
             selection.dragEnded(at: point)
-            if !hasSelection, let beforeRedraw { selection = beforeRedraw }
+            if isDrawing {
+                let kept = hasSelection
+                if !kept, let beforeRedraw { selection = beforeRedraw }
+                onDrawEnded(kept)
+            }
         }
         cursor = cursor(at: point)
     }
@@ -199,6 +201,11 @@ final class AdjustableSelectionOverlayModel {
     /// Another display started drawing: there is only ever one area to capture.
     func clearSelection() {
         selection = EditableSelection(bounds: selection.bounds)
+    }
+
+    /// Another display's redraw came to nothing: the area set aside for it comes back.
+    func restore(_ selection: EditableSelection) {
+        self.selection = selection
     }
 
     // MARK: - Resolution

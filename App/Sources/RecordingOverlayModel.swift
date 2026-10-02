@@ -271,11 +271,7 @@ final class RecordingOverlayModel {
 
     /// The cursor for a pointer at rest at `point`, from what a drag there would do.
     private func cursor(at point: Point) -> PointerCursor {
-        switch selection.dragKind(at: point) {
-        case .draw: return .crosshair
-        case .move: return .openHand
-        case let .resize(handle): return .resize(handle)
-        }
+        PointerCursor(selection.dragKind(at: point))
     }
 
     /// A zero-distance gesture is a click; only movement past a few points becomes a drag, so a
@@ -291,11 +287,7 @@ final class RecordingOverlayModel {
             // Any drag — a fresh rect, a move, or a (hidden) handle — turns a snapped window back
             // into a plain rect, so what is resolved always matches what is shown.
             snappedWindow = nil
-            switch selection.dragKind(at: start) {
-            case .draw: cursor = .crosshair
-            case .move: cursor = .closedHand
-            case let .resize(handle): cursor = .resize(handle)
-            }
+            cursor = PointerCursor(selection.dragKind(at: start), grabbing: true)
             selection.dragBegan(at: start)
         }
         selection.dragChanged(to: point, forceSquare: Self.optionHeld)
@@ -419,14 +411,24 @@ final class RecordingOverlayModel {
     private static var optionHeld: Bool { NSEvent.modifierFlags.contains(.option) }
 }
 
-/// The pointers the recording overlay (LIG-42) and the editor's crop (LIG-47) show, resolved to
-/// `NSCursor` by their views.
+/// The pointers the recording overlay (LIG-42), the adjustable Capture Area selection (spec 0016)
+/// and the editor's crop (LIG-47) show, resolved to `NSCursor` by their views.
 enum PointerCursor: Equatable {
     case arrow
     case crosshair
     case openHand
     case closedHand
     case resize(Handle)
+
+    /// The pointer for an `EditableSelection` drag of `kind`: at rest over where it would start, or
+    /// once it is under way (`grabbing` closes the hand on a move).
+    init(_ kind: EditableSelection.DragKind, grabbing: Bool = false) {
+        switch kind {
+        case .draw: self = .crosshair
+        case .move: self = grabbing ? .closedHand : .openHand
+        case let .resize(handle): self = .resize(handle)
+        }
+    }
 
     var nsCursor: NSCursor {
         switch self {
