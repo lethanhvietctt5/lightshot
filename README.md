@@ -8,6 +8,11 @@ Everything happens on your machine. No cloud, no accounts, no network except che
 
 **Screenshots**
 
+<p align="center">
+  <img src="docs/images/editor.png" width="820" alt="The Lightshot annotation editor showing a dashboard screenshot. Auto Redact has covered three email addresses and an API key with solid black boxes, and a notice reads: Redacted 4 items — 3 emails, 1 secret.">
+</p>
+<p align="center"><em>The annotation editor after <strong>Auto Redact</strong> (⇧⌘R): text recognition on your Mac found three email addresses and an API key and covered them with secure <strong>Blackout</strong>. Every tool sits in the single toolbar row, and Copy, Save and Done are on the right.</em></p>
+
 - **Capture** an area (drag-to-select with live pixel dimensions and adjustable edges), a window (with hover highlight), or a full display — all via rebindable global hotkeys and a CleanShot-style menu-bar menu.
 - **Capture options** — self-timer, cursor inclusion, repeat last capture, multi-display selection, and hiding desktop icons (your wallpaper shows instead, in screenshots and recordings).
 - **Annotation editor** in one compact toolbar row — arrows, lines, rectangles, ellipses, freehand, text boxes, highlights, auto-numbered step markers, a **Focus** tool that dims everything outside chosen areas, and an adjustable, reversible crop. Full undo/redo.
@@ -20,12 +25,22 @@ Everything happens on your machine. No cloud, no accounts, no network except che
 
 **Screen recording**
 
+<p align="center">
+  <img src="docs/images/recording.png" width="820" alt="A screen recording in progress. A red border marks the recorded area around a dashboard's charts, the rest of the screen is dimmed, and a small controls pill at the bottom shows 00:12, a microphone level meter, and pause, stop, restart and discard buttons.">
+</p>
+<p align="center"><em>Recording an area. The red border marks what is being recorded, and everything outside it is dimmed. The controls pill shows elapsed time and the microphone level, with pause, stop, restart and discard.</em></p>
+
 - **Record** an area, a window's area, or a display as a **video** or a **GIF**, with an aspect-ratio lock or an exact size.
 - Toggles for **microphone**, **computer audio**, **camera** (a draggable bubble), **click highlighting**, and **keystrokes** (never shown while a password field has focus). **Hide notifications** keeps banners out of the take without touching your Focus settings.
 - Pause / resume, stop, restart, and discard from a controls pill or the menu-bar timer; optional countdown, sounds, dimming outside the recorded area, and crash recovery.
 - A post-recording overlay to copy, save, rename, drag out, Quick Look, or delete the take.
 
 **Studio editor** — every recording stays editable after the take
+
+<p align="center">
+  <img src="docs/images/studio.png" width="900" alt="The Studio editor. A preview shows a recorded app zoomed in on a New report dialog, on a teal-to-green wallpaper with padding and rounded corners, with the caption Pick the revenue template. The Background panel is on the left, and the timeline below has a filmstrip, an audio waveform and a purple 1.4x zoom pill.">
+</p>
+<p align="center"><em>The <strong>Studio</strong> editing a 14-second take. The purple zoom started as an Auto Zoom suggestion from the clicks and is now pinned to the dialog at 1.4×. The recording sits on a wallpaper with padding, rounded corners and a shadow, a caption is burned in, and the narration's waveform runs under the filmstrip. Pointer, zooms and captions are all still editable.</em></p>
 
 - The screen, pointer, clicks, keystrokes, and camera are recorded separately, so cursor, zooms, camera, and keystrokes can all be changed later.
 - **Auto Zoom** from your clicks, manual zooms that follow the cursor or a fixed point, and a cursor redrawn from data (size, smoothing, motion blur, click effects, hide when idle).
