@@ -4,7 +4,7 @@ import { SectionHead } from '../components'
 const features = [
   [Layers, 'Quick Access Overlay', 'Each capture waits as a card in a corner of the screen. Copy, save, annotate, pin, or drag it straight into another app.'],
   [Pin, 'Pin it on top', 'Float a screenshot above every window while you type from it.'],
-  [Languages, 'Copy text, then translate it', "Recognised on your Mac, translated with macOS's built-in translation."],
+  [Languages, 'Copy text, then translate it', "Recognised on your Mac, translated with macOS's built-in translation (macOS 14.4 or later)."],
   [History, 'Local history', 'Reopen, reveal in Finder or delete. You set how long it keeps things.'],
   [Timer, 'Capture options', 'Self-timer, cursor, repeat last capture, hide desktop icons.'],
   [Command, 'Rebindable shortcuts', 'Give any capture its own global hotkey. Clashes are flagged.'],

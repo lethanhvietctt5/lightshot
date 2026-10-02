@@ -29,14 +29,12 @@ function CommandBlock() {
         $
       </span>
       <code>{quarantineCommand}</code>
-      <button
-        type="button"
-        className="command-copy"
-        onClick={copy}
-        aria-label={copied ? 'Copied' : 'Copy command'}
-      >
+      <button type="button" className="command-copy" onClick={copy} aria-label="Copy command">
         {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
       </button>
+      <span className="sr-only" role="status">
+        {copied ? 'Copied' : ''}
+      </span>
     </div>
   )
 }
@@ -68,6 +66,7 @@ export function Install() {
             System Settings → Privacy &amp; Security. On macOS 14, Control-click the app and choose
             Open.
           </p>
+          <p>Or, on any version, clear the download's quarantine flag in Terminal:</p>
           <CommandBlock />
         </li>
         <li>

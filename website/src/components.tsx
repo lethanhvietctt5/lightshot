@@ -21,16 +21,25 @@ export function Selection({ children }: { children: ReactNode }) {
   return (
     <span ref={ref} className="selection">
       {children}
-      <span className="selection-handle tl" aria-hidden="true" />
-      <span className="selection-handle tr" aria-hidden="true" />
-      <span className="selection-handle bl" aria-hidden="true" />
-      <span className="selection-handle br" aria-hidden="true" />
+      <Handles />
       {size && (
         <span className="selection-size" aria-hidden="true">
           {size.width} × {size.height}
         </span>
       )}
     </span>
+  )
+}
+
+/** The four corner handles of a selection, positioned by the parent's CSS. */
+export function Handles() {
+  return (
+    <>
+      <span className="selection-handle tl" aria-hidden="true" />
+      <span className="selection-handle tr" aria-hidden="true" />
+      <span className="selection-handle bl" aria-hidden="true" />
+      <span className="selection-handle br" aria-hidden="true" />
+    </>
   )
 }
 
@@ -46,10 +55,12 @@ export function Brackets() {
   )
 }
 
-export function Keys({ children, label }: { children: ReactNode; label?: string }) {
+/** A shortcut chip: the glyphs for sighted readers, the spoken name for screen readers. */
+export function Keys({ glyphs, spoken }: { glyphs: string; spoken: string }) {
   return (
-    <kbd className="keys" aria-label={label}>
-      {children}
+    <kbd className="keys">
+      <span aria-hidden="true">{glyphs}</span>
+      <span className="sr-only">{spoken}</span>
     </kbd>
   )
 }

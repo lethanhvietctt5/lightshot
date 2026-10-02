@@ -29,7 +29,7 @@ export function Nav() {
         <div className="nav-actions">
           <a className="nav-github" href={links.repo}>
             <GitHubMark />
-            <span>GitHub</span>
+            <span className="nav-github-label">GitHub</span>
           </a>
           <a className="button button-primary button-small" href={links.latestRelease}>
             <Download size={16} aria-hidden="true" />

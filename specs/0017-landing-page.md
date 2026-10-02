@@ -1,6 +1,6 @@
 # Spec 0017 — Landing page
 
-**Status:** in progress
+**Status:** implemented — see *As built* at the end
 **Linear:** [LIG-77](https://linear.app/light-shot/issue/LIG-77) (label `ready-for-agent`)
 **Platform:** Static website — React + Vite + TypeScript, deployed on Vercel
 **Scope:** A one-page marketing site for Lightshot in `website/`, built from the **"2. Clean"** variant of the landing-page design in Pencil. It is a static build with no backend, no analytics, no cookies and no third-party requests: fonts and images are served from the site itself, and the only way off the page is a link the visitor clicks (GitHub). Nothing in `App/` or `LightshotKit/` changes.
@@ -48,7 +48,7 @@ Download links go to the latest GitHub release. The version badge comes from the
 * **Fonts:** Geist and Geist Mono, self-hosted through `@fontsource-variable`. No Google Fonts request.
 * **Icons:** `lucide-react`, matching the design's Lucide icons. The GitHub mark is an inline SVG (Lucide's brand icons are deprecated).
 * **Images:** the README screenshots and the app icon, converted to WebP and sized for 2× display at their rendered width. Alt text reuses the README's.
-* **Copy:** taken verbatim from the Clean design, which was checked against the code and specs (default hotkeys from `HotkeyBinding.defaults`, the trimmed window shadow from spec 0011, the Open Anyway order from the README).
+* **Copy:** taken verbatim from the Clean design, which was checked against the code and specs (default hotkeys from `HotkeyBindings.defaults`, the trimmed window shadow from spec 0011, the Open Anyway order from the README).
 
 ## Testing Decisions
 
@@ -62,3 +62,16 @@ Download links go to the latest GitHub release. The version badge comes from the
 * Analytics, newsletter sign-up, or any form.
 * A direct DMG download link (the DMG file name carries the version; the link goes to the release page instead).
 * A custom domain and the Vercel project setup itself (the maintainer does that).
+
+## As built
+
+* **Verified at 1440 px** against the Pencil export, section by section. The page is 9,201 px tall against the design's 9,189. The live selection readouts show `349 × 92` and `611 × 88`, against the design's `350 × 92` and `612 × 88`.
+* **Phone (390 px, emulated) and tablet (820 px):** `scrollWidth` equals the viewport width and no element extends past it. Below 960 px the section links move to a second nav row that scrolls sideways (100 px nav, matched by `scroll-padding-top`). Below 1080 px the hero's capture caption is hidden, where it would sit on the editor's toolbar. On phones the Auto Redact toast sits in normal flow, and the final CTA's size readout drops below its selection.
+* **Network:** the production build (`vite preview`), scrolled to the end, made 8 requests, all to its own origin. Only the Latin subsets of the two fonts load.
+* **Self-review fixes:**
+  * **Auto Redact copy.** It now says Auto Redact redacts "in the style you've picked" instead of "black out". Per spec 0009 it uses the selected redaction style, which defaults to pixelate. The visible copy now carries the "can miss things" caveat; before, it was only in the `aria-hidden` mock. The mock's toast now counts all five rows, including the card.
+  * **Screen readers.** Shortcut chips have visually hidden spoken names, because `aria-label` on `<kbd>` isn't read. The GitHub nav link keeps its name on phones. The copy button announces "Copied" through a status region.
+  * **Toolbar.** It's a static list instead of ten fake toggle buttons.
+  * **Install.** The `xattr` command now has a lead-in saying it's the Terminal alternative.
+  * **Smaller fixes.** "OCR Text" and "Redact" now match `CONTEXT.md`. The Translate note says macOS 14.4+. The handle markup is shared, and each section has its own file.
+* **Left as is:** the README heading anchors in `links.ts` (`#option-2--build-from-source` and others) break silently if those headings are renamed. They all resolve today.

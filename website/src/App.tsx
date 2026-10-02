@@ -1,5 +1,6 @@
-import { Footer, FinalCta } from './sections/Closing'
 import { Everyday } from './sections/Everyday'
+import { FinalCta } from './sections/FinalCta'
+import { Footer } from './sections/Footer'
 import { Hero } from './sections/Hero'
 import { Install } from './sections/Install'
 import { Nav } from './sections/Nav'
