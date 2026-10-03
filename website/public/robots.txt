@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://lightshot-mac.vercel.app/sitemap.xml

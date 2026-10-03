@@ -176,8 +176,10 @@ code {
 }
 
 .button {
+  position: relative;
   display: inline-flex;
   align-items: center;
+  overflow: hidden;
   gap: 10px;
   padding: 16px 24px;
   border-radius: 10px;
@@ -1528,13 +1530,13 @@ code {
     animation-delay: 0.28s;
   }
 
-  .hero-title .selection,
-  .final-title .selection {
-    animation: draw-selection 0.7s cubic-bezier(0.65, 0, 0.35, 1) 0.45s both;
+  /* `backwards`, not `both`: once drawn, the clip-path goes away instead of lingering. Its last
+     frame only has to leave room for the readout above and the handles at the corners. */
+  .hero-title .selection {
+    animation: draw-selection 0.7s cubic-bezier(0.65, 0, 0.35, 1) 0.45s backwards;
   }
 
-  .hero-title .selection-handle,
-  .final-title .selection-handle {
+  .hero-title .selection-handle {
     animation: pop 0.35s ease-out 1s both;
   }
 
@@ -1548,7 +1550,7 @@ code {
     animation: settle 1.2s cubic-bezier(0.2, 0.7, 0.2, 1) 0.2s both;
   }
 
-  .bracket {
+  .hero-stage .bracket {
     animation: bracket-in 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.5s both;
   }
 
@@ -1574,8 +1576,6 @@ code {
 
   /* Buttons lift on hover; the primary one catches a sweep of light. */
   .button {
-    position: relative;
-    overflow: hidden;
     transition:
       background-color 0.15s ease,
       border-color 0.15s ease,
@@ -1721,7 +1721,20 @@ code {
     .redact-visual .toast {
       animation: rise linear both;
       animation-timeline: --redact;
-      animation-range: cover 38% cover 52%;
+      animation-range: cover 48% cover 60%;
+    }
+
+    /* The closing selection draws itself as it scrolls in, like the hero's does on load. */
+    .final-title .selection {
+      animation: draw-selection linear backwards;
+      animation-timeline: view();
+      animation-range: entry 60% cover 40%;
+    }
+
+    .final-title .selection-handle {
+      animation: pop linear both;
+      animation-timeline: view();
+      animation-range: cover 38% cover 45%;
     }
   }
 }
