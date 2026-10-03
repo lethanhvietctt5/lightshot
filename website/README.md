@@ -6,7 +6,7 @@ The one-page landing site for Lightshot ([spec 0017](../specs/0017-landing-page.
 cd website
 npm install
 npm run dev       # http://localhost:5173
-npm run build     # type-check + production build into dist/
+npm run build     # type-check + production build into dist/, then prerender the page into dist/index.html
 npm run lint      # oxlint
 npm run preview   # serve dist/ locally
 ```
@@ -18,6 +18,12 @@ npm run preview   # serve dist/ locally
 - `src/index.css` — design tokens (mirroring the Pencil variables) and all styles, section by section, with the responsive rules at the end.
 - `src/links.ts` — every outbound link (all to the GitHub repo).
 - `src/assets/` — the README screenshots and the app icon as WebP. If a screenshot in `docs/images/` changes, re-export it here.
+
+## SEO and prerendering
+
+`npm run build` runs two Vite builds: the client bundle, then `src/entry-server.tsx` for SSR. Then `prerender.mjs` renders the page into `dist/index.html`, so crawlers and link previews get the full content without JavaScript; the client hydrates it. Components must render the same on the server as on the first client render, so anything measured in the browser (like the selection readouts) starts as `null`. Head metadata lives in `index.html`; the JSON-LD comes from the `structuredData` plugin in `vite.config.ts`. `public/` holds `og.png` and Google Search Console's verification file; the matching `google-site-verification` meta tag is in `index.html`. Keep both, or Search Console loses ownership. `robots.txt` and `sitemap.xml` are generated. If the domain changes, update it in `index.html`, `vite.config.ts`, `robots.txt` and `sitemap.xml` ([spec 0018](../specs/0018-landing-seo-and-motion.md)).
+
+Motion is CSS only, in the *Motion* section at the end of `src/index.css`. Every animation ends on the static design and respects `prefers-reduced-motion`. Don't hide content that waits for JavaScript to reveal it.
 
 The version badge in the hero is the newest `docs/releases/<version>.md`, read at build time by `vite.config.ts`; it updates with each release's notes and needs no code change.
 

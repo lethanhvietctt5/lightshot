@@ -176,8 +176,10 @@ code {
 }
 
 .button {
+  position: relative;
   display: inline-flex;
   align-items: center;
+  overflow: hidden;
   gap: 10px;
   padding: 16px 24px;
   border-radius: 10px;
@@ -1133,6 +1135,11 @@ code {
   color: var(--ink);
 }
 
+.footer-about {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .footer-links {
   display: flex;
   flex-wrap: wrap;
@@ -1418,5 +1425,316 @@ code {
   .final img {
     width: 80px;
     height: 80px;
+  }
+}
+
+/* ── Motion ──────────────────────────────────────────────────── */
+
+/* Every animation is an entrance or a hover: each one ends on the static design, so the page
+   reads the same without it. Nothing is hidden waiting for JavaScript. Scroll-linked reveals
+   need `animation-timeline`; browsers without it show the page as is. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+    filter: blur(6px);
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes draw-selection {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(-40px -12px);
+  }
+}
+
+@keyframes pop {
+  from {
+    transform: scale(0);
+  }
+  70% {
+    transform: scale(1.35);
+  }
+}
+
+@keyframes settle {
+  from {
+    transform: perspective(1600px) rotateX(9deg) scale(0.94);
+  }
+}
+
+@keyframes bracket-in {
+  from {
+    opacity: 0;
+    translate: var(--bracket-from);
+  }
+}
+
+@keyframes wipe {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(10 108 255 / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgb(10 108 255 / 0);
+  }
+}
+
+@keyframes shine {
+  from {
+    transform: translateX(-120%) skewX(-20deg);
+  }
+  to {
+    transform: translateX(260%) skewX(-20deg);
+  }
+}
+
+@keyframes nav-lift {
+  to {
+    box-shadow: 0 8px 28px rgb(13 27 42 / 0.08);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Hero, on load: copy rises line by line, then the selection draws itself around "anything". */
+  .hero-meta,
+  .hero-line,
+  .hero-sub {
+    animation: rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .hero-line:nth-child(1) {
+    animation-delay: 0.08s;
+  }
+
+  .hero-line:nth-child(2) {
+    animation-delay: 0.18s;
+  }
+
+  .hero-sub {
+    animation-delay: 0.28s;
+  }
+
+  /* `backwards`, not `both`: once drawn, the clip-path goes away instead of lingering. Its last
+     frame only has to leave room for the readout above and the handles at the corners. */
+  .hero-title .selection {
+    animation: draw-selection 0.7s cubic-bezier(0.65, 0, 0.35, 1) 0.45s backwards;
+  }
+
+  .hero-title .selection-handle {
+    animation: pop 0.35s ease-out 1s both;
+  }
+
+  .selection-size {
+    animation: fade 0.3s ease-out both;
+  }
+
+  /* The screenshot tilts up into place; it is the LCP image, so only its transform moves. */
+  .hero-stage {
+    transform-origin: 50% 0;
+    animation: settle 1.2s cubic-bezier(0.2, 0.7, 0.2, 1) 0.2s both;
+  }
+
+  .hero-stage .bracket {
+    animation: bracket-in 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) 0.5s both;
+  }
+
+  .bracket.tl {
+    --bracket-from: -14px -14px;
+  }
+
+  .bracket.tr {
+    --bracket-from: 14px -14px;
+  }
+
+  .bracket.bl {
+    --bracket-from: -14px 14px;
+  }
+
+  .bracket.br {
+    --bracket-from: 14px 14px;
+  }
+
+  .rec-dot {
+    animation: pulse 2s ease-out infinite;
+  }
+
+  /* Buttons lift on hover; the primary one catches a sweep of light. */
+  .button {
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .button:hover {
+    transform: translateY(-2px);
+  }
+
+  .button-primary:hover {
+    box-shadow: 0 10px 24px rgb(13 27 42 / 0.22);
+  }
+
+  .button-secondary:hover {
+    box-shadow:
+      inset 0 0 0 1px var(--line),
+      0 10px 24px rgb(13 27 42 / 0.08);
+  }
+
+  .button-primary::after {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.22), transparent);
+    transform: translateX(-120%) skewX(-20deg);
+    pointer-events: none;
+  }
+
+  .button-primary:hover::after {
+    animation: shine 0.8s ease;
+  }
+
+  .button-primary:hover svg {
+    transition: transform 0.2s ease;
+    transform: translateY(2px);
+  }
+
+  .nav-links a {
+    background: linear-gradient(var(--accent), var(--accent)) 0 100% / 0 1.5px no-repeat;
+    transition:
+      color 0.15s ease,
+      background-size 0.25s ease;
+  }
+
+  .nav-links a:hover {
+    background-size: 100% 1.5px;
+  }
+
+  .trust-row svg,
+  .mode > svg,
+  .feature-title svg {
+    transition: transform 0.25s cubic-bezier(0.3, 1.6, 0.5, 1);
+  }
+
+  .trust-row li:hover svg,
+  .mode:hover > svg,
+  .feature-list li:hover .feature-title svg {
+    transform: scale(1.18) rotate(-6deg);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    /* The nav picks up a shadow once the page scrolls. */
+    .nav {
+      animation: nav-lift linear both;
+      animation-timeline: scroll();
+      animation-range: 0 120px;
+    }
+
+    /* Content rises as it scrolls into view. */
+    .trust-row li,
+    .section-head,
+    .mode,
+    .redact-copy > *,
+    .tools,
+    .options li,
+    .studio-features li,
+    .number,
+    .feature-list li,
+    .final > * {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 90%;
+    }
+
+    /* Items in a row enter together, so later ones finish a little later. */
+    :is(.trust-row li, .mode, .studio-features li, .number):nth-child(2) {
+      animation-range: entry 5% entry 100%;
+    }
+
+    :is(.trust-row li, .mode, .studio-features li, .number):nth-child(3) {
+      animation-range: entry 10% entry 110%;
+    }
+
+    :is(.trust-row li, .mode, .studio-features li, .number):nth-child(n + 4) {
+      animation-range: entry 15% entry 120%;
+    }
+
+    /* Screenshots settle into their stages as they arrive. */
+    .recording-stage,
+    .studio-stage {
+      transform-origin: 50% 0;
+      animation: settle linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 40%;
+    }
+
+    /* Auto Redact plays out: each blackout box wipes across its line, then the toast arrives. */
+    .redact-visual {
+      view-timeline-name: --redact;
+    }
+
+    .redact-visual .blackout {
+      transform-origin: 0 50%;
+      animation: wipe linear both;
+      animation-timeline: --redact;
+    }
+
+    .mock-row:nth-child(1) .blackout {
+      animation-range: entry 40% cover 35%;
+    }
+
+    .mock-row:nth-child(2) .blackout {
+      animation-range: entry 50% cover 38%;
+    }
+
+    .mock-row:nth-child(3) .blackout {
+      animation-range: entry 60% cover 41%;
+    }
+
+    .mock-row:nth-child(4) .blackout {
+      animation-range: entry 70% cover 44%;
+    }
+
+    .mock-row:nth-child(5) .blackout {
+      animation-range: entry 80% cover 47%;
+    }
+
+    .redact-visual .toast {
+      animation: rise linear both;
+      animation-timeline: --redact;
+      animation-range: cover 48% cover 60%;
+    }
+
+    /* The closing selection draws itself as it scrolls in, like the hero's does on load. */
+    .final-title .selection {
+      animation: draw-selection linear backwards;
+      animation-timeline: view();
+      animation-range: entry 60% cover 40%;
+    }
+
+    .final-title .selection-handle {
+      animation: pop linear both;
+      animation-timeline: view();
+      animation-range: cover 38% cover 45%;
+    }
   }
 }

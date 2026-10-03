@@ -12,6 +12,7 @@ export function Footer() {
             © 2026 Viet Le · MIT License
           </a>
         </div>
+        <p className="footer-about">A free, local-only alternative to CleanShot X.</p>
         <nav className="footer-links" aria-label="Project">
           <a href={links.repo}>GitHub</a>
           <a href={links.releases}>Releases</a>
