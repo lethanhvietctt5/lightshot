@@ -10,7 +10,7 @@ export function Hero() {
       <div className="hero-copy">
         <div className="hero-meta">
           {__LATEST_VERSION__ && <span className="version">v{__LATEST_VERSION__}</span>}
-          <span className="eyebrow">Free and open source for macOS 14+</span>
+          <span className="eyebrow">Free, open-source screenshot and screen recorder for macOS 14+</span>
         </div>
         <h1 className="hero-title">
           <span className="hero-line">
@@ -35,6 +35,7 @@ export function Hero() {
           ref={shotRef}
           className="hero-shot"
           src={editor}
+          fetchPriority="high"
           width={1600}
           height={1194}
           alt="The Lightshot annotation editor showing a dashboard screenshot. Auto Redact has covered three email addresses and an API key with solid black boxes, and a notice reads: Redacted 4 items — 3 emails, 1 secret."
