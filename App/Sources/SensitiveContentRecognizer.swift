@@ -18,11 +18,16 @@ enum SensitiveContentRecognizer {
     }
 
     /// Recognises the backdrop's text, and its faces and codes when asked for. Runs Vision off
-    /// the main actor.
+    /// the main actor, on a GCD queue rather than the cooperative pool: Vision's text recognition
+    /// hangs once every pool thread is blocked in `perform` (LIG-80).
     static func recognize(_ backdrop: RedactionBackdrop, faces: Bool, codes: Bool) async throws -> ScanInput {
-        try await Task.detached(priority: .userInitiated) {
-            try recognizeSync(backdrop.image, frame: backdrop.frame, faces: faces, codes: codes)
-        }.value
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result {
+                    try recognizeSync(backdrop.image, frame: backdrop.frame, faces: faces, codes: codes)
+                })
+            }
+        }
     }
 
     private static func recognizeSync(_ image: CGImage, frame: Rect, faces: Bool, codes: Bool) throws -> ScanInput {

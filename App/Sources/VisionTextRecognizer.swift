@@ -1,4 +1,6 @@
 import CoreGraphics
+import CoreText
+import Foundation
 import ImageIO
 import LightshotKit
 import Vision
@@ -10,12 +12,54 @@ import Vision
 ///
 /// Unlike auto redact's recogniser, language correction is **on**: OCR Text wants readable prose,
 /// while auto redact must not "correct" keys and tokens into words.
+///
+/// Vision's blocking `perform` runs on a GCD queue, never on Swift's cooperative pool (LIG-80):
+/// text recognition needs a free cooperative thread to finish, so once every pool thread is blocked
+/// in `perform`, every recognition hangs for good.
 struct VisionTextRecognizer: TextRecognizer {
     func recognizeText(in image: CapturedImage) async -> Result<TextRecognition, TextRecognitionError> {
         let data = image.data
-        return await Task.detached(priority: .userInitiated) {
-            Self.recognizeSync(data)
-        }.value
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: Self.recognizeSync(data))
+            }
+        }
+    }
+
+    /// Loads Vision's text models in the background, once, at launch (LIG-80). With cold caches
+    /// (first install, after a macOS update) the first recognition spends about 26 s compiling them;
+    /// paying that here keeps it from sitting behind "Reading text…". Warm, it takes a blink.
+    static func warmUp() {
+        DispatchQueue.global(qos: .utility).async {
+            guard let image = sampleLine() else { return }
+            try? VNImageRequestHandler(cgImage: image, options: [:]).perform([textRequest()])
+        }
+    }
+
+    nonisolated private static func textRequest() -> VNRecognizeTextRequest {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.automaticallyDetectsLanguage = true
+        return request
+    }
+
+    /// A line of black text on white: a blank image loads only the detector, not the recogniser.
+    nonisolated private static func sampleLine() -> CGImage? {
+        guard let context = CGContext(
+            data: nil, width: 400, height: 60, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 400, height: 60))
+        let font = CTFontCreateWithName("Helvetica" as CFString, 28, nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(
+            string: "Lightshot reads text",
+            attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font]
+        ))
+        context.textPosition = CGPoint(x: 8, y: 18)
+        CTLineDraw(line, context)
+        return context.makeImage()
     }
 
     nonisolated private static func recognizeSync(_ data: Data) -> Result<TextRecognition, TextRecognitionError> {
@@ -24,10 +68,7 @@ struct VisionTextRecognizer: TextRecognizer {
             return .failure(TextRecognitionError("The captured image couldn’t be read."))
         }
 
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        request.automaticallyDetectsLanguage = true
+        let request = textRequest()
         // Every symbology Vision knows (its default). Performed separately so a barcode failure
         // can't cost the text.
         let codes = VNDetectBarcodesRequest()
