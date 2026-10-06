@@ -29,9 +29,9 @@ struct VisionTextRecognizer: TextRecognizer {
     /// Loads Vision's text models in the background, once, at launch (LIG-80). With cold caches
     /// (first install, after a macOS update) the first recognition spends about 26 s compiling them;
     /// paying that here keeps it from sitting behind "Reading text…". Warm, it takes a blink.
-    static func warmUp() {
+    nonisolated static func warmUp() {
         DispatchQueue.global(qos: .utility).async {
-            guard let image = sampleLine() else { return }
+            guard let image = warmUpImage() else { return }
             try? VNImageRequestHandler(cgImage: image, options: [:]).perform([textRequest()])
         }
     }
@@ -45,7 +45,7 @@ struct VisionTextRecognizer: TextRecognizer {
     }
 
     /// A line of black text on white: a blank image loads only the detector, not the recogniser.
-    nonisolated private static func sampleLine() -> CGImage? {
+    nonisolated private static func warmUpImage() -> CGImage? {
         guard let context = CGContext(
             data: nil, width: 400, height: 60, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
