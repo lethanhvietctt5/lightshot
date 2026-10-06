@@ -122,7 +122,7 @@ When text was copied, the notice shows a **Translate** button (macOS 14.4 and la
   - A Wi-Fi QR code under the caption "Scan to join Wi-Fi" copied the `WIFI:…` payload, not the caption.
   - Two QR codes drawn right-then-left came back `first\nsecond`.
   - A three-line paragraph gave three lines with line breaks kept and one sentence with them off.
-- **Timing:** barcode detection adds little. Warm runs took 31–185 ms. The first text request after launch is still slow while Vision loads its models (12–15 s here), as spec 0010 measured.
+- **Timing:** barcode detection adds little. Warm runs took 31–185 ms. The first text request after launch was still slow while Vision loaded its models (12–15 s here), as spec 0010 measured; LIG-80 now warms them at launch.
 - **Barcodes are a second `perform` on the same handler**, so a barcode failure can't fail the text.
 - **The system popover also has Copy Translation.** macOS's translation UI shows Replace with Translation and Copy Translation. So the translation can be copied straight from the popover, or put in the window with Replace and copied with the window's Copy. Both were checked in the `.verify` build: Replace swapped the window's text for the Spanish translation.
 - **Notice:** "Text copied" with Translate stayed on screen past 6 s while hovered and faded after the pointer left. "QR code copied" and "Barcode copied" were checked with DEBUG `-previewTextNotice qr|barcode`.

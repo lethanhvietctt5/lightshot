@@ -41,6 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.showPermissionOnboardingIfNeeded()
         // Surface any take a crashed session left behind (spec 0006, story 18).
         controller.recoverOrphanedRecordings()
+        // Load Vision's text models in the background, so a cold first OCR Text doesn't sit on
+        // "Reading text…" for half a minute (LIG-80).
+        VisionTextRecognizer.warmUp()
         #if DEBUG
         // Development aid (spec 0008): `-previewAppearance light|dark` draws this launch in one
         // appearance; `-previewSurface <name> [-previewFile <path>]` opens one surface to look at.

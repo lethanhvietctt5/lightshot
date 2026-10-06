@@ -135,7 +135,7 @@ The scanner's input and output, in prose (names may change in implementation):
 - The adapter scans the **backdrop of the whole document**: the base image plus every existing element, flattened over the visible frame. `redactionBackdrop(document, below: elements.count)` already produces it. Text annotations are scanned too, and pixels already under a blackout are gone and can't be detected twice.
 - Text recognition uses `.accurate`, `usesLanguageCorrection = false` (correction would "fix" keys into words), and `automaticallyDetectsLanguage = true`. It works on the backdrop's image and converts Vision's normalised, bottom-left rectangles into image pixel coordinates by adding the backdrop frame's origin.
 - Words come from splitting each observation's top candidate on whitespace and asking `boundingBox(for:)` for each word's range.
-- Recognition runs off the main actor. The editor stays interactive. While a scan is in flight the button is disabled, a second press is ignored, and the notice area shows "Looking for sensitive text…" with a spinner (the first scan after launch can take several seconds while Vision loads its models).
+- Recognition runs off the main actor. The editor stays interactive. While a scan is in flight the button is disabled, a second press is ignored, and the notice area shows "Looking for sensitive text…" with a spinner (with cold caches the first scan used to take about 27 s while Vision compiled its models; since LIG-80 the app warms them at launch).
 - If recognition throws, no elements are added and the notice shows the error. An empty result is a success with nothing found, not an error.
 
 ### Applying
